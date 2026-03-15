@@ -1,0 +1,11 @@
+node_modules/
+vault.db
+vault.db-shm
+vault.db-wal
+vault.db.lock/
+*.log
+indexer.log
+curator.log
+narrator.log
+tagger.log
+runtime-trace.jsonl

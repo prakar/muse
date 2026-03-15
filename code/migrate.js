@@ -1,0 +1,303 @@
+#!/usr/bin/env node
+/**
+ * QUARRY migrate.js v0.1
+ * One-time schema migration. Safe to re-run — all changes are additive.
+ * Run this before using tagger.js, narrator.js v0.2, or curator.js v0.2.
+ *
+ * Usage:
+ *   node migrate.js --run       Apply all pending migrations
+ *   node migrate.js --status    Show which migrations have been applied
+ */
+
+'use strict';
+
+const fs   = require('fs');
+const path = require('path');
+const { DatabaseSync } = require('node:sqlite');
+
+const DB_PATH = process.env.QUARRY_DB
+  || path.join(process.env.HOME, 'quarry', 'vault.db');
+
+const args       = process.argv.slice(2);
+const MODE_RUN    = args.includes('--run');
+const MODE_STATUS = args.includes('--status');
+
+if (!MODE_RUN && !MODE_STATUS) {
+  console.error('Usage: node migrate.js [--run|--status]');
+  process.exit(1);
+}
+
+function log(msg, data) {
+  const entry = Object.assign({ ts: new Date().toISOString(), msg }, data || {});
+  console.log(JSON.stringify(entry));
+}
+
+function openDb() {
+  if (!fs.existsSync(DB_PATH)) {
+    console.error('vault.db not found at', DB_PATH, '— run indexer first');
+    process.exit(1);
+  }
+  return new DatabaseSync(DB_PATH);
+}
+
+// ---------------------------------------------------------------------------
+// MIGRATION REGISTRY
+// Each migration has an id, description, and up() function.
+// Migrations are tracked in a schema_migrations table.
+// Safe to re-run — already-applied migrations are skipped.
+// ---------------------------------------------------------------------------
+const MIGRATIONS = [
+
+  // -------------------------------------------------------------------------
+  // M001: Add tag_source and classification_at to vault_notes
+  // -------------------------------------------------------------------------
+  {
+    id:   'M001',
+    desc: 'Add tag_source and classification_at to vault_notes',
+    up: function(db) {
+      // SQLite doesn't support IF NOT EXISTS on ALTER TABLE
+      // so we check column existence first
+      const cols = db.prepare("PRAGMA table_info(vault_notes)").all()
+        .map(function(c) { return c.name; });
+
+      if (!cols.includes('tag_source')) {
+        db.exec("ALTER TABLE vault_notes ADD COLUMN tag_source TEXT");
+        log('  Added column vault_notes.tag_source');
+      } else {
+        log('  vault_notes.tag_source already exists — skipping');
+      }
+
+      if (!cols.includes('classification_at')) {
+        db.exec("ALTER TABLE vault_notes ADD COLUMN classification_at TEXT");
+        log('  Added column vault_notes.classification_at');
+      } else {
+        log('  vault_notes.classification_at already exists — skipping');
+      }
+    }
+  },
+
+  // -------------------------------------------------------------------------
+  // M002: Add mode to narrative_queue and narratives
+  // -------------------------------------------------------------------------
+  {
+    id:   'M002',
+    desc: 'Add mode column to narrative_queue and narratives',
+    up: function(db) {
+      var qCols = db.prepare("PRAGMA table_info(narrative_queue)").all()
+        .map(function(c) { return c.name; });
+      var nCols = db.prepare("PRAGMA table_info(narratives)").all()
+        .map(function(c) { return c.name; });
+
+      if (!qCols.includes('mode')) {
+        db.exec("ALTER TABLE narrative_queue ADD COLUMN mode TEXT DEFAULT 'wow'");
+        log('  Added column narrative_queue.mode');
+      } else {
+        log('  narrative_queue.mode already exists — skipping');
+      }
+
+      if (!nCols.includes('mode')) {
+        db.exec("ALTER TABLE narratives ADD COLUMN mode TEXT DEFAULT 'wow'");
+        log('  Added column narratives.mode');
+      } else {
+        log('  narratives.mode already exists — skipping');
+      }
+    }
+  },
+
+  // -------------------------------------------------------------------------
+  // M003: Create note_classifications table
+  // -------------------------------------------------------------------------
+  {
+    id:   'M003',
+    desc: 'Create note_classifications table',
+    up: function(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS note_classifications (
+          id           INTEGER PRIMARY KEY,
+          note_id      INTEGER NOT NULL REFERENCES vault_notes(id) ON DELETE CASCADE,
+          bucket       TEXT    NOT NULL,
+          claim        TEXT    NOT NULL,
+          annotation   TEXT,
+          confidence   TEXT,
+          switch_level INTEGER DEFAULT 3,
+          created_at   TEXT    NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_classifications_note_id
+          ON note_classifications(note_id);
+        CREATE INDEX IF NOT EXISTS idx_classifications_bucket
+          ON note_classifications(bucket);
+      `);
+      log('  Created note_classifications table (or already exists)');
+    }
+  },
+
+  // -------------------------------------------------------------------------
+  // M004: Create api_budget table
+  // -------------------------------------------------------------------------
+  {
+    id:   'M004',
+    desc: 'Create api_budget table',
+    up: function(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS api_budget (
+          id         INTEGER PRIMARY KEY,
+          provider   TEXT    NOT NULL,
+          component  TEXT    NOT NULL,
+          note_id    INTEGER,
+          queue_id   INTEGER,
+          tokens_in  INTEGER DEFAULT 0,
+          tokens_out INTEGER DEFAULT 0,
+          cost_usd   REAL    DEFAULT 0,
+          called_at  TEXT    NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_budget_provider
+          ON api_budget(provider);
+        CREATE INDEX IF NOT EXISTS idx_budget_component
+          ON api_budget(component);
+        CREATE INDEX IF NOT EXISTS idx_budget_called_at
+          ON api_budget(called_at);
+      `);
+      log('  Created api_budget table (or already exists)');
+    }
+  },
+
+  // -------------------------------------------------------------------------
+  // M005: Create schema_migrations tracking table
+  // (Created first in ensureMigrationsTable, listed here for completeness)
+  // -------------------------------------------------------------------------
+  {
+    id:   'M005',
+    desc: 'Add register column to narratives (was missing from v0.1 schema)',
+    up: function(db) {
+      var nCols = db.prepare("PRAGMA table_info(narratives)").all()
+        .map(function(c) { return c.name; });
+      if (!nCols.includes('register')) {
+        db.exec("ALTER TABLE narratives ADD COLUMN register TEXT");
+        log('  Added column narratives.register');
+      } else {
+        log('  narratives.register already exists — skipping');
+      }
+    }
+  },
+
+  // -------------------------------------------------------------------------
+  // M006: Add word_count index for efficient Switch-2 tagger queries
+  // -------------------------------------------------------------------------
+  {
+    id:   'M006',
+    desc: 'Add word_count index on vault_notes',
+    up: function(db) {
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_notes_word_count
+          ON vault_notes(word_count);
+      `);
+      log('  Created idx_notes_word_count (or already exists)');
+    }
+  }
+
+];
+
+// ---------------------------------------------------------------------------
+// MIGRATION TRACKER
+// ---------------------------------------------------------------------------
+function ensureMigrationsTable(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      id         TEXT PRIMARY KEY,
+      desc       TEXT,
+      applied_at TEXT NOT NULL
+    )
+  `);
+}
+
+function appliedMigrations(db) {
+  return new Set(
+    db.prepare('SELECT id FROM schema_migrations').all()
+      .map(function(r) { return r.id; })
+  );
+}
+
+function markApplied(db, migration) {
+  db.prepare(
+    'INSERT OR REPLACE INTO schema_migrations (id, desc, applied_at) VALUES (@id, @desc, @applied_at)'
+  ).run({
+    id:         migration.id,
+    desc:       migration.desc,
+    applied_at: new Date().toISOString()
+  });
+}
+
+// ---------------------------------------------------------------------------
+// STATUS
+// ---------------------------------------------------------------------------
+function printStatus(db) {
+  ensureMigrationsTable(db);
+  const applied = appliedMigrations(db);
+
+  console.log('\n═══════════════════════════════════════');
+  console.log('  QUARRY SCHEMA MIGRATION STATUS');
+  console.log('═══════════════════════════════════════');
+  MIGRATIONS.forEach(function(m) {
+    const status = applied.has(m.id) ? '✓' : '○';
+    console.log('  ' + status + ' ' + m.id + '  ' + m.desc);
+  });
+  const pending = MIGRATIONS.filter(function(m) { return !applied.has(m.id); }).length;
+  console.log('');
+  console.log('  Pending: ' + pending + ' / ' + MIGRATIONS.length);
+  console.log('═══════════════════════════════════════\n');
+}
+
+// ---------------------------------------------------------------------------
+// RUN
+// ---------------------------------------------------------------------------
+function runMigrations(db) {
+  ensureMigrationsTable(db);
+  const applied = appliedMigrations(db);
+
+  let ran = 0;
+  let skipped = 0;
+
+  for (var i = 0; i < MIGRATIONS.length; i++) {
+    var m = MIGRATIONS[i];
+    if (applied.has(m.id)) {
+      log('Skip ' + m.id + ' (already applied)', { desc: m.desc });
+      skipped++;
+      continue;
+    }
+
+    log('Applying ' + m.id, { desc: m.desc });
+    db.exec('BEGIN');
+    try {
+      m.up(db);
+      markApplied(db, m);
+      db.exec('COMMIT');
+      log('Applied ' + m.id + ' OK');
+      ran++;
+    } catch (e) {
+      db.exec('ROLLBACK');
+      log('FAILED ' + m.id, { err: e.message });
+      console.error('\nMigration ' + m.id + ' failed — rolled back. Stopping.');
+      process.exit(1);
+    }
+  }
+
+  console.log('\n═══════════════════════════════════════');
+  console.log('  MIGRATION COMPLETE');
+  console.log('  Applied: ' + ran);
+  console.log('  Skipped: ' + skipped);
+  console.log('═══════════════════════════════════════\n');
+}
+
+// ---------------------------------------------------------------------------
+// MAIN
+// ---------------------------------------------------------------------------
+const db = openDb();
+
+if (MODE_STATUS) {
+  printStatus(db);
+} else {
+  runMigrations(db);
+  printStatus(db);
+}
+
+db.close();

@@ -1,0 +1,17 @@
+{
+  "name": "quarry",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "node-sqlite3-wasm": "^0.8.54",
+    "sql.js": "^1.14.1"
+  }
+}
