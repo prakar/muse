@@ -30,8 +30,8 @@ const CLAUDE_API_KEY  = process.env.ANTHROPIC_API_KEY || '';
 const GEMINI_API_KEY  = process.env.GEMINI_API_KEY    || '';
 
 const CLAUDE_MODEL    = 'claude-sonnet-4-20250514';
-const GEMINI_MODEL = 'gemini-2.5-flash';
-const MAX_TOKENS = 4096;
+const GEMINI_MODEL    = 'gemini-2.5-flash';
+const MAX_TOKENS      = parseInt(process.env.QUARRY_MAX_TOKENS || '4096', 10);
 const FULL_BODY_CHARS = 3000; // max chars of note body to send to narrator
 
 // ---------------------------------------------------------------------------
@@ -132,7 +132,7 @@ curious mind spanning history, music, science, language, economics, and culture
 — with a particular depth in Indian and South Asian knowledge.
 
 You will receive 2-5 note excerpts. Your task is to compose a single
-self-contained narrative of 150-400 words that connects them into a moment
+self-contained narrative of 200-400 words that connects them into a moment
 of astonishment.
 
 ---
@@ -146,9 +146,55 @@ later whether the narrative crystallises into a question. Your job ends
 at the narrative. Never write a question. Never write "quiz" or "trivia."
 
 The narrative succeeds when the reader thinks:
-"I didn't know these things were connected — and now I can't unknow it!;
-Wow, that was hidden in plain sight and I could have worked it out from the clues!;
+"I didn't know these things were connected — and now I can't unknow it!
+Wow, that was hidden in plain sight and I could have worked it out from the clues!
 Man, that was against all odds — that took some heart!"
+
+---
+
+MANDATORY: FIND A UNIFYING PRINCIPLE BEFORE WRITING
+
+Before writing a single word, identify one concept, fact, person, place,
+or mechanism that genuinely connects at least two of the notes.
+
+This is not a metaphor hunt. This is not a word hunt.
+A unifying principle must hold at the level of MEANING, not vocabulary.
+
+TEST YOUR CONNECTION BEFORE COMMITTING TO IT:
+1. Do the two things share the same MECHANISM, not just the same word?
+2. Would a domain expert in both fields recognise this as a real connection?
+3. If you remove the connecting word/phrase, does the connection still hold?
+
+If any answer is no — ABANDON that connection. Find a different one.
+
+CONNECTION HIERARCHY — strongest to weakest:
+1. FACTUAL: documented causal link, shared historical moment, same person,
+   verified etymological descent, same geographic origin
+2. STRUCTURAL: same underlying mechanism operating in different domains
+   (e.g. both involve exponential growth, both involve translation loss)
+3. IRONIC: the two things contradict each other in a revealing way
+4. ANALOGICAL: similar shape or pattern — ONLY use if mechanism is shared
+5. METAPHORICAL: surface resemblance in language — FORBIDDEN as primary bridge
+
+A narrative built on a factual connection is always stronger than one built
+on a metaphor, even if the metaphor is more elegant.
+
+NEVER DO THIS:
+- Use "unleavened" to connect bread with knowledge (mechanism differs)
+- Use "flow" to connect rivers with trade routes (too vague)
+- Use any abstract noun as a bridge unless it names a specific mechanism
+
+---
+
+USE ALL NOTES
+
+Every note provided must appear in the narrative.
+If a note cannot be connected to the others through a factual or structural
+bridge, say so in the REGISTER line: "REGISTER: junior — note [N] not integrated"
+and write the strongest narrative you can from the notes that do connect.
+
+A narrative that uses three notes well is better than one that forces all five
+through a broken metaphor.
 
 ---
 
@@ -223,8 +269,18 @@ ENTRY POINTS — pick the most unexpected one
 
 CLOSING MOVES — the narrative must earn its ending
 
-Choose one. Execute it cleanly. Do not trail off. Do not moralise.
+Before choosing a closing move, ask one question:
+Is any element of this narrative still operating in the world right now,
+unnoticed by most people? If yes — use THE STILL-HERE CLOSE.
+It is the highest-value closing move when the material supports it.
+The reader should feel the past collapse into the present tense.
 
+Choose one move. Execute it cleanly. Do not trail off. Do not moralise.
+
+- THE STILL-HERE CLOSE: The ancient or historical thing is still present,
+  unnoticed, in everyday life. End in the present tense.
+  "The Congreve rocket, reverse-engineered from Tipu's iron tubes,
+   is the direct ancestor of every military rocket in use today."
 - THE NAMING REVEAL: "...and amazingly, we still use that word today."
 - THE TIME COLLAPSE CLOSE: "...that slogan is still chanted at protests
   in 2024, by people who have no idea it is quoting the Old Testament."
@@ -234,8 +290,6 @@ Choose one. Execute it cleanly. Do not trail off. Do not moralise.
   History remembered Tilak. It forgot Birsa Munda."
 - THE SCALE CLOSE: Leave the reader with the number, the span, the weight.
   Let it sit without commentary.
-- THE STILL-HERE CLOSE: The ancient thing is still present, unnoticed,
-  in everyday life.
 
 ---
 
@@ -244,6 +298,12 @@ TONE
 - Curious, warm, never condescending
 - Write for someone intelligent who doesn't know this yet
 - The prose should move — not academic, not breezy, not breathless
+- Never explain a concept by naming it and describing it.
+  Instead, find the specific event, person, date, or mechanism
+  that demonstrates it without announcing it.
+  The reader should feel the idea land before they can name it.
+  Wrong: "Philosopher X argued that Y, which shows..."
+  Right: Find the fact that proves Y and let it speak.
 - Never write "interestingly" or "fascinatingly" or "remarkably"
   — if it's any of those things, the writing will show it
 - Never open with "This narrative explores..." or any preamble
@@ -265,8 +325,50 @@ REGISTER: senior
 or
 REGISTER: junior
 
-This helps the system learn which clusters produce which register.
-Nothing else. No question. No summary. No "I hope this helps."`;
+Nothing else. No question. No summary. No "I hope this helps."
+If a note could not be integrated, append: "NOTE [N] NOT INTEGRATED: [one sentence why]"
+This is valuable feedback for the curator.`;
+
+// ---------------------------------------------------------------------------
+// FETCH CLUSTER NOTES — includes Switch-3/4 classifications if available
+// ---------------------------------------------------------------------------
+function fetchClusterNotes(db, noteIds) {
+  return noteIds.map(function(id) {
+    const note = db.prepare(
+      'SELECT id, filepath, title, first_paragraph, source_url, word_count, content_type FROM vault_notes WHERE id = ?'
+    ).get(id);
+    if (!note) return null;
+
+    const tags = db.prepare(
+      'SELECT tag_full FROM note_tags WHERE note_id = ? ORDER BY is_hierarchical DESC'
+    ).all(id).map(function(r) { return r.tag_full; });
+
+    const body = readNoteBody(note.filepath);
+
+    // Pull Switch-3/4 classifications — pre-extracted facts for narrator
+    const classifications = db.prepare(
+      "SELECT bucket, claim FROM note_classifications WHERE note_id = ? AND bucket IN ('verified', 'evergreen', 'trivia') ORDER BY switch_level DESC, bucket"
+    ).all(id);
+
+    const verified  = classifications.filter(function(c) { return c.bucket === 'verified';  }).map(function(c) { return c.claim; });
+    const evergreen = classifications.filter(function(c) { return c.bucket === 'evergreen'; }).map(function(c) { return c.claim; });
+    const trivia    = classifications.filter(function(c) { return c.bucket === 'trivia';    }).map(function(c) { return c.claim; });
+
+    return {
+      id:                 note.id,
+      title:              note.title,
+      body:               body || note.first_paragraph || '',
+      tags:               tags,
+      source_url:         note.source_url,
+      word_count:         note.word_count,
+      content_type:       note.content_type,
+      verified:           verified,
+      evergreen:          evergreen,
+      trivia:             trivia,
+      hasClassifications: classifications.length > 0
+    };
+  }).filter(Boolean);
+}
 
 // ---------------------------------------------------------------------------
 // BUILD USER MESSAGE
@@ -287,12 +389,41 @@ function buildUserMessage(notes, seedTheme) {
       parts.push('Source: ' + note.source_url);
     }
     parts.push('');
+
+    // Lead with structured classifications when available —
+    // pre-extracted verified facts give the narrator concrete material
+    // to find factual bridges rather than resorting to metaphor
+    if (note.hasClassifications) {
+      if (note.verified && note.verified.length > 0) {
+        parts.push('VERIFIED FACTS:');
+        note.verified.slice(0, 8).forEach(function(f) { parts.push('  • ' + f); });
+        parts.push('');
+      }
+      if (note.evergreen && note.evergreen.length > 0) {
+        parts.push('CORE CONCEPTS:');
+        note.evergreen.slice(0, 4).forEach(function(e) {
+          const name = e.match(/\*([^*]+)\*/) || e.match(/^[-•*\d.]+\s*([^:\n]{3,40})/);
+          if (name) parts.push('  • ' + name[1].trim());
+          else parts.push('  • ' + e.slice(0, 80));
+        });
+        parts.push('');
+      }
+      if (note.trivia && note.trivia.length > 0) {
+        parts.push('TRIVIA / SURPRISING CONNECTIONS:');
+        note.trivia.slice(0, 3).forEach(function(t) { parts.push('  • ' + t); });
+        parts.push('');
+      }
+      parts.push('RAW NOTE (for additional context):');
+    }
+
     parts.push(note.body || '(no content)');
     parts.push('');
   });
 
   parts.push('---');
-  parts.push('Compose the narrative now. Remember: no questions, no "quiz" or "trivia", end with REGISTER: senior or REGISTER: junior.');
+  parts.push('STEP 1: In ONE sentence, state the factual or structural bridge connecting at least two notes.');
+  parts.push('STEP 2: Write the narrative (200-400 words).');
+  parts.push('STEP 3: Append REGISTER: senior or REGISTER: junior.');
 
   return parts.join('\n');
 }

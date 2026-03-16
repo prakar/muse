@@ -1,42 +1,36 @@
 #!/usr/bin/env node
 /**
  * QUARRY tagger.js v0.3
- * Tags vault notes using three switch levels:
+ * Tags vault notes using four switch levels:
  *
  * --switch1   Filename + H1 heuristic. Zero API. Instant.
  * --switch2   First-paragraph keyword extraction against known tag vocabulary.
  *             Zero API. Fast.
- * --switch3   Full LLM classification using Switch-3 prompt.
- *             Budget-guarded. Routes: OpenRouter (free, self-healing) →
- *             Gemini → Claude.
+ * --switch3   LLM classification, first 4000 chars. Budget-guarded.
+ *             Routes: OpenRouter (free, self-healing) → Gemini → Claude.
+ * --switch4   LLM classification, FULL document. Gold standard.
+ *             Only for notes > 1500 words. Uses Gemini 1M context.
+ *             Adds new classification rows alongside existing Switch-3 rows.
  *
  * Usage:
  *   node tagger.js --switch1 [--limit N] [--file <path>]
  *   node tagger.js --switch2 [--limit N] [--file <path>]
  *   node tagger.js --switch3 [--limit N] [--file <path>] [--dry-run]
+ *   node tagger.js --switch4 [--limit N] [--file <path>] [--dry-run]
  *   node tagger.js --status
  *
  * --limit N     Process at most N notes (default: all eligible)
  * --file <path> Process a single file (any switch level)
  * --dry-run     Switch-3 only: print payload, no API call, no DB write
  * --status      Show tagging coverage and budget
- *
- * v0.3 — OpenRouter picker extracted to ~/zeroclaw/lib/openrouter.js
- *         httpGet/httpPost also sourced from shared lib.
- *         callGemini/callClaude/callS3Api remain local (tagger-specific).
  */
 
 'use strict';
 
 const fs    = require('fs');
 const path  = require('path');
+const https = require('https');
 const { DatabaseSync } = require('node:sqlite');
-
-// ---------------------------------------------------------------------------
-// SHARED LIB — OpenRouter free-model picker
-// ---------------------------------------------------------------------------
-const orLib = require(path.join(process.env.HOME, 'zeroclaw', 'lib', 'openrouter.js'));
-const { httpPost, httpGet } = orLib;
 
 // ---------------------------------------------------------------------------
 // CONFIG
@@ -44,6 +38,7 @@ const { httpPost, httpGet } = orLib;
 const DB_PATH = process.env.QUARRY_DB
   || path.join(process.env.HOME, 'quarry', 'vault.db');
 
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 const ANTHROPIC_API_KEY  = process.env.ANTHROPIC_API_KEY  || '';
 const GEMINI_API_KEY     = process.env.GEMINI_API_KEY     || '';
 
@@ -60,6 +55,17 @@ const COST_PER_CALL = { openrouter: 0.00, claude: 0.02, gemini: 0.001 };
 // Max chars of note body sent to Switch-3
 const S3_MAX_CHARS = 4000;
 
+// OpenRouter free model preference list — tried in order on rate-limit
+const OR_PREFERRED = [
+  'openai/gpt-oss-120b:free',
+  'meta-llama/llama-3.3-70b-instruct:free',
+  'qwen/qwen3-coder:free',
+  'mistralai/mistral-small-3.1-24b-instruct:free',
+  'google/gemma-3-27b-it:free',
+  'stepfun/step-3.5-flash:free',
+  'openrouter/free'
+];
+
 // ---------------------------------------------------------------------------
 // CLI ARGS
 // ---------------------------------------------------------------------------
@@ -67,6 +73,7 @@ const args        = process.argv.slice(2);
 const SW1         = args.includes('--switch1');
 const SW2         = args.includes('--switch2');
 const SW3         = args.includes('--switch3');
+const SW4         = args.includes('--switch4');
 const MODE_STATUS = args.includes('--status');
 const MODE_DRY    = args.includes('--dry-run');
 const LIMIT = (() => {
@@ -78,8 +85,8 @@ const SINGLE_FILE = (() => {
   return i !== -1 ? args[i + 1] : null;
 })();
 
-if (!SW1 && !SW2 && !SW3 && !MODE_STATUS) {
-  console.error('Usage: node tagger.js [--switch1|--switch2|--switch3|--status] [options]');
+if (!SW1 && !SW2 && !SW3 && !SW4 && !MODE_STATUS) {
+  console.error('Usage: node tagger.js [--switch1|--switch2|--switch3|--switch4|--status] [options]');
   process.exit(1);
 }
 
@@ -346,13 +353,159 @@ function buildS3Prompt(noteContent, sourceUrl) {
 }
 
 // ---------------------------------------------------------------------------
-// API CALLERS
-// callOpenRouter — delegated entirely to shared lib.
-//   orLib.callOpenRouter(prompt, { systemPrompt, maxTokens }) handles
-//   OR_PREFERRED list, live model fetch, rate-limit self-healing, and fallback.
-// callGemini / callClaude — local, use tagger-specific config.
-// callS3Api — tagger's own cascade: OpenRouter → Gemini → Claude.
+// HTTP HELPERS
 // ---------------------------------------------------------------------------
+function httpPost(hostname, pathStr, headers, body) {
+  return new Promise(function(resolve, reject) {
+    const bodyStr = JSON.stringify(body);
+    const options = {
+      hostname: hostname,
+      path:     pathStr,
+      method:   'POST',
+      headers:  Object.assign({
+        'Content-Type':   'application/json',
+        'Content-Length': Buffer.byteLength(bodyStr)
+      }, headers)
+    };
+    const req = https.request(options, function(res) {
+      var data = '';
+      res.on('data', function(c) { data += c; });
+      res.on('end', function() {
+        try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
+        catch (e) { resolve({ status: res.statusCode, body: data }); }
+      });
+    });
+    req.on('error', reject);
+    req.write(bodyStr);
+    req.end();
+  });
+}
+
+function httpGet(hostname, pathStr, headers) {
+  return new Promise(function(resolve, reject) {
+    const req = https.request({
+      hostname: hostname,
+      path:     pathStr,
+      method:   'GET',
+      headers:  headers || {}
+    }, function(res) {
+      var data = '';
+      res.on('data', function(c) { data += c; });
+      res.on('end', function() {
+        try { resolve(JSON.parse(data)); } catch (e) { reject(e); }
+      });
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// OPENROUTER: self-healing model picker
+// Fetches live free models, caches for process lifetime.
+// On rate-limit, caller invalidates cache to force re-pick.
+// ---------------------------------------------------------------------------
+var _orFreeModels = null; // full list of available free model ids
+var _orModelIdx   = 0;   // current position in preference list
+
+async function fetchOrFreeModels() {
+  if (_orFreeModels) return _orFreeModels;
+  try {
+    const res = await httpGet('openrouter.ai', '/api/v1/models',
+      { 'Authorization': 'Bearer ' + OPENROUTER_API_KEY });
+    const freeIds = new Set(
+      (res.data || [])
+        .filter(function(m) { return m.pricing && m.pricing.prompt === '0' && m.pricing.completion === '0'; })
+        .map(function(m) { return m.id; })
+    );
+    _orFreeModels = freeIds;
+    log('info', 'OpenRouter free models fetched', { count: freeIds.size });
+    return freeIds;
+  } catch (e) {
+    log('warn', 'Could not fetch OpenRouter models', { err: e.message });
+    _orFreeModels = new Set(['openrouter/free']);
+    return _orFreeModels;
+  }
+}
+
+async function getNextOrModel(skipModel) {
+  const available = await fetchOrFreeModels();
+  // Advance past skipModel if given
+  if (skipModel) {
+    const idx = OR_PREFERRED.indexOf(skipModel);
+    if (idx !== -1) _orModelIdx = idx + 1;
+  }
+  // Walk preference list until we find an available model
+  while (_orModelIdx < OR_PREFERRED.length) {
+    const candidate = OR_PREFERRED[_orModelIdx];
+    _orModelIdx++;
+    if (available.has(candidate) || candidate === 'openrouter/free') {
+      return candidate;
+    }
+  }
+  // Fallback: any available free model
+  return 'openrouter/free';
+}
+
+// ---------------------------------------------------------------------------
+// API CALLERS
+// ---------------------------------------------------------------------------
+async function callOpenRouter(prompt) {
+  if (!OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY not set');
+
+  var lastErr = null;
+  _orModelIdx = 0; // reset for each call
+
+  for (var attempt = 0; attempt < OR_PREFERRED.length + 1; attempt++) {
+    const model = await getNextOrModel(null);
+
+    try {
+      log('info', 'OpenRouter trying model', { model: model });
+      const res = await httpPost(
+        'openrouter.ai',
+        '/api/v1/chat/completions',
+        { 'Authorization': 'Bearer ' + OPENROUTER_API_KEY },
+        {
+          model:      model,
+          messages:   [
+            { role: 'system', content: S3_SYSTEM },
+            { role: 'user',   content: prompt }
+          ],
+          max_tokens: 8192
+        }
+      );
+
+      if (res.status === 429) {
+        log('warn', 'OpenRouter rate-limited, trying next', { model: model });
+        lastErr = new Error('rate-limited: ' + model);
+        continue;
+      }
+      if (res.status !== 200) {
+        log('warn', 'OpenRouter error, trying next', { model: model, status: res.status, err: JSON.stringify(res.body).slice(0, 200) });
+        lastErr = new Error('OpenRouter error ' + res.status);
+        continue;
+      }
+
+      const choice = (res.body.choices || [])[0];
+      if (!choice || !choice.message || !choice.message.content) {
+        log('warn', 'OpenRouter empty response, trying next', { model: model });
+        lastErr = new Error('empty response from ' + model);
+        continue;
+      }
+
+      const text  = choice.message.content;
+      const usage = res.body.usage || {};
+      log('info', 'OpenRouter success', { model: model });
+      return { text: text, tokensIn: usage.prompt_tokens || 0, tokensOut: usage.completion_tokens || 0, provider: 'openrouter' };
+
+    } catch (e) {
+      log('warn', 'OpenRouter attempt failed', { model: model, err: e.message });
+      lastErr = e;
+    }
+  }
+
+  throw lastErr || new Error('All OpenRouter models exhausted');
+}
 
 async function callGemini(prompt) {
   if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not set');
@@ -392,12 +545,9 @@ async function callClaude(prompt) {
 }
 
 async function callS3Api(prompt) {
-  if (process.env.OPENROUTER_API_KEY) {
-    try {
-      return await orLib.callOpenRouter(prompt, { systemPrompt: S3_SYSTEM, maxTokens: 8192 });
-    } catch (e) {
-      log('warn', 'OpenRouter exhausted, trying Gemini', { err: e.message });
-    }
+  if (OPENROUTER_API_KEY) {
+    try { return await callOpenRouter(prompt); }
+    catch (e) { log('warn', 'OpenRouter exhausted, trying Gemini', { err: e.message }); }
   }
   if (GEMINI_API_KEY) {
     try { return await callGemini(prompt); }
@@ -425,12 +575,12 @@ function parseS3Response(text) {
     const header = lines[0].trim().toUpperCase();
     const body   = lines.slice(1).join('\n').trim();
 
-    if      (header.includes('VERIFIED'))                                sections.verified  = parseBullets(body);
+    if      (header.includes('VERIFIED'))                          sections.verified  = parseBullets(body);
     else if (header.includes('TEXTUALLY') || header.includes('ASSERTED')) sections.asserted = parseBullets(body);
-    else if (header.includes('DUBIOUS'))                                  sections.dubious   = parseDubious(body);
-    else if (header.includes('EVERGREEN'))                                sections.evergreen = parseEvergreen(body);
-    else if (header.includes('TRIVIA'))                                   sections.trivia    = parseBullets(body);
-    else if (header.includes('EXPOSITORY') || header.includes('ESSAY'))  sections.essay     = body;
+    else if (header.includes('DUBIOUS'))                           sections.dubious   = parseDubious(body);
+    else if (header.includes('EVERGREEN'))                         sections.evergreen = parseEvergreen(body);
+    else if (header.includes('TRIVIA'))                            sections.trivia    = parseBullets(body);
+    else if (header.includes('EXPOSITORY') || header.includes('ESSAY')) sections.essay = body;
   }
 
   // Infer tags from evergreen concept names
@@ -482,8 +632,35 @@ function parseEvergreen(text) {
 }
 
 // ---------------------------------------------------------------------------
-// NOTE READER
+// SWITCH 4 — Full document LLM classification. Gold standard.
+// No truncation. Uses Gemini 1M context window.
+// Only targets notes > 1500 words not yet Switch-4 classified.
+// Adds rows alongside existing Switch-3 rows — does not replace them.
 // ---------------------------------------------------------------------------
+const S4_MIN_WORDS = 1500;
+
+function buildS4Prompt(noteContent, sourceUrl) {
+  // Same prompt as Switch-3 but with full content — no truncation
+  const content = sourceUrl ? 'Source URL: ' + sourceUrl + '\n\n' + noteContent : noteContent;
+  // Same prompt template as S3 — model gets full document
+  return buildS3Prompt(noteContent, sourceUrl).replace(
+    content.slice(0, S3_MAX_CHARS),
+    content
+  );
+}
+
+async function callS4Api(prompt) {
+  // Switch-4 always uses Gemini directly — it needs the 1M context window
+  // OpenRouter free models cap at 8K context, insufficient for full documents
+  if (GEMINI_API_KEY) {
+    try { return await callGemini(prompt); }
+    catch (e) { log('warn', 'Gemini failed for Switch-4', { err: e.message }); }
+  }
+  if (ANTHROPIC_API_KEY) {
+    return await callClaude(prompt);
+  }
+  throw new Error('Switch-4 requires GEMINI_API_KEY or ANTHROPIC_API_KEY — OpenRouter context window too small');
+}
 function readNoteBody(filepath) {
   try {
     const raw  = fs.readFileSync(filepath, 'utf8');
@@ -536,7 +713,7 @@ function printStatus(db) {
 // MAIN
 // ---------------------------------------------------------------------------
 async function main() {
-  log('info', 'QUARRY tagger v0.3 starting', { sw1: SW1, sw2: SW2, sw3: SW3 });
+  log('info', 'QUARRY tagger v0.3 starting', { sw1: SW1, sw2: SW2, sw3: SW3, sw4: SW4 });
 
   const db = openDb();
 
@@ -549,6 +726,12 @@ async function main() {
     const note = db.prepare('SELECT * FROM vault_notes WHERE filepath = ?').get(fp);
     if (!note) { log('error', 'File not in index', { filepath: fp }); db.close(); return; }
     notes = [note];
+  } else if (SW4) {
+    // Switch-4: long notes not yet Switch-4 classified
+    // We detect Switch-4 completion by checking if any classification row has switch_level=4
+    notes = db.prepare(
+      'SELECT * FROM vault_notes WHERE word_count >= ? AND content_type IN (\'article\', \'note\') AND id NOT IN (SELECT DISTINCT note_id FROM note_classifications WHERE switch_level = 4) ORDER BY word_count DESC LIMIT ?'
+    ).all(S4_MIN_WORDS, LIMIT === Infinity ? 999999 : LIMIT);
   } else if (SW3) {
     notes = db.prepare(
       'SELECT * FROM vault_notes WHERE classification_at IS NULL AND content_type IN (\'article\', \'note\') AND word_count > 200 ORDER BY word_count DESC LIMIT ?'
@@ -616,7 +799,7 @@ async function main() {
           continue;
         }
 
-        const provider = process.env.OPENROUTER_API_KEY ? 'openrouter' : GEMINI_API_KEY ? 'gemini' : 'claude';
+        const provider = OPENROUTER_API_KEY ? 'openrouter' : GEMINI_API_KEY ? 'gemini' : 'claude';
         checkBudget(db, provider);
 
         log('info', 'Calling Switch-3 API', { title: note.title, provider: provider });
@@ -642,8 +825,81 @@ async function main() {
           evergreen: (parsed.evergreen || []).length,
           trivia:    (parsed.trivia    || []).length,
           cost_usd:  cost.toFixed(5),
-          provider:  result.provider,
-          model:     result.modelUsed || null
+          provider:  result.provider
+        });
+      }
+
+      if (SW4) {
+        const body = readNoteBody(note.filepath);
+
+        if (MODE_DRY) {
+          console.log('\n=== DRY RUN — Switch-4 for: ' + note.title + ' (' + note.word_count + ' words) ===');
+          console.log('Full body length: ' + body.length + ' chars (no truncation)');
+          console.log('=== END ===\n');
+          processed++;
+          continue;
+        }
+
+        // Switch-4 always uses Gemini — needs 1M context
+        const s4provider = GEMINI_API_KEY ? 'gemini' : 'claude';
+        checkBudget(db, s4provider);
+
+        log('info', 'Calling Switch-4 API', {
+          title:    note.title,
+          words:    note.word_count,
+          chars:    body.length,
+          provider: s4provider
+        });
+
+        // Build prompt with full content
+        const content   = note.source_url ? 'Source URL: ' + note.source_url + '\n\n' + body : body;
+        const prompt    = buildS3Prompt('__FULL__', null).replace('__FULL__', content);
+        const result    = await callS4Api(content.length > S3_MAX_CHARS
+          ? buildS3Prompt(body, note.source_url).replace(content.slice(0, S3_MAX_CHARS), content)
+          : buildS3Prompt(body, note.source_url));
+        const parsed    = parseS3Response(result.text);
+
+        // Write classifications with switch_level=4 to distinguish from Switch-3 rows
+        const stmt = db.prepare(
+          'INSERT OR IGNORE INTO note_classifications (note_id, bucket, claim, annotation, confidence, switch_level, created_at) VALUES (@note_id, @bucket, @claim, @annotation, @confidence, @switch_level, @created_at)'
+        );
+        const now     = new Date().toISOString();
+        const buckets = ['verified', 'asserted', 'dubious', 'evergreen', 'trivia'];
+        db.exec('BEGIN');
+        for (var b = 0; b < buckets.length; b++) {
+          const bucket = buckets[b];
+          const items  = parsed[bucket] || [];
+          for (var bi = 0; bi < items.length; bi++) {
+            stmt.run({
+              note_id:      note.id,
+              bucket:       bucket,
+              claim:        items[bi].claim || items[bi],
+              annotation:   items[bi].annotation || null,
+              confidence:   items[bi].confidence || null,
+              switch_level: 4,
+              created_at:   now
+            });
+          }
+        }
+        if (parsed.inferredTags && parsed.inferredTags.length > 0) {
+          writeTagsToDb(db, note.id, parsed.inferredTags, 4);
+        }
+        db.exec('COMMIT');
+
+        const cost = recordSpend(db, result.provider, 'classifier-s4', note.id, result.tokensIn, result.tokensOut);
+
+        tagged++;
+        processed++;
+        log('info', 'Switch-4 complete', {
+          title:     note.title,
+          words:     note.word_count,
+          verified:  (parsed.verified  || []).length,
+          asserted:  (parsed.asserted  || []).length,
+          dubious:   (parsed.dubious   || []).length,
+          evergreen: (parsed.evergreen || []).length,
+          trivia:    (parsed.trivia    || []).length,
+          cost_usd:  cost.toFixed(5),
+          provider:  result.provider
         });
       }
 
