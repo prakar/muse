@@ -56,6 +56,11 @@ function ensureSchema(db) {
   if (!cols.includes('rejection_reason')) {
     db.exec('ALTER TABLE narratives ADD COLUMN rejection_reason TEXT');
   }
+  // quarry_exclude flag on vault_notes
+  const noteCols = db.prepare('PRAGMA table_info(vault_notes)').all().map(function(c) { return c.name; });
+  if (!noteCols.includes('quarry_exclude')) {
+    db.exec('ALTER TABLE vault_notes ADD COLUMN quarry_exclude INTEGER DEFAULT 0');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -145,6 +150,27 @@ const HTML_HEAD = `<!DOCTYPE html>
   .stats-bar strong { color: #c8b89a; }
   .approved-date { font-size: 0.78rem; color: #4a6a4a; }
   .section-title { font-size: 0.85rem; color: #666; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 20px; }
+  /* Review page */
+  .review-toolbar { background:#141414; border:1px solid #2a2a2a; border-radius:6px; padding:12px 20px; margin-bottom:16px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  .review-toolbar select, .review-toolbar input { background:#0f0f0f; border:1px solid #333; color:#aaa; padding:6px 10px; border-radius:4px; font-size:0.85rem; font-family:Georgia,serif; }
+  .review-toolbar label { font-size:0.85rem; color:#888; }
+  .review-table { width:100%; border-collapse:collapse; font-size:0.88rem; }
+  .review-table th { text-align:left; padding:8px 12px; color:#666; font-weight:normal; border-bottom:1px solid #2a2a2a; font-size:0.78rem; letter-spacing:0.06em; text-transform:uppercase; }
+  .review-table td { padding:8px 12px; border-bottom:1px solid #1a1a1a; vertical-align:top; }
+  .review-table tr:hover td { background:#141414; }
+  .review-table tr.excluded td { opacity:0.45; }
+  .note-title { color:#c8b89a; font-size:0.9rem; line-height:1.3; }
+  .note-excerpt { color:#666; font-size:0.82rem; line-height:1.4; margin-top:3px; max-width:480px; }
+  .note-meta { color:#444; font-size:0.75rem; white-space:nowrap; }
+  .note-tags { color:#5a4a3a; font-size:0.75rem; font-family:monospace; }
+  .cb-exclude { width:16px; height:16px; accent-color:#c86e6e; cursor:pointer; }
+  .btn-save-review { background:#1a3a1a; color:#6ec86e; border:1px solid #2a5a2a; padding:8px 24px; border-radius:5px; font-size:0.9rem; cursor:pointer; font-family:Georgia,serif; }
+  .btn-save-review:hover { opacity:0.85; }
+  .save-status { font-size:0.82rem; color:#666; }
+  .pagination { display:flex; gap:8px; align-items:center; margin-top:20px; }
+  .pagination a { color:#888; text-decoration:none; padding:5px 12px; border:1px solid #333; border-radius:4px; font-size:0.85rem; }
+  .pagination a:hover, .pagination a.active { color:#c8b89a; border-color:#555; }
+  .pagination span { color:#555; font-size:0.85rem; }
   /* Source note drawer */
   .drawer-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:100; }
   .drawer-overlay.open { display:block; }
@@ -172,6 +198,7 @@ const HTML_HEAD = `<!DOCTYPE html>
   <nav>
     <a href="/" id="nav-pending">Pending</a>
     <a href="/approved" id="nav-approved">Approved</a>
+    <a href="/review" id="nav-review">Review Notes</a>
   </nav>
 </header>
 <div class="container">`;
@@ -292,6 +319,7 @@ function closeDrawer(e) {
 var path = window.location.pathname;
 document.getElementById('nav-pending').className = path === '/' ? 'active' : '';
 document.getElementById('nav-approved').className = path === '/approved' ? 'active' : '';
+document.getElementById('nav-review').className = path.startsWith('/review') ? 'active' : '';
 </script>
 </body></html>`;
 
@@ -520,6 +548,121 @@ function router(req, res) {
       db.close();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
+    });
+    return;
+  }
+
+  // Review notes page
+  const reviewMatch = url.match(/^\/review(?:\?.*)?$/);
+  if (method === 'GET' && reviewMatch) {
+    const db = openDb();
+    ensureSchema(db);
+
+    const params    = new URLSearchParams(req.url.split('?')[1] || '');
+    const page      = Math.max(1, parseInt(params.get('page') || '1', 10));
+    const filter    = params.get('filter') || 'all';
+    const search    = (params.get('q') || '').trim();
+    const PAGE_SIZE = 100;
+    const offset    = (page - 1) * PAGE_SIZE;
+
+    var where = 'WHERE content_type != \'attachment\'';
+    if (filter === 'obsidian') where += " AND origin = 'obsidian'";
+    if (filter === 'untagged') where += ' AND has_tags = 0';
+    if (filter === 'excluded') where += ' AND quarry_exclude = 1';
+    if (filter === 'short')    where += ' AND word_count < 300';
+    if (search) where += " AND (title LIKE '%" + search.replace(/'/g,"''") + "%' OR first_paragraph LIKE '%" + search.replace(/'/g,"''") + "%')";
+
+    const total = db.prepare('SELECT COUNT(*) as n FROM vault_notes ' + where).get().n;
+    const notes = db.prepare(
+      'SELECT id, title, word_count, content_type, origin, first_paragraph, quarry_exclude, tag_source FROM vault_notes ' + where + ' ORDER BY origin, word_count DESC LIMIT ? OFFSET ?'
+    ).all(PAGE_SIZE, offset);
+
+    db.close();
+
+    const totalPages = Math.ceil(total / PAGE_SIZE);
+
+    const rows = notes.map(function(n) {
+      const excerpt = (n.first_paragraph || '').slice(0, 160).replace(/\n/g, ' ');
+      const checked = n.quarry_exclude ? 'checked' : '';
+      const excClass = n.quarry_exclude ? 'excluded' : '';
+      return '<tr class="' + excClass + '" id="row-' + n.id + '">' +
+        '<td><input type="checkbox" class="cb-exclude" id="cb-' + n.id + '" ' + checked + ' onchange="markChanged(' + n.id + ')" data-id="' + n.id + '"></td>' +
+        '<td><div class="note-title">' + escHtml(n.title) + '</div>' +
+             '<div class="note-excerpt">' + escHtml(excerpt) + '</div></td>' +
+        '<td class="note-meta">' + n.word_count + 'w</td>' +
+        '<td class="note-meta">' + escHtml(n.origin) + '</td>' +
+        '<td class="note-meta">' + escHtml(n.content_type) + '</td>' +
+        '<td class="note-tags">' + escHtml(n.tag_source || '') + '</td>' +
+        '</tr>';
+    }).join('');
+
+    var paginationHtml = '<div class="pagination">';
+    paginationHtml += '<span>' + total + ' notes, page ' + page + ' of ' + totalPages + '</span>';
+    if (page > 1) paginationHtml += '<a href="/review?page=' + (page-1) + '&filter=' + filter + '&q=' + encodeURIComponent(search) + '">← Prev</a>';
+    if (page < totalPages) paginationHtml += '<a href="/review?page=' + (page+1) + '&filter=' + filter + '&q=' + encodeURIComponent(search) + '">Next →</a>';
+    paginationHtml += '</div>';
+
+    const toolbar = '<div class="review-toolbar">' +
+      '<label>Filter: <select onchange="applyFilter(this.value)" id="filter-sel">' +
+      '<option value="all"' + (filter==='all'?' selected':'') + '>All notes</option>' +
+      '<option value="obsidian"' + (filter==='obsidian'?' selected':'') + '>Obsidian origin</option>' +
+      '<option value="untagged"' + (filter==='untagged'?' selected':'') + '>Untagged</option>' +
+      '<option value="short"' + (filter==='short'?' selected':'') + '>Short (&lt;300w)</option>' +
+      '<option value="excluded"' + (filter==='excluded'?' selected':'') + '>Already excluded</option>' +
+      '</select></label>' +
+      '<input type="text" id="search-box" placeholder="Search titles..." value="' + escHtml(search) + '" onkeydown="if(event.key===\'Enter\')applyFilter()" style="width:200px">' +
+      '<button class="btn-save-review" onclick="saveExclusions()">Save</button>' +
+      '<span class="save-status" id="save-status"></span>' +
+      '<label style="margin-left:auto"><input type="checkbox" onchange="selectAll(this)"> Select all visible</label>' +
+      '</div>';
+
+    const table = '<table class="review-table">' +
+      '<thead><tr><th style="width:32px"></th><th>Note</th><th>Words</th><th>Origin</th><th>Type</th><th>Tag src</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table>';
+
+    const reviewScript = '<script>' +
+      'var _changed = {};' +
+      'function markChanged(id) { _changed[id] = document.getElementById("cb-"+id).checked; var row=document.getElementById("row-"+id); row.className=document.getElementById("cb-"+id).checked?"excluded":""; }' +
+      'function selectAll(cb) { document.querySelectorAll(".cb-exclude").forEach(function(c){ c.checked=cb.checked; markChanged(c.dataset.id); }); }' +
+      'function applyFilter(val) {' +
+      '  var f=val||document.getElementById("filter-sel").value;' +
+      '  var q=document.getElementById("search-box").value;' +
+      '  window.location="/review?filter="+f+"&q="+encodeURIComponent(q); }' +
+      'function saveExclusions() {' +
+      '  var ids=Object.keys(_changed);' +
+      '  if(!ids.length){document.getElementById("save-status").textContent="Nothing changed.";return;}' +
+      '  document.getElementById("save-status").textContent="Saving...";' +
+      '  fetch("/api/notes/exclude",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(_changed)})' +
+      '  .then(function(r){return r.json();})' +
+      '  .then(function(d){document.getElementById("save-status").textContent="Saved "+d.updated+" notes.";_changed={};})' +
+      '  .catch(function(){document.getElementById("save-status").textContent="Save failed.";});' +
+      '}' +
+      '</script>';
+
+    const body = HTML_HEAD + '<p class="section-title">Note Review — mark notes to exclude from QUARRY narratives</p>' +
+      toolbar + table + paginationHtml + reviewScript + HTML_FOOT;
+
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(body);
+    return;
+  }
+
+  // API: save exclusions
+  if (method === 'POST' && url === '/api/notes/exclude') {
+    readBody(req, function(rawBody) {
+      var changes = {};
+      try { changes = JSON.parse(rawBody); } catch (_) {}
+      const db = openDb();
+      ensureSchema(db);
+      var updated = 0;
+      Object.keys(changes).forEach(function(id) {
+        db.prepare('UPDATE vault_notes SET quarry_exclude = ? WHERE id = ?')
+          .run(changes[id] ? 1 : 0, parseInt(id, 10));
+        updated++;
+      });
+      db.close();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, updated: updated }));
     });
     return;
   }
