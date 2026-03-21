@@ -40,13 +40,14 @@ const FULL_BODY_CHARS = 3000; // max chars of note body to send to narrator
 const args        = process.argv.slice(2);
 const MODE_NEXT   = args.includes('--next');
 const MODE_DRY    = args.includes('--dry-run');
+const MODE_LIVE   = args.includes('--live');
 const SPECIFIC_ID = (() => {
   const i = args.indexOf('--id');
   return i !== -1 ? parseInt(args[i + 1], 10) : null;
 })();
 
-if (!MODE_NEXT && !MODE_DRY && SPECIFIC_ID === null) {
-  console.error('Usage: node narrator.js [--next|--dry-run|--id <queue_id>]');
+if (!MODE_NEXT && !MODE_DRY && !MODE_LIVE && SPECIFIC_ID === null) {
+  console.error('Usage: node narrator.js [--next|--live|--dry-run|--id <queue_id>]');
   process.exit(1);
 }
 
@@ -602,12 +603,177 @@ function formatTelegram(narrative, notes, seedTheme, register) {
 }
 
 // ---------------------------------------------------------------------------
+// LIVE SELECTION — picks 3 fresh notes at narrator time, no queue
+// Same diversity constraint as curator: different tag roots, different domains
+// ---------------------------------------------------------------------------
+function liveSelectNotes(db) {
+  const CLUSTER_SIZE = 3;
+  const RECENT_DAYS  = 30;
+  const cutoff = new Date(Date.now() - RECENT_DAYS * 24 * 60 * 60 * 1000).toISOString();
+
+  // Recently used note ids
+  const recentRows = db.prepare(
+    'SELECT note_ids FROM narrative_queue WHERE created_at > ?'
+  ).all(cutoff);
+  const recentIds = new Set();
+  recentRows.forEach(function(r) {
+    try { JSON.parse(r.note_ids).forEach(function(id) { recentIds.add(id); }); } catch (_) {}
+  });
+
+  // Also exclude notes used in narratives recently
+  db.prepare(
+    'SELECT note_ids FROM narratives WHERE produced_at > ?'
+  ).all(cutoff).forEach(function(r) {
+    try { JSON.parse(r.note_ids).forEach(function(id) { recentIds.add(id); }); } catch (_) {}
+  });
+
+  // Eligible pool: classified notes with real content, not recently used
+  const hasClassifications = new Set(
+    db.prepare('SELECT DISTINCT note_id FROM note_classifications').all()
+      .map(function(r) { return r.note_id; })
+  );
+
+  const pool = db.prepare(
+    "SELECT id, title, word_count, content_type, source_url FROM vault_notes WHERE content_type != 'attachment' ORDER BY RANDOM() LIMIT 3000"
+  ).all().filter(function(n) {
+    if (recentIds.has(n.id)) return false;
+    if (n.word_count < 200 && !hasClassifications.has(n.id)) return false;
+    return true;
+  });
+
+  if (pool.length < CLUSTER_SIZE) {
+    log('warn', 'Live pool too small', { size: pool.length });
+    return null;
+  }
+
+  function getTagRoots(noteId) {
+    return db.prepare(
+      'SELECT DISTINCT tag_root FROM note_tags WHERE note_id = ? AND tag_root IS NOT NULL'
+    ).all(noteId).map(function(r) { return r.tag_root; });
+  }
+
+  function getDomain(url) {
+    if (!url) return null;
+    try { const m = url.match(/https?:\/\/([^/]+)/); return m ? m[1].replace(/^www\./, '') : null; }
+    catch (_) { return null; }
+  }
+
+  // Try up to 50 times to find a diverse cluster
+  for (var attempt = 0; attempt < 50; attempt++) {
+    const shuffled  = pool.slice().sort(function() { return Math.random() - 0.5; });
+    const selected  = [];
+    const usedRoots = new Set();
+    const usedDomains = new Set();
+
+    for (var i = 0; i < shuffled.length && selected.length < CLUSTER_SIZE; i++) {
+      const n       = shuffled[i];
+      const roots   = getTagRoots(n.id);
+      const domain  = getDomain(n.source_url);
+
+      // Reject same domain
+      if (domain && usedDomains.has(domain)) continue;
+
+      // After first note, require at least one new root
+      if (selected.length > 0 && roots.length > 0) {
+        const hasNew = roots.some(function(r) { return !usedRoots.has(r); });
+        if (!hasNew && selected.length >= 2) continue;
+      }
+
+      selected.push(n);
+      roots.forEach(function(r) { usedRoots.add(r); });
+      if (domain) usedDomains.add(domain);
+    }
+
+    if (selected.length === CLUSTER_SIZE) {
+      const sharedRoots = [];
+      usedRoots.forEach(function(r) {
+        var count = selected.filter(function(n) {
+          return getTagRoots(n.id).includes(r);
+        }).length;
+        if (count > 1) sharedRoots.push(r);
+      });
+      const theme = sharedRoots.length > 0
+        ? 'live:' + sharedRoots[0]
+        : 'live:serendipity';
+
+      log('info', 'Live selection', {
+        theme: theme,
+        notes: selected.map(function(n) { return n.title.slice(0, 50); })
+      });
+
+      return { ids: selected.map(function(n) { return n.id; }), theme: theme };
+    }
+  }
+
+  log('warn', 'Live selection failed after 50 attempts');
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // MAIN
 // ---------------------------------------------------------------------------
 async function main() {
-  log('info', 'QUARRY narrator starting', { mode: MODE_DRY ? 'dry-run' : 'live' });
+  log('info', 'QUARRY narrator starting', { mode: MODE_LIVE ? 'live' : MODE_DRY ? 'dry-run' : 'queue' });
 
   const db = openDb();
+
+  // LIVE MODE — bypass queue entirely
+  if (MODE_LIVE) {
+    const selection = liveSelectNotes(db);
+    if (!selection) {
+      log('error', 'Live selection produced no cluster');
+      db.close(); return;
+    }
+
+    const notes = fetchClusterNotes(db, selection.ids);
+    if (notes.length < 2) {
+      log('warn', 'Too few readable notes in live selection');
+      db.close(); return;
+    }
+
+    const userMessage = buildUserMessage(notes, selection.theme);
+
+    if (MODE_DRY) {
+      console.log('\n=== LIVE DRY RUN ===\n');
+      console.log(userMessage.slice(0, 800) + '...');
+      db.close(); return;
+    }
+
+    var result;
+    try {
+      result = await callNarrator(userMessage);
+    } catch (e) {
+      log('error', 'Live narrator API call failed', { err: e.message });
+      db.close(); return;
+    }
+
+    log('info', 'Live narrative produced', {
+      theme:    selection.theme,
+      length:   result.text.length,
+      register: parseRegister(result.text)
+    });
+
+    // Store in narratives without a queue_id
+    const register = parseRegister(result.text);
+    const body     = stripRegisterLine(result.text);
+    db.prepare(
+      'INSERT INTO narratives (queue_id, note_ids, seed_theme, body, register, model_used, produced_at, used_for_kcircle) VALUES (NULL, ?, ?, ?, ?, ?, ?, 0)'
+    ).run(
+      JSON.stringify(selection.ids),
+      selection.theme,
+      body,
+      register,
+      result.model,
+      new Date().toISOString()
+    );
+
+    const telegramMsg = formatTelegram(body, notes, selection.theme, register);
+    console.log('\n' + telegramMsg + '\n');
+
+    log('info', 'Live narrator complete', { theme: selection.theme, register: register });
+    db.close();
+    return;
+  }
 
   // Get queue item
   var queueItem;
