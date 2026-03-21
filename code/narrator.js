@@ -306,6 +306,11 @@ TONE
   Right: Find the fact that proves Y and let it speak.
 - Never write "interestingly" or "fascinatingly" or "remarkably"
   — if it's any of those things, the writing will show it
+- Never end with a sentence that names the theme of the narrative.
+  If your closing sentence contains words like "remains", "endures",
+  "quest", "impulse", "testament", "powerful", or "resonates" —
+  delete it and replace it with a single concrete fact in the present tense.
+  The reader already felt the theme. Do not name it.
 - Never open with "This narrative explores..." or any preamble
   The first sentence is the hook. It must earn the second.
 - Indic cultural references, when they arise naturally from the notes,
