@@ -96,33 +96,7 @@ function readNoteBody(filepath) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// FETCH CLUSTER NOTES
-// ---------------------------------------------------------------------------
-function fetchClusterNotes(db, noteIds) {
-  return noteIds.map(function(id) {
-    const note = db.prepare(
-      'SELECT id, filepath, title, first_paragraph, source_url, word_count, content_type FROM vault_notes WHERE id = ?'
-    ).get(id);
-    if (!note) return null;
 
-    const tags = db.prepare(
-      'SELECT tag_full FROM note_tags WHERE note_id = ? ORDER BY is_hierarchical DESC'
-    ).all(id).map(function(r) { return r.tag_full; });
-
-    const body = readNoteBody(note.filepath);
-
-    return {
-      id:              note.id,
-      title:           note.title,
-      body:            body || note.first_paragraph || '',
-      tags:            tags,
-      source_url:      note.source_url,
-      word_count:      note.word_count,
-      content_type:    note.content_type
-    };
-  }).filter(Boolean);
-}
 
 // ---------------------------------------------------------------------------
 // SYSTEM PROMPT
@@ -307,11 +281,6 @@ TONE
   Right: Find the fact that proves Y and let it speak.
 - Never write "interestingly" or "fascinatingly" or "remarkably"
   — if it's any of those things, the writing will show it
-- Never end with a sentence that names the theme of the narrative.
-  If your closing sentence contains words like "remains", "endures",
-  "quest", "impulse", "testament", "powerful", or "resonates" —
-  delete it and replace it with a single concrete fact in the present tense.
-  The reader already felt the theme. Do not name it.
 - Never open with "This narrative explores..." or any preamble
   The first sentence is the hook. It must earn the second.
 - Indic cultural references, when they arise naturally from the notes,
