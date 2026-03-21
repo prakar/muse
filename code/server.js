@@ -598,8 +598,8 @@ function router(req, res) {
 
     var paginationHtml = '<div class="pagination">';
     paginationHtml += '<span>' + total + ' notes, page ' + page + ' of ' + totalPages + '</span>';
-    if (page > 1) paginationHtml += '<a href="/review?page=' + (page-1) + '&filter=' + filter + '&q=' + encodeURIComponent(search) + '">← Prev</a>';
-    if (page < totalPages) paginationHtml += '<a href="/review?page=' + (page+1) + '&filter=' + filter + '&q=' + encodeURIComponent(search) + '">Next →</a>';
+    if (page > 1) paginationHtml += '<a href="#" onclick="saveAndGo(\'/review?page=' + (page-1) + '&filter=' + filter + '&q=' + encodeURIComponent(search) + '\');return false;">← Prev</a>';
+    if (page < totalPages) paginationHtml += '<a href="#" onclick="saveAndGo(\'/review?page=' + (page+1) + '&filter=' + filter + '&q=' + encodeURIComponent(search) + '\');return false;">Next →</a>';
     paginationHtml += '</div>';
 
     const toolbar = '<div class="review-toolbar">' +
@@ -622,19 +622,28 @@ function router(req, res) {
 
     const reviewScript = '<script>' +
       'var _changed = {};' +
-      'function markChanged(id) { _changed[id] = document.getElementById("cb-"+id).checked; var row=document.getElementById("row-"+id); row.className=document.getElementById("cb-"+id).checked?"excluded":""; }' +
+      'var _pendingNav = null;' +
+      'window.addEventListener("beforeunload", function(e) { if (Object.keys(_changed).length > 0) { e.preventDefault(); e.returnValue = ""; } });' +
+      'function markChanged(id) { _changed[id] = document.getElementById("cb-"+id).checked; var row=document.getElementById("row-"+id); row.className=document.getElementById("cb-"+id).checked?"excluded":""; document.getElementById("save-status").textContent=Object.keys(_changed).length+" unsaved change(s)"; }' +
       'function selectAll(cb) { document.querySelectorAll(".cb-exclude").forEach(function(c){ c.checked=cb.checked; markChanged(c.dataset.id); }); }' +
       'function applyFilter(val) {' +
       '  var f=val||document.getElementById("filter-sel").value;' +
       '  var q=document.getElementById("search-box").value;' +
-      '  window.location="/review?filter="+f+"&q="+encodeURIComponent(q); }' +
+      '  saveAndGo("/review?filter="+f+"&q="+encodeURIComponent(q)); }' +
+      'function saveAndGo(url) {' +
+      '  if (!Object.keys(_changed).length) { window.location=url; return; }' +
+      '  document.getElementById("save-status").textContent="Saving...";' +
+      '  fetch("/api/notes/exclude",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(_changed)})' +
+      '  .then(function(r){return r.json();})' +
+      '  .then(function(d){ _changed={}; window.location=url; })' +
+      '  .catch(function(){ document.getElementById("save-status").textContent="Save failed — navigate anyway?"; _pendingNav=url; }); }' +
       'function saveExclusions() {' +
       '  var ids=Object.keys(_changed);' +
       '  if(!ids.length){document.getElementById("save-status").textContent="Nothing changed.";return;}' +
       '  document.getElementById("save-status").textContent="Saving...";' +
       '  fetch("/api/notes/exclude",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(_changed)})' +
       '  .then(function(r){return r.json();})' +
-      '  .then(function(d){document.getElementById("save-status").textContent="Saved "+d.updated+" notes.";_changed={};})' +
+      '  .then(function(d){document.getElementById("save-status").textContent="Saved "+d.updated+" notes. ✓";_changed={};})' +
       '  .catch(function(){document.getElementById("save-status").textContent="Save failed.";});' +
       '}' +
       '</script>';
