@@ -634,7 +634,7 @@ function liveSelectNotes(db) {
   );
 
   const pool = db.prepare(
-    "SELECT id, title, word_count, content_type, source_url FROM vault_notes WHERE content_type != 'attachment' ORDER BY RANDOM() LIMIT 3000"
+    "SELECT id, title, word_count, content_type, source_url FROM vault_notes WHERE content_type NOT IN ('attachment','processed') AND title NOT LIKE '% MOC%' AND title NOT LIKE 'MOC %' AND (quarry_exclude IS NULL OR quarry_exclude = 0) ORDER BY RANDOM() LIMIT 3000"
   ).all().filter(function(n) {
     if (recentIds.has(n.id)) return false;
     if (n.word_count < 200 && !hasClassifications.has(n.id)) return false;

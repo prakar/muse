@@ -144,7 +144,7 @@ function buildEligiblePool(db, recentIds) {
   );
 
   const rows = db.prepare(
-    "SELECT id, title, word_count, content_type, source_url, folder_hint FROM vault_notes WHERE content_type != 'attachment' ORDER BY RANDOM() LIMIT 2000"
+    "SELECT id, title, word_count, content_type, source_url, folder_hint FROM vault_notes WHERE content_type NOT IN ('attachment','processed') AND title NOT LIKE '% MOC%' AND title NOT LIKE 'MOC %' AND (quarry_exclude IS NULL OR quarry_exclude = 0) ORDER BY RANDOM() LIMIT 2000"
   ).all();
 
   return rows.filter(function(n) {
