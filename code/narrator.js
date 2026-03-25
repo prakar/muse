@@ -45,9 +45,19 @@ const SPECIFIC_ID = (() => {
   const i = args.indexOf('--id');
   return i !== -1 ? parseInt(args[i + 1], 10) : null;
 })();
+const NUM_SOURCES = (() => {
+  const i = args.indexOf('--numSources');
+  if (i !== -1) {
+    const n = parseInt(args[i + 1], 10);
+    if (n >= 1 && n <= 5) return n;
+    console.error('--numSources must be between 1 and 5');
+    process.exit(1);
+  }
+  return 3; // default
+})();
 
 if (!MODE_NEXT && !MODE_DRY && !MODE_LIVE && SPECIFIC_ID === null) {
-  console.error('Usage: node narrator.js [--next|--live|--dry-run|--id <queue_id>]');
+  console.error('Usage: node narrator.js [--next|--live|--dry-run|--id <queue_id>] [--numSources 1-5]');
   process.exit(1);
 }
 
@@ -572,11 +582,12 @@ function formatTelegram(narrative, notes, seedTheme, register) {
 }
 
 // ---------------------------------------------------------------------------
-// LIVE SELECTION — picks 3 fresh notes at narrator time, no queue
-// Same diversity constraint as curator: different tag roots, different domains
+// LIVE SELECTION — picks N fresh notes at narrator time, no queue
+// NUM_SOURCES=1: picks the single richest classified note
+// NUM_SOURCES=2-5: diversity constraint applies
 // ---------------------------------------------------------------------------
 function liveSelectNotes(db) {
-  const CLUSTER_SIZE = 3;
+  const CLUSTER_SIZE = NUM_SOURCES;
   const RECENT_DAYS  = 30;
   const cutoff = new Date(Date.now() - RECENT_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
@@ -588,15 +599,52 @@ function liveSelectNotes(db) {
   recentRows.forEach(function(r) {
     try { JSON.parse(r.note_ids).forEach(function(id) { recentIds.add(id); }); } catch (_) {}
   });
-
-  // Also exclude notes used in narratives recently
   db.prepare(
     'SELECT note_ids FROM narratives WHERE produced_at > ?'
   ).all(cutoff).forEach(function(r) {
     try { JSON.parse(r.note_ids).forEach(function(id) { recentIds.add(id); }); } catch (_) {}
   });
 
-  // Eligible pool: classified notes with real content, not recently used
+  // SINGLE NOTE MODE — pick the richest classified note not recently used
+  if (CLUSTER_SIZE === 1) {
+    const candidates = db.prepare(`
+      SELECT vn.id, vn.title, vn.word_count,
+             COUNT(nc.id) as claim_count,
+             SUM(CASE WHEN nc.bucket = 'verified' THEN 1 ELSE 0 END) as verified_count,
+             SUM(CASE WHEN nc.bucket = 'trivia'   THEN 1 ELSE 0 END) as trivia_count
+      FROM vault_notes vn
+      JOIN note_classifications nc ON nc.note_id = vn.id
+      WHERE vn.content_type NOT IN ('attachment','processed')
+        AND vn.title NOT LIKE '% MOC%'
+        AND vn.title NOT LIKE 'MOC %'
+        AND (vn.quarry_exclude IS NULL OR vn.quarry_exclude = 0)
+      GROUP BY vn.id
+      ORDER BY RANDOM()
+      LIMIT 200
+    `).all().filter(function(n) { return !recentIds.has(n.id); });
+
+    if (candidates.length === 0) {
+      log('warn', 'No classified notes available for single-note mode');
+      return null;
+    }
+
+    // Pick randomly from the top 20 by richness (verified + trivia)
+    const sorted = candidates
+      .sort(function(a, b) { return (b.verified_count + b.trivia_count * 2) - (a.verified_count + a.trivia_count * 2); })
+      .slice(0, 20);
+    const picked = sorted[Math.floor(Math.random() * sorted.length)];
+
+    log('info', 'Live selection (single note)', {
+      theme: 'live:single',
+      notes: [picked.title.slice(0, 50)],
+      verified: picked.verified_count,
+      trivia: picked.trivia_count
+    });
+
+    return { ids: [picked.id], theme: 'live:single' };
+  }
+
+  // MULTI NOTE MODE — diversity constraint
   const hasClassifications = new Set(
     db.prepare('SELECT DISTINCT note_id FROM note_classifications').all()
       .map(function(r) { return r.note_id; })
@@ -627,22 +675,18 @@ function liveSelectNotes(db) {
     catch (_) { return null; }
   }
 
-  // Try up to 50 times to find a diverse cluster
   for (var attempt = 0; attempt < 50; attempt++) {
-    const shuffled  = pool.slice().sort(function() { return Math.random() - 0.5; });
-    const selected  = [];
-    const usedRoots = new Set();
+    const shuffled    = pool.slice().sort(function() { return Math.random() - 0.5; });
+    const selected    = [];
+    const usedRoots   = new Set();
     const usedDomains = new Set();
 
     for (var i = 0; i < shuffled.length && selected.length < CLUSTER_SIZE; i++) {
-      const n       = shuffled[i];
-      const roots   = getTagRoots(n.id);
-      const domain  = getDomain(n.source_url);
+      const n      = shuffled[i];
+      const roots  = getTagRoots(n.id);
+      const domain = getDomain(n.source_url);
 
-      // Reject same domain
       if (domain && usedDomains.has(domain)) continue;
-
-      // After first note, require at least one new root
       if (selected.length > 0 && roots.length > 0) {
         const hasNew = roots.some(function(r) { return !usedRoots.has(r); });
         if (!hasNew && selected.length >= 2) continue;
@@ -661,12 +705,11 @@ function liveSelectNotes(db) {
         }).length;
         if (count > 1) sharedRoots.push(r);
       });
-      const theme = sharedRoots.length > 0
-        ? 'live:' + sharedRoots[0]
-        : 'live:serendipity';
+      const theme = sharedRoots.length > 0 ? 'live:' + sharedRoots[0] : 'live:serendipity';
 
       log('info', 'Live selection', {
         theme: theme,
+        sources: CLUSTER_SIZE,
         notes: selected.map(function(n) { return n.title.slice(0, 50); })
       });
 
@@ -695,7 +738,7 @@ async function main() {
     }
 
     const notes = fetchClusterNotes(db, selection.ids);
-    if (notes.length < 2) {
+    if (notes.length < NUM_SOURCES) {
       log('warn', 'Too few readable notes in live selection');
       db.close(); return;
     }
@@ -774,7 +817,7 @@ async function main() {
   const noteIds = JSON.parse(queueItem.note_ids);
   const notes   = fetchClusterNotes(db, noteIds);
 
-  if (notes.length < 2) {
+  if (notes.length < NUM_SOURCES) {
     log('warn', 'Cluster has too few readable notes', { id: queueItem.id, found: notes.length });
     if (!MODE_DRY) {
       db.prepare("UPDATE narrative_queue SET status = 'failed' WHERE id = ?")
