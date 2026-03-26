@@ -50,15 +50,31 @@ const VIDEO_PATTERNS = [
 
 function extractVideoLinks(text) {
   const found = new Set();
-  for (const pattern of VIDEO_PATTERNS) {
-    pattern.lastIndex = 0; // reset stateful regex
-    let m;
-    while ((m = pattern.exec(text)) !== null) {
-      // Strip trailing punctuation that crept in
-      const url = m[0].replace(/[.,;:!?)]+$/, '');
+
+  // 1. Broad URL capture (robust)
+  const urlRegex = /https?:\/\/[^\s"'<>()\]]+/g;
+
+  let m;
+  while ((m = urlRegex.exec(text)) !== null) {
+    let url = m[0];
+
+    // Clean trailing junk
+    url = url.replace(/[.,;:!?)\]]+$/, '');
+
+    // 2. Filter: video platforms OR real video files
+    if (
+      url.includes('youtube.com') ||
+      url.includes('youtu.be') ||
+      url.includes('vimeo.com') ||
+      url.includes('dailymotion.com') ||
+      url.includes('rumble.com') ||
+      url.includes('twitch.tv') ||
+      /\.(mp4|webm|avi)$/i.test(url)
+    ) {
       found.add(url);
     }
   }
+
   return Array.from(found);
 }
 
@@ -105,7 +121,7 @@ function main() {
     if (links.length === 0) continue;
 
     withLinks++;
-    const csv = links.join(',');
+    const csv = JSON.stringify(links);
 
     if (DRY_RUN) {
       console.log('\n[' + note.id + '] ' + note.title.slice(0, 70));
