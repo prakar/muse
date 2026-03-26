@@ -285,29 +285,16 @@ function buildMindfulPrompt(noteContent, sourceUrl, listFmt, chunkNum, totalChun
 
   // URL mode: no body text, let the model fetch and compress from source
   if (sourceUrl && !noteContent) {
-    return chunkNote+ `
-    - Compress to at most 20% of the source material's wordcount. 
-    - Retain the voice. 
-    - DO NOT add self-conscious labels to anything you write. 
-    - Drastically condense text *EXCEPT* the parts pertaining to the main thesis of the source; e.g., - if the source is about etymology, make that part relatively expansive. 
-    - REPRODUCE ALL the trivia as-is.
-    - All other content, process into low-verbiage high-information-density text. 
-    - DO NOT editorialise or signal your actions - DO NOT append explanatory or rubric notes to the headings, e.g., - "(retained)", "(no poetry, just signal)", "(as-is, no fluff)", "(passthrough)", "(keep, because signal-rich)", '(compressed)".
-    - Do not label the action(s) you took anywhere, just take the action. 
-    ---START SOURCE ---- 
-    ${sourceUrl}
-    ---END SOURCE---
-    `;
-//     return chunkNote+`You are compressing a source into an information-dense personal knowledge note.
+    return chunkNote+`You are compressing a web article into a dense personal knowledge note.
 
-// Fetch and read this URL: ${sourceUrl}
+Fetch and read this URL: ${sourceUrl}
 
-// Then produce a compressed version that is at MOST 20% of the original article length, using these constraints:
-// - Preserve all specific names, dates, figures, titles, and factual claims from the source.
-// - Identify the thesis and in the rewrite make its key evidence expansive.
-// - Compress narration, scene-setting, sentimental reflections, and repeated points.
-// - Trivia, etymologies, and surprising facts are important: conserve them as-is in your writeup.
-// - Do NOT label or name your actions. Only output the compressed note body.`;
+Then produce a compressed version at roughly 20% of the original article length.
+- Preserve all specific names, dates, figures, titles, and factual claims.
+- Keep the thesis and its key evidence expansive.
+- Compress narration, scene-setting, and repeated points.
+- Trivia, etymologies, and surprising facts: passthrough unchanged.
+- Do NOT label your actions. Output only the compressed note body.`;
   }
 
   const listInstr = listFmt
@@ -462,28 +449,70 @@ async function callGemini(prompt) {
   return {text, tokensIn:usage.promptTokenCount||0, tokensOut:usage.candidatesTokenCount||0, provider:'gemini'};
 }
 
-// Mindful-wc uses higher output limit and warmer temperature to preserve voice
-async function callGeminiMindful(prompt) {
+// Mindful-wc uses higher output limit, warmer temperature, longer timeout, and retry
+async function callGeminiMindful(prompt, attempt) {
   if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not set');
-  const res = await httpPost('generativelanguage.googleapis.com',
-    '/v1beta/models/'+GEMINI_MODEL+':generateContent?key='+GEMINI_API_KEY, {},
-    {
-      contents: [{role:'user',parts:[{text:prompt}]}],
+  attempt = attempt || 1;
+  const MAX_ATTEMPTS = 3;
+  const TIMEOUT_MS   = 5 * 60 * 1000; // 5 minutes — large outputs take time
+
+  return new Promise(function(resolve, reject) {
+    const bodyStr = JSON.stringify({
+      contents: [{role:'user', parts:[{text:prompt}]}],
       generationConfig: {maxOutputTokens:65536, temperature:0.3}
-    }
-  );
-  if (res.status!==200) throw new Error('Gemini mindful error '+res.status+': '+JSON.stringify(res.body).slice(0,200));
-  const candidate = ((res.body.candidates||[])[0]||{});
-  const text      = ((candidate.content||{}).parts||[]).map(p=>p.text||'').join('');
-  const usage     = res.body.usageMetadata||{};
-  if (candidate.finishReason && candidate.finishReason !== 'STOP') {
-    log('warn', 'Gemini mindful non-STOP finish', {reason:candidate.finishReason, tokensOut:usage.candidatesTokenCount});
-  }
-  return {text, tokensIn:usage.promptTokenCount||0, tokensOut:usage.candidatesTokenCount||0, provider:'gemini'};
+    });
+
+    const req = require('https').request({
+      hostname: 'generativelanguage.googleapis.com',
+      path:     '/v1beta/models/'+GEMINI_MODEL+':generateContent?key='+GEMINI_API_KEY,
+      method:   'POST',
+      headers:  {'Content-Type':'application/json','Content-Length':Buffer.byteLength(bodyStr)}
+    }, function(res) {
+      let data = '';
+      res.on('data', function(c) { data += c; });
+      res.on('end', function() {
+        try {
+          const body      = JSON.parse(data);
+          if (res.statusCode !== 200) {
+            reject(new Error('Gemini mindful error '+res.statusCode+': '+JSON.stringify(body).slice(0,200)));
+            return;
+          }
+          const candidate = ((body.candidates||[])[0]||{});
+          const text      = ((candidate.content||{}).parts||[]).map(function(p){return p.text||'';}).join('');
+          const usage     = body.usageMetadata||{};
+          if (candidate.finishReason && candidate.finishReason !== 'STOP') {
+            log('warn','Gemini mindful non-STOP finish',{reason:candidate.finishReason,tokensOut:usage.candidatesTokenCount});
+          }
+          resolve({text, tokensIn:usage.promptTokenCount||0, tokensOut:usage.candidatesTokenCount||0, provider:'gemini'});
+        } catch(e) { reject(e); }
+      });
+    });
+
+    // 5-minute socket timeout
+    req.setTimeout(TIMEOUT_MS, function() {
+      req.destroy(new Error('GEMINI_TIMEOUT'));
+    });
+
+    req.on('error', function(e) {
+      const retriable = e.code === 'ETIMEDOUT' || e.code === 'ECONNRESET' || e.message === 'GEMINI_TIMEOUT';
+      if (retriable && attempt < MAX_ATTEMPTS) {
+        const delay = attempt * 30000; // 30s, 60s back-off
+        log('warn','Gemini mindful timeout, retrying',{attempt, nextIn:delay/1000+'s', err:e.code||e.message});
+        setTimeout(function() {
+          callGeminiMindful(prompt, attempt+1).then(resolve).catch(reject);
+        }, delay);
+      } else {
+        reject(e);
+      }
+    });
+
+    req.write(bodyStr);
+    req.end();
+  });
 }
 
 // For very long notes (>25K words), split into ~8K-word chunks, compress each, reassemble
-const CHUNK_WORD_LIMIT = 8000;
+const CHUNK_WORD_LIMIT = 5000; // smaller chunks = shorter output per call, fewer timeouts
 
 async function compressInChunks(body, sourceUrl, listFmt, db, noteId) {
   const words  = body.split(/\s+/);
@@ -630,7 +659,7 @@ async function runMindfulWc(db) {
       const sourceUrl = note.source_url || extractSourceUrl(note.filepath);
       const listFmt   = isListFormat(body);
       const wordCount = (body.match(/\S+/g)||[]).length;
-      const useUrl    = !!(sourceUrl && sourceUrl.startsWith('http'));
+      const useUrl    = false; // URL mode disabled — Gemini fetches from training, not the actual document
       const chunked   = !useUrl && wordCount > CHUNK_WORD_LIMIT;
 
       log('info', 'mindful-wc compressing', {
