@@ -179,13 +179,6 @@ const DRAWER_HTML = `
     <div class="drawer-tabs" id="drawer-tabs"></div>
     <div class="drawer-body">
       <div class="drawer-meta" id="drawer-meta"></div>
-      
-      <!-- Edit controls -->
-      <div id="edit-controls" style="margin-bottom:12px; display:none; gap:8px;">
-        <button class="btn" onclick="saveNote()" style="background:#1a3a1a;color:#6ec86e;border:1px solid #2a5a2a;">💾 Save to File</button>
-        <button class="btn" onclick="cancelEdit()" style="background:#3a1a1a;color:#c86e6e;border:1px solid #5a2a2a;">Cancel</button>
-      </div>
-
       <div class="drawer-content" id="drawer-content">Loading...</div>
     </div>
   </div>
@@ -193,96 +186,48 @@ const DRAWER_HTML = `
 
 const COMMON_JS = `<script>
 var _drawerData = {};
-var _currentNoteId = null;
-var _isEditing = false;
-var _originalContent = '';
-
+var _currentNote = null;
 function openNote(noteId) {
-  _currentNoteId = noteId;
-  _isEditing = false;
+  _currentNote = noteId;
   var o=document.getElementById('drawer-overlay'),c=document.getElementById('drawer-content'),
       t=document.getElementById('drawer-title'),m=document.getElementById('drawer-meta'),
-      tb=document.getElementById('drawer-tabs'), ec=document.getElementById('edit-controls');
-  
-  c.textContent='Loading...'; tb.innerHTML=''; m.innerHTML=''; ec.style.display='none';
-  o.classList.add('open');
-
+      tb=document.getElementById('drawer-tabs');
+  c.textContent='Loading...'; tb.innerHTML=''; m.innerHTML=''; o.classList.add('open');
   fetch('/api/notes/'+noteId).then(function(r){return r.json();}).then(function(d){
-    _drawerData[noteId]=d; 
-    _originalContent = d.body || '';
-    t.textContent=d.title||'Note';
-
-    var mp=[]; 
-    if(d.word_count) mp.push(d.word_count+' words'); 
-    if(d.content_type) mp.push(d.content_type);
+    _drawerData[noteId]=d; t.textContent=d.title||'Note';
+    var mp=[]; if(d.word_count) mp.push(d.word_count+' words'); if(d.content_type) mp.push(d.content_type);
     if(d.source_url) mp.push('<a href="'+d.source_url+'" target="_blank">source ↗</a>');
-    m.innerHTML=mp.join(' · ');
-
+    m.innerHTML=mp.join(' · ')+'&nbsp;&nbsp;<button onclick="startEdit('+noteId+')" style="background:none;border:1px solid #444;color:#888;padding:2px 10px;border-radius:3px;cursor:pointer;font-size:.78rem;">✎ Edit</button>';
     var th='',ft='raw';
     if(d.essay){th+='<button class="drawer-tab active" onclick="showTab('+noteId+',\\'essay\\',this)">Essay</button>';ft='essay';}
     th+='<button class="drawer-tab'+(ft==='raw'?' active':'')+'" onclick="showTab('+noteId+',\\'raw\\',this)">Raw Note</button>';
     if(d.verified&&d.verified.length) th+='<button class="drawer-tab" onclick="showTab('+noteId+',\\'facts\\',this)">Verified ('+d.verified.length+')</button>';
-    
-    tb.innerHTML=th; 
-    showTabContent(noteId,ft);
-
-    // Add Edit button in header
-    var editBtn = document.createElement('button');
-    editBtn.className = 'btn';
-    editBtn.style.cssText = 'background:#2a2a3a;color:#aaa;border:1px solid #444;margin-left:auto;';
-    editBtn.textContent = '✎ Edit Note';
-    editBtn.onclick = function(){ startEdit(); };
-    document.querySelector('.drawer-head').appendChild(editBtn);
+    tb.innerHTML=th; showTabContent(noteId,ft);
   }).catch(function(e){c.textContent='Failed: '+e.message;});
 }
-
-function startEdit() {
-  _isEditing = true;
-  var c = document.getElementById('drawer-content');
-  var ec = document.getElementById('edit-controls');
-  ec.style.display = 'flex';
-
-  c.innerHTML = '<textarea id="note-editor" style="width:100%; height:calc(100vh - 280px); background:#0f0f0f; color:#e8e4dc; border:1px solid #555; padding:16px; font-family:monospace; font-size:0.95rem; line-height:1.65; resize:none;">' 
-              + escHtml(_originalContent) + '</textarea>';
+function startEdit(noteId) {
+  var d=_drawerData[noteId]; if(!d) return;
+  var c=document.getElementById('drawer-content');
+  c.innerHTML='<textarea id="note-editor" style="width:100%;height:calc(100vh - 260px);background:#0f0f0f;color:#e8e4dc;border:1px solid #555;padding:14px;font-family:monospace;font-size:.9rem;line-height:1.65;resize:none;">'+escHtml(d.body||'')+'</textarea>'+
+    '<div style="margin-top:10px;display:flex;gap:8px">'+
+    '<button onclick="saveNote('+noteId+')" style="background:#1a3a1a;color:#6ec86e;border:1px solid #2a5a2a;padding:7px 18px;border-radius:4px;cursor:pointer;">💾 Save</button>'+
+    '<button onclick="openNote('+noteId+')" style="background:#3a1a1a;color:#c86e6e;border:1px solid #5a2a2a;padding:7px 18px;border-radius:4px;cursor:pointer;">Cancel</button>'+
+    '</div>';
 }
-
-function saveNote() {
-  var ta = document.getElementById('note-editor');
-  if (!ta) return;
-  var newContent = ta.value;
-
-  fetch('/api/notes/' + _currentNoteId, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ content: newContent })
-  })
+function saveNote(noteId) {
+  var ta=document.getElementById('note-editor'); if(!ta) return;
+  fetch('/api/notes/'+noteId+'/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:ta.value})})
   .then(function(r){return r.json();})
   .then(function(res){
-    if (res.ok) {
-      _originalContent = newContent;
-      alert('✓ Saved to original .md file (backup created)');
-      cancelEdit();
-      openNote(_currentNoteId);   // refresh
-    } else {
-      alert('Save failed');
-    }
-  })
-  .catch(function(err){ alert('Error: ' + err.message); });
+    if(res.ok){alert('Saved (backup created at .bak)');openNote(noteId);}
+    else alert('Save failed: '+(res.error||'unknown'));
+  }).catch(function(e){alert('Error: '+e.message);});
 }
-
-function cancelEdit() {
-  _isEditing = false;
-  document.getElementById('edit-controls').style.display = 'none';
-  showTabContent(_currentNoteId, 'raw');
-}
-
+function escHtml(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function showTab(id,tab,btn){
-  if (_isEditing) return;
   document.querySelectorAll('.drawer-tab').forEach(function(b){b.classList.remove('active');});
-  if(btn) btn.classList.add('active'); 
-  showTabContent(id,tab);
+  if(btn) btn.classList.add('active'); showTabContent(id,tab);
 }
-
 function showTabContent(id,tab){
   var d=_drawerData[id]; if(!d) return;
   var c=document.getElementById('drawer-content');
@@ -290,13 +235,10 @@ function showTabContent(id,tab){
   else if(tab==='facts') c.textContent=(d.verified||[]).map(function(f){return '• '+f;}).join('\\n');
   else c.textContent=d.body||'(no content)';
 }
-
 function closeDrawer(e){
   if(e&&e.target!==document.getElementById('drawer-overlay')) return;
   document.getElementById('drawer-overlay').classList.remove('open');
 }
-
-// Keep all your original functions below unchanged
 function approve(id){fetch('/api/narratives/'+id+'/approve',{method:'POST'}).then(function(r){if(r.ok){document.getElementById('card-'+id).remove();updateCount();}});}
 function reject(id){
   var reason=document.getElementById('reason-'+id).value.trim();
@@ -311,10 +253,6 @@ function copyText(id){
   });
 }
 function updateCount(){var r=document.querySelectorAll('.card').length,e=document.getElementById('pending-count');if(e)e.textContent=r;}
-
-function escHtml(s) {
-  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,"&#39;");
-}
 </script>`;
 
 // ---------------------------------------------------------------------------
@@ -631,51 +569,30 @@ function router(req, res) {
     }); return;
   }
 
-  // API: save edited note back to .md file
-  const saveNoteMatch = url.match(/^\/api\/notes\/(\d+)$/);
-  if (method==='POST' && saveNoteMatch) {
-    const id = parseInt(saveNoteMatch[1],10);
+  // API: save edited note body back to .md file (distinct URL — no collision with GET /api/notes/:id)
+  const saveMatch = url.match(/^\/api\/notes\/(\d+)\/save$/);
+  if (method==='POST' && saveMatch) {
+    const id = parseInt(saveMatch[1],10);
     readBody(req, function(b) {
-      var data;
-      try { data = JSON.parse(b); } catch(_) { 
-        res.writeHead(400,{'Content-Type':'application/json'}); 
-        res.end('{"error":"Invalid JSON"}'); 
-        return; 
-      }
-
-      const db = openDb();
+      var data; try { data=JSON.parse(b); } catch(_) { res.writeHead(400,{'Content-Type':'application/json'}); res.end('{"error":"Invalid JSON"}'); return; }
+      const db   = openDb(); ensureSchema(db);
       const note = db.prepare('SELECT filepath FROM vault_notes WHERE id=?').get(id);
       db.close();
-
-      if (!note || !note.filepath) {
-        res.writeHead(404,{'Content-Type':'application/json'});
-        res.end('{"error":"Filepath not found"}');
-        return;
-      }
-
+      if (!note) { res.writeHead(404,{'Content-Type':'application/json'}); res.end('{"error":"Note not found"}'); return; }
       try {
-        let original = fs.readFileSync(note.filepath, 'utf8');
-        const fmMatch = original.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
-        const frontmatter = fmMatch ? fmMatch[0] : '';
-        const newBody = data.content.trim();
-
-        const finalContent = frontmatter ? frontmatter + '\n' + newBody : newBody;
-
-        // Create backup
-        fs.writeFileSync(note.filepath + '.bak', original);
-
-        // Write updated file
-        fs.writeFileSync(note.filepath, finalContent, 'utf8');
-
-        res.writeHead(200,{'Content-Type':'application/json'});
-        res.end('{"ok":true}');
-      } catch (err) {
-        console.error(err);
-        res.writeHead(500,{'Content-Type':'application/json'});
-        res.end(JSON.stringify({error: err.message}));
-      }
-    });
-    return;
+        const original = fs.readFileSync(note.filepath,'utf8');
+        const fm       = (original.match(/^(---\r?\n[\s\S]*?\r?\n---\r?\n?)/)||[''])[0];
+        const newBody  = (data.content||'').trim();
+        fs.writeFileSync(note.filepath+'.bak', original);
+        fs.writeFileSync(note.filepath, fm ? fm+'\n'+newBody : newBody, 'utf8');
+        // sync word count
+        const newWc = (newBody.match(/\S+/g)||[]).length;
+        const db2 = openDb();
+        db2.prepare('UPDATE vault_notes SET word_count=? WHERE id=?').run(newWc, id);
+        db2.close();
+        res.writeHead(200,{'Content-Type':'application/json'}); res.end('{"ok":true}');
+      } catch(e) { res.writeHead(500,{'Content-Type':'application/json'}); res.end(JSON.stringify({error:e.message})); }
+    }); return;
   }
 
   res.writeHead(404); res.end('Not found');
