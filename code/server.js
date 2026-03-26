@@ -292,7 +292,7 @@ function renderStatsPage(db) {
   const bySrc    = db.prepare("SELECT COALESCE(tag_source,'original') as src, COUNT(*) as n FROM vault_notes WHERE has_tags=1 GROUP BY tag_source ORDER BY n DESC").all();
   const bySize   = db.prepare("SELECT CASE WHEN word_count<200 THEN 'stub (<200w)' WHEN word_count<1000 THEN 'short (200-1k)' WHEN word_count<5000 THEN 'medium (1k-5k)' ELSE 'long (5k+)' END as bucket, COUNT(*) as n FROM vault_notes GROUP BY bucket ORDER BY n DESC").all();
   const topTags  = db.prepare("SELECT tag_root, COUNT(*) as n FROM note_tags GROUP BY tag_root ORDER BY n DESC LIMIT 15").all();
-  const unclassifiedBySize = db.prepare("SELECT CASE WHEN word_count<200 THEN 'stub' WHEN word_count<1000 THEN 'short' WHEN word_count<5000 THEN 'medium' ELSE 'long' END as bucket, COUNT(*) as n FROM vault_notes WHERE classification_at IS NULL AND content_type IN ('article','note') GROUP BY bucket ORDER BY n DESC").all();
+  const unclassifiedBySize = db.prepare("SELECT CASE WHEN word_count<200 THEN 'stub' WHEN word_count<1000 THEN 'short' WHEN word_count<5000 THEN 'medium' ELSE 'long' END as bucket, COUNT(*) as n FROM vault_notes WHERE classification_at IS NULL AND content_type IN ('article','note','video') GROUP BY bucket ORDER BY n DESC").all();
 
   function breakdownHtml(title, rows, keyField, valField) {
     return '<div class="breakdown"><h3>'+escHtml(title)+'</h3>' +

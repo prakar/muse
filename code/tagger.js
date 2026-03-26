@@ -27,6 +27,7 @@ const BUDGET_CEILING = parseFloat(process.env.BUDGET_CEILING_USD || '10.00');
 const S3_MAX_CHARS = 4000;
 const S4_MIN_WORDS = 1500;
 const MINDFUL_THRESHOLD = 15000; // words above which --mindful-wc acts (below this, notes have legitimate density)
+const CHUNK_WORD_LIMIT  = 5000;  // smaller chunks = shorter output per call, fewer timeouts
 
 const OR_PREFERRED = [
   'openai/gpt-oss-120b:free',
@@ -511,25 +512,59 @@ async function callGeminiMindful(prompt, attempt) {
   });
 }
 
-// For very long notes (>25K words), split into ~8K-word chunks, compress each, reassemble
-const CHUNK_WORD_LIMIT = 5000; // smaller chunks = shorter output per call, fewer timeouts
-
-async function compressInChunks(body, sourceUrl, listFmt, db, noteId) {
-  const words  = body.split(/\s+/);
-  const chunks = [];
-  for (let i=0; i<words.length; i+=CHUNK_WORD_LIMIT) {
-    chunks.push(words.slice(i, i+CHUNK_WORD_LIMIT).join(' '));
+// Chunk cache dir: ~/quarry/chunks/<note_id>/chunk-N.txt
+// Written immediately after each successful chunk.
+// On restart, already-written chunks are read from disk, skipping the API call.
+function chunkCacheDir(noteId) {
+  return path.join(process.env.HOME, 'quarry', 'chunks', String(noteId));
+}
+function chunkCachePath(noteId, i) {
+  return path.join(chunkCacheDir(noteId), 'chunk-'+i+'.txt');
+}
+function clearChunkCache(noteId) {
+  const dir = chunkCacheDir(noteId);
+  if (fs.existsSync(dir)) {
+    fs.readdirSync(dir).forEach(function(f) { fs.unlinkSync(path.join(dir,f)); });
+    fs.rmdirSync(dir);
   }
-  log('info', 'mindful-wc chunking', {chunks:chunks.length, totalWords:words.length});
+}
+
+async function compressInChunks(body, listFmt, db, noteId) {
+  const words  = body.split(/\s+/);
+  const total  = Math.ceil(words.length / CHUNK_WORD_LIMIT);
+  const dir    = chunkCacheDir(noteId);
+  fs.mkdirSync(dir, {recursive:true});
+
+  log('info', 'mindful-wc chunking', {chunks:total, totalWords:words.length, cacheDir:dir});
 
   const compressed = [];
-  for (let ci=0; ci<chunks.length; ci++) {
-    const chunkPrompt = buildMindfulPrompt(chunks[ci], ci===0 ? sourceUrl : null, listFmt, ci+1, chunks.length);
-    log('info', 'mindful-wc chunk', {chunk:ci+1, of:chunks.length});
-    const result = await callGeminiMindful(chunkPrompt);
+  for (let i=0; i<total; i++) {
+    const cachePath = chunkCachePath(noteId, i);
+
+    // Resume: if chunk already on disk, reuse it
+    if (fs.existsSync(cachePath)) {
+      const cached = fs.readFileSync(cachePath, 'utf8');
+      compressed.push(cached);
+      log('info', 'mindful-wc chunk (cached)', {chunk:i+1, of:total});
+      continue;
+    }
+
+    const chunkWords = words.slice(i*CHUNK_WORD_LIMIT, (i+1)*CHUNK_WORD_LIMIT);
+    const chunkText  = chunkWords.join(' ');
+    const prompt     = buildMindfulPrompt(chunkText, null, listFmt, i+1, total);
+
+    log('info', 'mindful-wc chunk', {chunk:i+1, of:total});
+    const result = await callGeminiMindful(prompt);
+    const text   = result.text.trim();
     recordSpend(db, 'gemini', 'mindful-wc', noteId, result.tokensIn, result.tokensOut);
-    compressed.push(result.text.trim());
+
+    // Persist immediately — survives crash/timeout on later chunks
+    fs.writeFileSync(cachePath, text, 'utf8');
+    compressed.push(text);
   }
+
+  // All chunks done — clear cache
+  clearChunkCache(noteId);
   return compressed.join('\n\n');
 }
 
@@ -631,7 +666,7 @@ async function runSyncWc(db) {
 // ---------------------------------------------------------------------------
 async function runMindfulWc(db) {
   const candidates = db.prepare(
-    "SELECT id,title,filepath,word_count,source_url FROM vault_notes WHERE word_count>? AND (quarry_exclude IS NULL OR quarry_exclude=0) AND content_type IN ('article','note') ORDER BY word_count DESC LIMIT ?"
+    "SELECT id,title,filepath,word_count,source_url FROM vault_notes WHERE word_count>? AND (quarry_exclude IS NULL OR quarry_exclude=0) AND content_type IN ('article','note','video') ORDER BY word_count DESC LIMIT ?"
   ).all(MINDFUL_THRESHOLD, LIMIT===Infinity ? 9999 : LIMIT);
 
   log('info', 'mindful-wc candidates', {count:candidates.length, threshold:MINDFUL_THRESHOLD});
@@ -679,7 +714,7 @@ async function runMindfulWc(db) {
         recordSpend(db, 'gemini', 'mindful-wc', note.id, result.tokensIn, result.tokensOut);
         newBody = result.text.trim();
       } else if (chunked) {
-        newBody = await compressInChunks(body, null, listFmt, db, note.id);
+        newBody = await compressInChunks(body, listFmt, db, note.id);
       } else {
         const prompt = buildMindfulPrompt(body, null, listFmt);
         const result = await callGeminiMindful(prompt);
@@ -798,11 +833,11 @@ async function main() {
     notes = [note];
   } else if (SW4) {
     notes = db.prepare(
-      "SELECT * FROM vault_notes WHERE word_count>=? AND content_type IN ('article','note') AND id NOT IN (SELECT DISTINCT note_id FROM note_classifications WHERE switch_level=4) ORDER BY word_count DESC LIMIT ?"
+      "SELECT * FROM vault_notes WHERE word_count>=? AND content_type IN ('article','note','video') AND id NOT IN (SELECT DISTINCT note_id FROM note_classifications WHERE switch_level=4) ORDER BY word_count DESC LIMIT ?"
     ).all(S4_MIN_WORDS, LIMIT===Infinity?999999:LIMIT);
   } else if (SW3) {
     notes = db.prepare(
-      "SELECT * FROM vault_notes WHERE classification_at IS NULL AND content_type IN ('article','note') AND word_count>200 ORDER BY word_count DESC LIMIT ?"
+      "SELECT * FROM vault_notes WHERE classification_at IS NULL AND content_type IN ('article','note','video') AND word_count>200 ORDER BY word_count DESC LIMIT ?"
     ).all(LIMIT===Infinity?999999:LIMIT);
   } else {
     notes = db.prepare('SELECT * FROM vault_notes WHERE has_tags=0 ORDER BY word_count DESC LIMIT ?').all(LIMIT===Infinity?999999:LIMIT);
