@@ -5,9 +5,17 @@
  * calls Claude (or Gemini fallback), stores result, returns narrative.
  *
  * Usage:
- *   node narrator.js --next          Process next queued item
- *   node narrator.js --id <queue_id> Process a specific queue item
- *   node narrator.js --dry-run       Show what would be sent to API, no call
+ * 
+ *   node --no-warnings ~/quarry/code/narrator.js --dry-run       Show what would be sent to API, no call
+
+ *   node --no-warnings ~/quarry/code/narrator.js --next          Process next queued item
+ *   node --no-warnings ~/quarry/code/narrator.js --id <queue_id> Process a specific queue item
+ *   node --no-warnings ~/quarry/code/narrator.js --live          3 fresh notes from the vault and generates a narrative
+ 
+ *   node --no-warnings ~/quarry/code/narrator.js --live (DEFAULT: numSources uses 3 notes if unspecified)
+ *   node --no-warnings ~/quarry/code/narrator.js --live --numSources 1 (Picks 1 note)
+ *   node --no-warnings ~/quarry/code/narrator.js --live --numSources 5 (Ambitious - 5 random notes for narrative)
+
  */
 
 'use strict';
