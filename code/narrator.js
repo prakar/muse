@@ -15,7 +15,8 @@
  *   node --no-warnings ~/quarry/code/narrator.js --live (DEFAULT: numSources uses 3 notes if unspecified)
  *   node --no-warnings ~/quarry/code/narrator.js --live --numSources 1 (Picks 1 note)
  *   node --no-warnings ~/quarry/code/narrator.js --live --numSources 5 (Ambitious - 5 random notes for narrative)
-
+ *
+ *   node --no-warnings ~/quarry/code/narrator.js --reset         Safely clear all narratives and queue (with approval check)
  */
 
 'use strict';
@@ -49,6 +50,8 @@ const args        = process.argv.slice(2);
 const MODE_NEXT   = args.includes('--next');
 const MODE_DRY    = args.includes('--dry-run');
 const MODE_LIVE   = args.includes('--live');
+const MODE_RESET  = args.includes('--reset');                    // NEW: reset flag
+
 const SPECIFIC_ID = (() => {
   const i = args.indexOf('--id');
   return i !== -1 ? parseInt(args[i + 1], 10) : null;
@@ -64,8 +67,8 @@ const NUM_SOURCES = (() => {
   return 3; // default
 })();
 
-if (!MODE_NEXT && !MODE_DRY && !MODE_LIVE && SPECIFIC_ID === null) {
-  console.error('Usage: node narrator.js [--next|--live|--dry-run|--id <queue_id>] [--numSources 1-5]');
+if (!MODE_NEXT && !MODE_DRY && !MODE_LIVE && !MODE_RESET && SPECIFIC_ID === null) {
+  console.error('Usage: node narrator.js [--next|--live|--dry-run|--reset|--id <queue_id>] [--numSources 1-5]');
   process.exit(1);
 }
 
@@ -94,15 +97,68 @@ function openDb() {
 }
 
 // ---------------------------------------------------------------------------
+// RESET FUNCTION (added only this block)
+// ---------------------------------------------------------------------------
+async function handleReset(db) {
+  log('info', 'Reset requested — clearing narratives and queue');
+
+  // Check for approved narratives
+  const approved = db.prepare(`
+    SELECT id, seed_theme, produced_at, register 
+    FROM narratives 
+    WHERE approval_status = 'approved' 
+    ORDER BY produced_at DESC
+  `).all();
+
+  if (approved.length > 0) {
+    console.log(`\n⚠️  Found ${approved.length} APPROVED narrative(s):`);
+    approved.forEach(n => {
+      console.log(`   • ${n.seed_theme || '(no theme)'}  [${n.register || 'unknown'}]  ${n.produced_at?.slice(0,10) || ''}`);
+    });
+    console.log('\nThis will permanently delete ALL narratives and the entire queue.');
+    const readline = require('readline-sync');
+    
+    // DEV NOTE ^: I had to install bash$ npm install readline-sync, it wasn't in Termux by default
+    // Author: anseki (a Japanese developer).
+    // First published: Around 2014–2015 on npm.
+    // It was created specifically to solve a common pain point in Node.js: the built-in readline module is asynchronous 
+    // (event-driven), which makes simple scripts feel awkward and verbose.
+
+    const answer = readline.question('Type YES to confirm deletion: ');
+    if (answer.trim().toUpperCase() !== 'YES') {
+      console.log('Reset cancelled by user.');
+      return false;
+    }
+  }
+
+  // Perform reset - narratives first, then queue (to satisfy FK constraint)
+  db.exec('BEGIN');
+  try {
+    const narrDeleted = db.prepare('DELETE FROM narratives').run().changes;
+    const queueDeleted = db.prepare('DELETE FROM narrative_queue').run().changes;
+
+    db.exec('COMMIT');
+
+    console.log(`\n✅ Reset complete:`);
+    console.log(`   • ${narrDeleted} narratives deleted`);
+    console.log(`   • ${queueDeleted} queue items deleted`);
+    log('info', 'Reset completed', { narratives: narrDeleted, queue: queueDeleted });
+    return true;
+  } catch (err) {
+    db.exec('ROLLBACK');
+    console.error('Reset failed:', err.message);
+    log('error', 'Reset failed', { err: err.message });
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // NOTE CONTENT READER
-// Reads the actual markdown file for full body content.
 // ---------------------------------------------------------------------------
 function readNoteBody(filepath) {
   try {
     const raw = fs.readFileSync(filepath, 'utf8');
-    // Strip frontmatter
     const body = raw.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
-    // Strip trailing Evernote footer
     const clean = body
       .replace(/_Created at[^_]*\._/g, '')
       .replace(/_Source URL:[^_]*\._/g, '')
@@ -113,8 +169,6 @@ function readNoteBody(filepath) {
     return null;
   }
 }
-
-
 
 // ---------------------------------------------------------------------------
 // SYSTEM PROMPT
@@ -338,7 +392,6 @@ function fetchClusterNotes(db, noteIds) {
 
     const body = readNoteBody(note.filepath);
 
-    // Pull Switch-3/4 classifications — pre-extracted facts for narrator
     const classifications = db.prepare(
       "SELECT bucket, claim FROM note_classifications WHERE note_id = ? AND bucket IN ('verified', 'evergreen', 'trivia') ORDER BY switch_level DESC, bucket"
     ).all(id);
@@ -383,9 +436,6 @@ function buildUserMessage(notes, seedTheme) {
     }
     parts.push('');
 
-    // Lead with structured classifications when available —
-    // pre-extracted verified facts give the narrator concrete material
-    // to find factual bridges rather than resorting to metaphor
     if (note.hasClassifications) {
       if (note.verified && note.verified.length > 0) {
         parts.push('VERIFIED FACTS:');
@@ -422,7 +472,7 @@ function buildUserMessage(notes, seedTheme) {
 }
 
 // ---------------------------------------------------------------------------
-// HTTP POST helper (no external deps)
+// HTTP POST helper
 // ---------------------------------------------------------------------------
 function httpPost(hostname, pathStr, headers, body) {
   return new Promise(function(resolve, reject) {
@@ -517,7 +567,7 @@ async function callGemini(userMessage) {
 }
 
 // ---------------------------------------------------------------------------
-// CALL NARRATOR (Claude first, Gemini fallback)
+// CALL NARRATOR
 // ---------------------------------------------------------------------------
 async function callNarrator(userMessage) {
   if (CLAUDE_API_KEY) {
@@ -534,7 +584,7 @@ async function callNarrator(userMessage) {
 }
 
 // ---------------------------------------------------------------------------
-// PARSE REGISTER from narrative text
+// PARSE REGISTER
 // ---------------------------------------------------------------------------
 function parseRegister(text) {
   const match = text.match(/REGISTER:\s*(senior|junior)/i);
@@ -590,16 +640,13 @@ function formatTelegram(narrative, notes, seedTheme, register) {
 }
 
 // ---------------------------------------------------------------------------
-// LIVE SELECTION — picks N fresh notes at narrator time, no queue
-// NUM_SOURCES=1: picks the single richest classified note
-// NUM_SOURCES=2-5: diversity constraint applies
+// LIVE SELECTION
 // ---------------------------------------------------------------------------
 function liveSelectNotes(db) {
   const CLUSTER_SIZE = NUM_SOURCES;
   const RECENT_DAYS  = 30;
   const cutoff = new Date(Date.now() - RECENT_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
-  // Recently used note ids
   const recentRows = db.prepare(
     'SELECT note_ids FROM narrative_queue WHERE created_at > ?'
   ).all(cutoff);
@@ -613,7 +660,6 @@ function liveSelectNotes(db) {
     try { JSON.parse(r.note_ids).forEach(function(id) { recentIds.add(id); }); } catch (_) {}
   });
 
-  // SINGLE NOTE MODE — pick the richest classified note not recently used
   if (CLUSTER_SIZE === 1) {
     const candidates = db.prepare(`
       SELECT vn.id, vn.title, vn.word_count,
@@ -636,7 +682,6 @@ function liveSelectNotes(db) {
       return null;
     }
 
-    // Pick randomly from the top 20 by richness (verified + trivia)
     const sorted = candidates
       .sort(function(a, b) { return (b.verified_count + b.trivia_count * 2) - (a.verified_count + a.trivia_count * 2); })
       .slice(0, 20);
@@ -652,7 +697,6 @@ function liveSelectNotes(db) {
     return { ids: [picked.id], theme: 'live:single' };
   }
 
-  // MULTI NOTE MODE — diversity constraint
   const hasClassifications = new Set(
     db.prepare('SELECT DISTINCT note_id FROM note_classifications').all()
       .map(function(r) { return r.note_id; })
@@ -733,9 +777,18 @@ function liveSelectNotes(db) {
 // MAIN
 // ---------------------------------------------------------------------------
 async function main() {
-  log('info', 'QUARRY narrator starting', { mode: MODE_LIVE ? 'live' : MODE_DRY ? 'dry-run' : 'queue' });
+  log('info', 'QUARRY narrator starting', { 
+    mode: MODE_RESET ? 'reset' : MODE_LIVE ? 'live' : MODE_DRY ? 'dry-run' : 'queue' 
+  });
 
   const db = openDb();
+
+  // NEW: Handle reset
+  if (MODE_RESET) {
+    await handleReset(db);
+    db.close();
+    return;
+  }
 
   // LIVE MODE — bypass queue entirely
   if (MODE_LIVE) {
@@ -773,7 +826,6 @@ async function main() {
       register: parseRegister(result.text)
     });
 
-    // Store in narratives without a queue_id
     const register = parseRegister(result.text);
     const body     = stripRegisterLine(result.text);
     db.prepare(
@@ -815,13 +867,11 @@ async function main() {
 
   log('info', 'Processing queue item', { id: queueItem.id, theme: queueItem.seed_theme });
 
-  // Mark in_progress
   if (!MODE_DRY) {
     db.prepare("UPDATE narrative_queue SET status = 'in_progress' WHERE id = ?")
       .run(queueItem.id);
   }
 
-  // Fetch notes
   const noteIds = JSON.parse(queueItem.note_ids);
   const notes   = fetchClusterNotes(db, noteIds);
 
@@ -839,7 +889,6 @@ async function main() {
     titles: notes.map(function(n) { return n.title; })
   });
 
-  // Build message
   const userMessage = buildUserMessage(notes, queueItem.seed_theme);
 
   if (MODE_DRY) {
@@ -851,7 +900,6 @@ async function main() {
     db.close(); return;
   }
 
-  // Call narrator
   var result;
   try {
     result = await callNarrator(userMessage);
@@ -868,16 +916,13 @@ async function main() {
     register: parseRegister(result.text)
   });
 
-  // Store
   const stored = storeNarrative(
     db, queueItem.id, noteIds, queueItem.seed_theme, result.text, result.model
   );
 
-  // Mark done
   db.prepare("UPDATE narrative_queue SET status = 'done' WHERE id = ?")
     .run(queueItem.id);
 
-  // Print Telegram-formatted output
   const telegramMsg = formatTelegram(stored.body, notes, queueItem.seed_theme, stored.register);
   console.log('\n' + telegramMsg + '\n');
 
