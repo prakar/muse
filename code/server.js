@@ -1,174 +1,222 @@
 #!/usr/bin/env node
-/**
- * QUARRY server.js v0.2
- * Local web UI for narrative approval queue, archive, stats, and note browser.
- *
- * Views:
- *   /           → Pending approval queue
- *   /approved   → Approved narrative archive
- *   /stats      → Vault statistics dashboard
- *   /notes      → Browse all notes (paginated, filterable)
- *   /review     → Mark notes quarry_exclude
- */
+// QUARRY server.js v0.3
+// Usage: node server.js [--port 3001]
+// Views: / /approved /vault /tagger /curator /queue /narrator /reports /stats /notes /review
 
 'use strict';
 
-const http = require('http');
-const fs   = require('fs');
-const path = require('path');
+const http  = require('http');
+const fs    = require('fs');
+const path  = require('path');
+const cp    = require('child_process');
 const { DatabaseSync } = require('node:sqlite');
 
-const DB_PATH = process.env.QUARRY_DB || path.join(process.env.HOME, 'quarry', 'vault.db');
-const PORT = (() => { const i = process.argv.indexOf('--port'); return i !== -1 ? parseInt(process.argv[i+1],10) : 3001; })();
+const DB_PATH   = process.env.QUARRY_DB    || path.join(process.env.HOME, 'quarry', 'vault.db');
+const VAULT_DIR = process.env.VAULT_PATH   || path.join(process.env.HOME, 'vault');
+const CODE_DIR  = path.join(process.env.HOME, 'quarry', 'code');
+const LOG_DIR   = path.join(process.env.HOME, 'quarry');
+const PORT      = (() => { const i = process.argv.indexOf('--port'); return i !== -1 ? parseInt(process.argv[i+1],10) : 3001; })();
 
+// ---------------------------------------------------------------------------
+// DB HELPERS
+// ---------------------------------------------------------------------------
 function openDb() {
   if (!fs.existsSync(DB_PATH)) { console.error('vault.db not found'); process.exit(1); }
   return new DatabaseSync(DB_PATH);
 }
-
 function ensureSchema(db) {
-  const cols = db.prepare('PRAGMA table_info(narratives)').all().map(c => c.name);
-  if (!cols.includes('approval_status')) db.exec("ALTER TABLE narratives ADD COLUMN approval_status TEXT DEFAULT 'pending'");
-  if (!cols.includes('approved_at'))     db.exec('ALTER TABLE narratives ADD COLUMN approved_at TEXT');
-  if (!cols.includes('rejection_reason'))db.exec('ALTER TABLE narratives ADD COLUMN rejection_reason TEXT');
-  const nc = db.prepare('PRAGMA table_info(vault_notes)').all().map(c => c.name);
-  if (!nc.includes('quarry_exclude'))    db.exec('ALTER TABLE vault_notes ADD COLUMN quarry_exclude INTEGER DEFAULT 0');
+  const nc = db.prepare('PRAGMA table_info(narratives)').all().map(c=>c.name);
+  if (!nc.includes('approval_status'))  db.exec("ALTER TABLE narratives ADD COLUMN approval_status TEXT DEFAULT 'pending'");
+  if (!nc.includes('approved_at'))      db.exec('ALTER TABLE narratives ADD COLUMN approved_at TEXT');
+  if (!nc.includes('rejection_reason')) db.exec('ALTER TABLE narratives ADD COLUMN rejection_reason TEXT');
+  const vn = db.prepare('PRAGMA table_info(vault_notes)').all().map(c=>c.name);
+  if (!vn.includes('quarry_exclude'))   db.exec('ALTER TABLE vault_notes ADD COLUMN quarry_exclude INTEGER DEFAULT 0');
+  if (!vn.includes('video_links'))      db.exec('ALTER TABLE vault_notes ADD COLUMN video_links TEXT');
+  if (!vn.includes('video_transcripts'))db.exec('ALTER TABLE vault_notes ADD COLUMN video_transcripts TEXT');
+}
+function enrichNarrative(db, n) {
+  try {
+    const ids = JSON.parse(n.note_ids||'[]');
+    if (!ids.length) return Object.assign({},n,{sources:[]});
+    const sources = db.prepare('SELECT id,title,source_url FROM vault_notes WHERE id IN ('+ids.join(',')+')').all();
+    return Object.assign({},n,{sources});
+  } catch(_) { return Object.assign({},n,{sources:[]}); }
 }
 
-function getNotesByIds(db, json) {
-  try { const ids = JSON.parse(json); if (!ids.length) return []; return db.prepare('SELECT id, title, source_url FROM vault_notes WHERE id IN (' + ids.join(',') + ')').all(); } catch(_) { return []; }
-}
-function enrichNarrative(db, n) { return Object.assign({}, n, { sources: getNotesByIds(db, n.note_ids||'[]') }); }
-
+// ---------------------------------------------------------------------------
+// UTIL
+// ---------------------------------------------------------------------------
 function escHtml(s) {
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 function renderDate(iso) {
   if (!iso) return '';
-  try { return new Date(iso).toLocaleDateString('en-IN', {day:'numeric',month:'short',year:'numeric'}); } catch(_) { return iso.slice(0,10); }
+  try { return new Date(iso).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}); } catch(_) { return iso.slice(0,10); }
 }
 function renderBadge(r) {
   const cls = r==='senior'?'badge-senior':r==='junior'?'badge-junior':'badge-unknown';
-  return '<span class="badge '+cls+'">'+(r||'unknown')+'</span>';
+  return '<span class="badge '+cls+'">'+(r||'?')+'</span>';
 }
 
 // ---------------------------------------------------------------------------
-// HTML SHELL
+// CSS + HTML SHELL
 // ---------------------------------------------------------------------------
 const CSS = `
-  * { box-sizing:border-box; margin:0; padding:0; }
-  body { font-family:Georgia,serif; background:#0f0f0f; color:#e8e4dc; min-height:100vh; }
-  header { background:#1a1a1a; border-bottom:1px solid #333; padding:16px 24px; display:flex; align-items:center; gap:16px; }
-  header h1 { font-size:1.4rem; letter-spacing:.05em; color:#c8b89a; }
-  nav { display:flex; gap:8px; }
-  nav a { color:#888; text-decoration:none; font-size:.9rem; padding:6px 14px; border-radius:4px; border:1px solid #333; }
-  nav a:hover, nav a.active { color:#c8b89a; border-color:#555; }
-  .container { max-width:960px; margin:0 auto; padding:32px 24px; }
-  .empty { text-align:center; color:#555; padding:64px; font-size:1.1rem; }
-  .section-title { font-size:.85rem; color:#666; letter-spacing:.1em; text-transform:uppercase; margin-bottom:20px; }
-  .stats-bar { background:#141414; border:1px solid #2a2a2a; border-radius:6px; padding:12px 20px; margin-bottom:24px; display:flex; gap:24px; font-size:.85rem; color:#888; flex-wrap:wrap; }
-  .stats-bar strong { color:#c8b89a; }
-  /* Cards */
-  .card { background:#1a1a1a; border:1px solid #2a2a2a; border-radius:8px; margin-bottom:24px; overflow:hidden; }
-  .card-header { padding:14px 20px; background:#141414; border-bottom:1px solid #2a2a2a; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; }
-  .card-meta { font-size:.78rem; color:#666; }
-  .card-meta span { margin-right:12px; }
-  .badge { display:inline-block; font-size:.7rem; padding:2px 8px; border-radius:10px; font-family:monospace; }
-  .badge-senior { background:#2a1f0e; color:#c8a96e; border:1px solid #5a3e1a; }
-  .badge-junior { background:#0e1f2a; color:#6eacc8; border:1px solid #1a5a7a; }
-  .badge-unknown { background:#1f1f1f; color:#888; border:1px solid #333; }
-  .card-body { padding:20px; }
-  .narrative-text { line-height:1.75; font-size:1.05rem; color:#d8d0c4; white-space:pre-wrap; }
-  .sources { margin-top:16px; padding-top:14px; border-top:1px solid #2a2a2a; font-size:.82rem; color:#666; }
-  .sources strong { color:#888; }
-  .actions { padding:14px 20px; background:#141414; border-top:1px solid #2a2a2a; display:flex; gap:10px; align-items:center; }
-  .btn { padding:8px 20px; border-radius:5px; border:none; font-size:.9rem; cursor:pointer; font-family:Georgia,serif; transition:opacity .15s; }
-  .btn:hover { opacity:.85; }
-  .btn-approve { background:#1a3a1a; color:#6ec86e; border:1px solid #2a5a2a; }
-  .btn-reject  { background:#3a1a1a; color:#c86e6e; border:1px solid #5a2a2a; }
-  .btn-copy    { background:#1f1f2a; color:#8888cc; border:1px solid #33335a; }
-  .btn-source  { background:none; border:none; color:#6ea8c8; font-size:.82rem; cursor:pointer; padding:0; text-decoration:underline; font-family:Georgia,serif; }
-  .reject-reason { flex:1; background:#0f0f0f; border:1px solid #333; color:#aaa; padding:7px 12px; border-radius:4px; font-size:.85rem; font-family:Georgia,serif; }
-  .theme-tag { font-size:.75rem; color:#8a7a6a; font-family:monospace; background:#1f1a12; padding:2px 8px; border-radius:3px; border:1px solid #3a3020; }
-  .approved-date { font-size:.78rem; color:#4a6a4a; }
-  /* Stats page */
-  .stat-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:16px; margin-bottom:28px; }
-  .stat-card { background:#141414; border:1px solid #2a2a2a; border-radius:8px; padding:20px; }
-  .stat-card .num { font-size:2rem; color:#c8b89a; font-weight:bold; line-height:1; margin-bottom:6px; }
-  .stat-card .lbl { font-size:.78rem; color:#666; text-transform:uppercase; letter-spacing:.08em; }
-  .stat-card .sub { font-size:.82rem; color:#555; margin-top:4px; }
-  .progress-bar { background:#1a1a1a; border-radius:4px; height:8px; overflow:hidden; margin:6px 0; }
-  .progress-fill { height:100%; background:#5a3e1a; border-radius:4px; transition:width .3s; }
-  .breakdown { background:#141414; border:1px solid #2a2a2a; border-radius:8px; padding:20px; margin-bottom:20px; }
-  .breakdown h3 { font-size:.82rem; color:#888; text-transform:uppercase; letter-spacing:.08em; margin-bottom:14px; }
-  .breakdown-row { display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px solid #1a1a1a; font-size:.88rem; }
-  .breakdown-row:last-child { border-bottom:none; }
-  .breakdown-row .key { color:#aaa; }
-  .breakdown-row .val { color:#c8b89a; font-family:monospace; }
-  /* Notes browser */
-  .note-table { width:100%; border-collapse:collapse; font-size:.85rem; }
-  .note-table th { text-align:left; padding:8px 10px; color:#555; font-weight:normal; border-bottom:1px solid #2a2a2a; font-size:.75rem; text-transform:uppercase; letter-spacing:.06em; }
-  .note-table td { padding:8px 10px; border-bottom:1px solid #141414; vertical-align:top; }
-  .note-table tr:hover td { background:#141414; cursor:pointer; }
-  .nt { color:#c8b89a; font-size:.88rem; line-height:1.3; }
-  .nx { color:#555; font-size:.78rem; margin-top:2px; max-width:440px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .nm { color:#444; font-size:.75rem; white-space:nowrap; }
-  .ntag { font-size:.7rem; color:#5a4a3a; font-family:monospace; }
-  .s4-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#5a3e1a; margin-right:4px; }
-  /* Review */
-  .review-toolbar { background:#141414; border:1px solid #2a2a2a; border-radius:6px; padding:12px 20px; margin-bottom:16px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
-  .review-toolbar select, .review-toolbar input { background:#0f0f0f; border:1px solid #333; color:#aaa; padding:6px 10px; border-radius:4px; font-size:.85rem; font-family:Georgia,serif; }
-  .review-toolbar label { font-size:.85rem; color:#888; }
-  .cb-exclude { width:16px; height:16px; accent-color:#c86e6e; cursor:pointer; }
-  .btn-save-review { background:#1a3a1a; color:#6ec86e; border:1px solid #2a5a2a; padding:8px 24px; border-radius:5px; font-size:.9rem; cursor:pointer; font-family:Georgia,serif; }
-  .save-status { font-size:.82rem; color:#666; }
-  .tr-excluded td { opacity:.4; }
-  /* Pagination */
-  .pagination { display:flex; gap:8px; align-items:center; margin-top:20px; flex-wrap:wrap; }
-  .pagination a { color:#888; text-decoration:none; padding:5px 12px; border:1px solid #333; border-radius:4px; font-size:.85rem; }
-  .pagination a:hover { color:#c8b89a; border-color:#555; }
-  .pagination span { color:#555; font-size:.85rem; }
-  /* Drawer */
-  .drawer-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:100; }
-  .drawer-overlay.open { display:block; }
-  .drawer { position:fixed; top:0; right:0; width:min(700px,95vw); height:100vh; background:#141414; border-left:1px solid #333; z-index:101; display:flex; flex-direction:column; transform:translateX(100%); transition:transform .25s ease; }
-  .drawer-overlay.open .drawer { transform:translateX(0); }
-  .drawer-head { padding:16px 20px; border-bottom:1px solid #2a2a2a; display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
-  .drawer-title { font-size:.95rem; color:#c8b89a; line-height:1.4; flex:1; }
-  .drawer-close { background:none; border:1px solid #444; color:#888; width:28px; height:28px; border-radius:4px; cursor:pointer; font-size:1rem; flex-shrink:0; }
-  .drawer-tabs { display:flex; border-bottom:1px solid #2a2a2a; }
-  .drawer-tab { padding:9px 18px; font-size:.82rem; color:#666; cursor:pointer; border-bottom:2px solid transparent; background:none; border-top:none; border-left:none; border-right:none; font-family:Georgia,serif; }
-  .drawer-tab.active { color:#c8b89a; border-bottom-color:#c8b89a; }
-  .drawer-body { flex:1; overflow-y:auto; padding:20px; }
-  .drawer-content { line-height:1.75; font-size:.92rem; color:#ccc; white-space:pre-wrap; }
-  .drawer-meta { font-size:.78rem; color:#555; margin-bottom:14px; }
-  .drawer-meta a { color:#6ea8c8; }
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Georgia,serif;background:#0f0f0f;color:#e8e4dc;min-height:100vh}
+a{color:#6ea8c8;text-decoration:none}a:hover{text-decoration:underline}
+header{background:#1a1a1a;border-bottom:1px solid #333;padding:14px 24px;display:flex;align-items:center;gap:16px}
+header h1{font-size:1.3rem;letter-spacing:.05em;color:#c8b89a}
+nav{display:flex;gap:6px;flex-wrap:wrap}
+nav a{color:#888;font-size:.82rem;padding:5px 12px;border-radius:4px;border:1px solid #333}
+nav a:hover,nav a.active{color:#c8b89a;border-color:#555;text-decoration:none}
+.container{max-width:1100px;margin:0 auto;padding:28px 24px}
+.page-title{font-size:.8rem;color:#666;letter-spacing:.1em;text-transform:uppercase;margin-bottom:20px}
+/* Cards & panels */
+.card{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;margin-bottom:20px;overflow:hidden}
+.card-header{padding:12px 18px;background:#141414;border-bottom:1px solid #2a2a2a;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+.card-body{padding:18px}
+.card-actions{padding:12px 18px;background:#141414;border-top:1px solid #2a2a2a;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.card-meta{font-size:.75rem;color:#666}
+.card-meta span{margin-right:10px}
+/* Badges */
+.badge{display:inline-block;font-size:.68rem;padding:2px 7px;border-radius:9px;font-family:monospace}
+.badge-senior{background:#2a1f0e;color:#c8a96e;border:1px solid #5a3e1a}
+.badge-junior{background:#0e1f2a;color:#6eacc8;border:1px solid #1a5a7a}
+.badge-unknown{background:#1f1f1f;color:#888;border:1px solid #333}
+/* Buttons */
+.btn{padding:7px 16px;border-radius:4px;border:none;font-size:.85rem;cursor:pointer;font-family:Georgia,serif;transition:opacity .15s;white-space:nowrap}
+.btn:hover{opacity:.8}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-primary{background:#2a1f0e;color:#c8a96e;border:1px solid #5a3e1a}
+.btn-green{background:#1a3a1a;color:#6ec86e;border:1px solid #2a5a2a}
+.btn-red{background:#3a1a1a;color:#c86e6e;border:1px solid #5a2a2a}
+.btn-blue{background:#1f1f2a;color:#8888cc;border:1px solid #33335a}
+.btn-grey{background:#1f1f1f;color:#888;border:1px solid #333}
+/* Forms */
+.field{display:flex;align-items:center;gap:8px;font-size:.82rem;color:#888}
+.field label{white-space:nowrap}
+.field input,.field select{background:#0f0f0f;border:1px solid #333;color:#aaa;padding:5px 9px;border-radius:4px;font-size:.82rem;font-family:Georgia,serif;width:80px}
+.field input[type=text]{width:160px}
+.reject-input{flex:1;background:#0f0f0f;border:1px solid #333;color:#aaa;padding:6px 10px;border-radius:4px;font-size:.82rem;font-family:Georgia,serif}
+/* Narrative text */
+.narrative-text{line-height:1.75;font-size:1rem;color:#d8d0c4;white-space:pre-wrap}
+.sources-line{margin-top:14px;padding-top:12px;border-top:1px solid #2a2a2a;font-size:.8rem;color:#666}
+.sources-line strong{color:#888}
+.theme-tag{font-size:.72rem;color:#8a7a6a;font-family:monospace;background:#1f1a12;padding:2px 7px;border-radius:3px;border:1px solid #3a3020}
+.approved-date{font-size:.75rem;color:#4a6a4a}
+/* Stats */
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px;margin-bottom:24px}
+.stat-card{background:#141414;border:1px solid #2a2a2a;border-radius:7px;padding:16px}
+.stat-card .num{font-size:1.8rem;color:#c8b89a;font-weight:bold;line-height:1;margin-bottom:4px}
+.stat-card .lbl{font-size:.72rem;color:#666;text-transform:uppercase;letter-spacing:.07em}
+.stat-card .sub{font-size:.78rem;color:#555;margin-top:3px}
+.progress-bar{background:#1a1a1a;border-radius:3px;height:6px;overflow:hidden;margin:5px 0}
+.progress-fill{height:100%;background:#5a3e1a;border-radius:3px}
+.breakdown{background:#141414;border:1px solid #2a2a2a;border-radius:7px;padding:16px;margin-bottom:16px}
+.breakdown h3{font-size:.75rem;color:#888;text-transform:uppercase;letter-spacing:.07em;margin-bottom:12px}
+.br-row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #1a1a1a;font-size:.85rem}
+.br-row:last-child{border-bottom:none}
+.br-row .k{color:#aaa}.br-row .v{color:#c8b89a;font-family:monospace}
+/* Notes browser */
+.note-table{width:100%;border-collapse:collapse;font-size:.82rem}
+.note-table th{text-align:left;padding:7px 9px;color:#555;font-weight:normal;border-bottom:1px solid #2a2a2a;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em}
+.note-table td{padding:7px 9px;border-bottom:1px solid #141414;vertical-align:top}
+.note-table tr:hover td{background:#141414;cursor:pointer}
+.nt{color:#c8b89a;font-size:.85rem;line-height:1.3}
+.nx{color:#555;font-size:.75rem;margin-top:2px;max-width:440px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nm{color:#444;font-size:.72rem;white-space:nowrap}
+.ntag{font-size:.68rem;color:#5a4a3a;font-family:monospace}
+.s4-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#5a3e1a;margin-right:3px}
+/* Review */
+.cb-exclude{width:15px;height:15px;accent-color:#c86e6e;cursor:pointer}
+.btn-save{background:#1a3a1a;color:#6ec86e;border:1px solid #2a5a2a;padding:7px 20px;border-radius:4px;font-size:.85rem;cursor:pointer;font-family:Georgia,serif}
+.save-status{font-size:.78rem;color:#666}
+.tr-excluded td{opacity:.4}
+/* Queue view */
+.queue-row{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:12px;margin-bottom:14px;align-items:start}
+.q-note{background:#141414;border:1px solid #2a2a2a;border-radius:6px;padding:12px;cursor:pointer}
+.q-note:hover{border-color:#555}
+.q-note .qt{color:#c8b89a;font-size:.85rem;line-height:1.3;margin-bottom:4px}
+.q-note .qm{font-size:.72rem;color:#555}
+.q-actions{display:flex;flex-direction:column;gap:6px;justify-content:center}
+.q-theme{font-size:.72rem;color:#666;font-family:monospace;margin-bottom:6px}
+/* Pagination */
+.pagination{display:flex;gap:7px;align-items:center;margin-top:18px;flex-wrap:wrap}
+.pagination a{color:#888;padding:4px 10px;border:1px solid #333;border-radius:4px;font-size:.82rem}
+.pagination a:hover{color:#c8b89a;border-color:#555;text-decoration:none}
+.pagination span{color:#555;font-size:.82rem}
+/* Drawer */
+.drawer-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100}
+.drawer-overlay.open{display:block}
+.drawer{position:fixed;top:0;right:0;width:min(700px,95vw);height:100vh;background:#141414;border-left:1px solid #333;z-index:101;display:flex;flex-direction:column;transform:translateX(100%);transition:transform .25s ease}
+.drawer-overlay.open .drawer{transform:translateX(0)}
+.drawer-head{padding:14px 18px;border-bottom:1px solid #2a2a2a;display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.drawer-title{font-size:.92rem;color:#c8b89a;line-height:1.4;flex:1}
+.drawer-close{background:none;border:1px solid #444;color:#888;width:26px;height:26px;border-radius:4px;cursor:pointer;font-size:.9rem;flex-shrink:0}
+.drawer-tabs{display:flex;border-bottom:1px solid #2a2a2a}
+.drawer-tab{padding:8px 16px;font-size:.8rem;color:#666;cursor:pointer;border-bottom:2px solid transparent;background:none;border-top:none;border-left:none;border-right:none;font-family:Georgia,serif}
+.drawer-tab.active{color:#c8b89a;border-bottom-color:#c8b89a}
+.drawer-body{flex:1;overflow-y:auto;padding:18px}
+.drawer-content{line-height:1.75;font-size:.9rem;color:#ccc;white-space:pre-wrap}
+.drawer-meta{font-size:.75rem;color:#555;margin-bottom:12px}
+.drawer-meta a{color:#6ea8c8}
+/* Log viewer */
+.log-box{background:#0a0a0a;border:1px solid #2a2a2a;border-radius:6px;padding:14px;font-family:monospace;font-size:.75rem;color:#8a8;max-height:320px;overflow-y:auto;white-space:pre-wrap;margin-top:14px}
+/* Control panel */
+.ctrl-panel{background:#141414;border:1px solid #2a2a2a;border-radius:8px;padding:18px;margin-bottom:18px}
+.ctrl-panel h3{font-size:.8rem;color:#888;text-transform:uppercase;letter-spacing:.08em;margin-bottom:14px}
+.ctrl-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.ctrl-row:last-child{margin-bottom:0}
+/* Report */
+.report-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;margin-bottom:24px}
+.report-card{background:#141414;border:1px solid #2a2a2a;border-radius:7px;padding:16px}
+.report-card h4{font-size:.88rem;color:#c8b89a;margin-bottom:6px}
+.report-card p{font-size:.78rem;color:#666;margin-bottom:12px;line-height:1.5}
+.report-result{margin-top:12px;overflow-x:auto}
+.report-result table{width:100%;border-collapse:collapse;font-size:.78rem}
+.report-result th{text-align:left;padding:5px 8px;color:#666;border-bottom:1px solid #2a2a2a;font-weight:normal;font-size:.72rem;text-transform:uppercase}
+.report-result td{padding:5px 8px;border-bottom:1px solid #141414;color:#aaa;font-family:monospace}
+.empty{text-align:center;color:#555;padding:48px;font-size:1rem}
 `;
 
-function htmlShell(title, bodyContent, activeNav) {
+const NAV_LINKS = [
+  ['/', 'Pending'],
+  ['/approved', 'Approved'],
+  ['/vault', 'Vault'],
+  ['/tagger', 'Tagger'],
+  ['/curator', 'Curator'],
+  ['/queue', 'Queue'],
+  ['/narrator', 'Narrator'],
+  ['/reports', 'Reports'],
+  ['/notes', 'Browse'],
+  ['/review', 'Review'],
+];
+
+function shell(title, body, active) {
+  const nav = NAV_LINKS.map(([href,label])=>
+    '<a href="'+href+'"'+(active===href?' class="active"':'')+'>'+label+'</a>'
+  ).join('');
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>🪨 QUARRY — ${escHtml(title)}</title>
 <style>${CSS}</style></head><body>
 <header>
-  <span style="font-size:1.6rem">🪨</span>
+  <span style="font-size:1.5rem">🪨</span>
   <h1>QUARRY</h1>
-  <nav>
-    <a href="/" id="nav-pending" class="${activeNav==='pending'?'active':''}">Pending</a>
-    <a href="/approved" id="nav-approved" class="${activeNav==='approved'?'active':''}">Approved</a>
-    <a href="/stats" id="nav-stats" class="${activeNav==='stats'?'active':''}">Stats</a>
-    <a href="/notes" id="nav-notes" class="${activeNav==='notes'?'active':''}">Notes</a>
-    <a href="/review" id="nav-review" class="${activeNav==='review'?'active':''}">Review</a>
-  </nav>
+  <nav>${nav}</nav>
 </header>
 <div class="container">
-${bodyContent}
+${body}
 </div>
 ${DRAWER_HTML}
 ${COMMON_JS}
 </body></html>`;
 }
 
+// ---------------------------------------------------------------------------
+// DRAWER
+// ---------------------------------------------------------------------------
 const DRAWER_HTML = `
 <div class="drawer-overlay" id="drawer-overlay" onclick="closeDrawer(event)">
   <div class="drawer" id="drawer">
@@ -185,281 +233,646 @@ const DRAWER_HTML = `
 </div>`;
 
 const COMMON_JS = `<script>
-var _drawerData = {};
-var _currentNote = null;
-function openNote(noteId) {
-  _currentNote = noteId;
+var _dd={};
+function openNote(id){
   var o=document.getElementById('drawer-overlay'),c=document.getElementById('drawer-content'),
       t=document.getElementById('drawer-title'),m=document.getElementById('drawer-meta'),
       tb=document.getElementById('drawer-tabs');
-  c.textContent='Loading...'; tb.innerHTML=''; m.innerHTML=''; o.classList.add('open');
-  fetch('/api/notes/'+noteId).then(function(r){return r.json();}).then(function(d){
-    _drawerData[noteId]=d; t.textContent=d.title||'Note';
-    var mp=[]; if(d.word_count) mp.push(d.word_count+' words'); if(d.content_type) mp.push(d.content_type);
-    if(d.source_url) mp.push('<a href="'+d.source_url+'" target="_blank">source ↗</a>');
-    m.innerHTML=mp.join(' · ')+'&nbsp;&nbsp;<button onclick="startEdit('+noteId+')" style="background:none;border:1px solid #444;color:#888;padding:2px 10px;border-radius:3px;cursor:pointer;font-size:.78rem;">✎ Edit</button>';
+  c.textContent='Loading...';tb.innerHTML='';m.innerHTML='';o.classList.add('open');
+  fetch('/api/notes/'+id).then(r=>r.json()).then(d=>{
+    _dd[id]=d;t.textContent=d.title||'Note';
+    var mp=[];if(d.word_count)mp.push(d.word_count+' words');if(d.content_type)mp.push(d.content_type);
+    if(d.source_url)mp.push('<a href="'+d.source_url+'" target="_blank">source ↗</a>');
+    m.innerHTML=mp.join(' · ')+'&nbsp;<button onclick="startEdit('+id+')" style="background:none;border:1px solid #444;color:#888;padding:1px 8px;border-radius:3px;cursor:pointer;font-size:.72rem;">✎</button>';
     var th='',ft='raw';
-    if(d.essay){th+='<button class="drawer-tab active" onclick="showTab('+noteId+',\\'essay\\',this)">Essay</button>';ft='essay';}
-    th+='<button class="drawer-tab'+(ft==='raw'?' active':'')+'" onclick="showTab('+noteId+',\\'raw\\',this)">Raw Note</button>';
-    if(d.verified&&d.verified.length) th+='<button class="drawer-tab" onclick="showTab('+noteId+',\\'facts\\',this)">Verified ('+d.verified.length+')</button>';
-    tb.innerHTML=th; showTabContent(noteId,ft);
-  }).catch(function(e){c.textContent='Failed: '+e.message;});
+    if(d.essay){th+='<button class="drawer-tab active" onclick="showTab('+id+',\\'essay\\',this)">Essay</button>';ft='essay';}
+    th+='<button class="drawer-tab'+(ft==='raw'?' active':'')+'" onclick="showTab('+id+',\\'raw\\',this)">Raw</button>';
+    if(d.verified&&d.verified.length)th+='<button class="drawer-tab" onclick="showTab('+id+',\\'facts\\',this)">Facts ('+d.verified.length+')</button>';
+    tb.innerHTML=th;showTabContent(id,ft);
+  }).catch(e=>{c.textContent='Error: '+e.message;});
 }
-function startEdit(noteId) {
-  var d=_drawerData[noteId]; if(!d) return;
-  var c=document.getElementById('drawer-content');
-  c.innerHTML='<textarea id="note-editor" style="width:100%;height:calc(100vh - 260px);background:#0f0f0f;color:#e8e4dc;border:1px solid #555;padding:14px;font-family:monospace;font-size:.9rem;line-height:1.65;resize:none;">'+escHtml(d.body||'')+'</textarea>'+
-    '<div style="margin-top:10px;display:flex;gap:8px">'+
-    '<button onclick="saveNote('+noteId+')" style="background:#1a3a1a;color:#6ec86e;border:1px solid #2a5a2a;padding:7px 18px;border-radius:4px;cursor:pointer;">💾 Save</button>'+
-    '<button onclick="openNote('+noteId+')" style="background:#3a1a1a;color:#c86e6e;border:1px solid #5a2a2a;padding:7px 18px;border-radius:4px;cursor:pointer;">Cancel</button>'+
-    '</div>';
+function startEdit(id){
+  var d=_dd[id];if(!d)return;
+  document.getElementById('drawer-content').innerHTML=
+    '<textarea id="note-ed" style="width:100%;height:calc(100vh - 270px);background:#0f0f0f;color:#e8e4dc;border:1px solid #555;padding:12px;font-family:monospace;font-size:.88rem;line-height:1.6;resize:none;">'+escH(d.body||'')+'</textarea>'+
+    '<div style="margin-top:8px;display:flex;gap:8px">'+
+    '<button onclick="saveNote('+id+')" class="btn btn-green" style="font-size:.8rem;padding:5px 14px;">💾 Save</button>'+
+    '<button onclick="openNote('+id+')" class="btn btn-red" style="font-size:.8rem;padding:5px 14px;">Cancel</button></div>';
 }
-function saveNote(noteId) {
-  var ta=document.getElementById('note-editor'); if(!ta) return;
-  fetch('/api/notes/'+noteId+'/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:ta.value})})
-  .then(function(r){return r.json();})
-  .then(function(res){
-    if(res.ok){alert('Saved (backup created at .bak)');openNote(noteId);}
-    else alert('Save failed: '+(res.error||'unknown'));
-  }).catch(function(e){alert('Error: '+e.message);});
+function saveNote(id){
+  var ta=document.getElementById('note-ed');if(!ta)return;
+  fetch('/api/notes/'+id+'/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:ta.value})})
+  .then(r=>r.json()).then(res=>{if(res.ok){alert('Saved');openNote(id);}else alert('Save failed');})
+  .catch(e=>alert('Error: '+e.message));
 }
-function escHtml(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function showTab(id,tab,btn){
-  document.querySelectorAll('.drawer-tab').forEach(function(b){b.classList.remove('active');});
-  if(btn) btn.classList.add('active'); showTabContent(id,tab);
+  document.querySelectorAll('.drawer-tab').forEach(b=>b.classList.remove('active'));
+  if(btn)btn.classList.add('active');showTabContent(id,tab);
 }
 function showTabContent(id,tab){
-  var d=_drawerData[id]; if(!d) return;
+  var d=_dd[id];if(!d)return;
   var c=document.getElementById('drawer-content');
-  if(tab==='essay') c.textContent=d.essay||'(no essay)';
-  else if(tab==='facts') c.textContent=(d.verified||[]).map(function(f){return '• '+f;}).join('\\n');
+  if(tab==='essay')c.textContent=d.essay||'(no essay)';
+  else if(tab==='facts')c.textContent=(d.verified||[]).map(f=>'• '+f).join('\\n');
   else c.textContent=d.body||'(no content)';
 }
 function closeDrawer(e){
-  if(e&&e.target!==document.getElementById('drawer-overlay')) return;
+  if(e&&e.target!==document.getElementById('drawer-overlay'))return;
   document.getElementById('drawer-overlay').classList.remove('open');
 }
-function approve(id){fetch('/api/narratives/'+id+'/approve',{method:'POST'}).then(function(r){if(r.ok){document.getElementById('card-'+id).remove();updateCount();}});}
+function escH(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function approve(id){fetch('/api/narratives/'+id+'/approve',{method:'POST'}).then(r=>{if(r.ok){document.getElementById('card-'+id).remove();updateCount();}});}
 function reject(id){
   var reason=document.getElementById('reason-'+id).value.trim();
-  fetch('/api/narratives/'+id+'/reject',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason:reason})})
-  .then(function(r){if(r.ok){document.getElementById('card-'+id).remove();updateCount();}});
+  fetch('/api/narratives/'+id+'/reject',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason})})
+  .then(r=>{if(r.ok){document.getElementById('card-'+id).remove();updateCount();}});
 }
 function copyText(id){
-  var text=document.getElementById('narrative-text-'+id).innerText;
-  navigator.clipboard.writeText(text).then(function(){
-    var b=document.getElementById('copy-btn-'+id); b.textContent='Copied!';
-    setTimeout(function(){b.textContent='Copy';},1500);
+  navigator.clipboard.writeText(document.getElementById('nt-'+id).innerText).then(()=>{
+    var b=document.getElementById('cp-'+id);b.textContent='Copied!';setTimeout(()=>b.textContent='Copy',1500);
   });
 }
 function updateCount(){var r=document.querySelectorAll('.card').length,e=document.getElementById('pending-count');if(e)e.textContent=r;}
 </script>`;
 
 // ---------------------------------------------------------------------------
-// PAGE RENDERERS
+// NARRATIVE CARDS
 // ---------------------------------------------------------------------------
-function renderPendingCard(n) {
-  const src = (n.sources||[]).map(s=>'<button class="btn-source" onclick="openNote('+s.id+')">'+escHtml(s.title)+'</button>').join(' &middot; ');
+function pendingCard(n) {
+  const src=(n.sources||[]).map(s=>'<button class="btn-source" style="background:none;border:none;color:#6ea8c8;font-size:.78rem;cursor:pointer;text-decoration:underline;padding:0" onclick="openNote('+s.id+')">'+escHtml(s.title)+'</button>').join(' · ');
   return `<div class="card" id="card-${n.id}">
   <div class="card-header"><div class="card-meta">${renderBadge(n.register)}<span class="theme-tag">${escHtml(n.queue_theme||n.seed_theme||'')}</span><span>${renderDate(n.produced_at)}</span><span style="color:#444">${escHtml(n.model_used||'')}</span></div></div>
-  <div class="card-body"><div class="narrative-text" id="narrative-text-${n.id}">${escHtml(n.body)}</div><div class="sources"><strong>Sources:</strong> ${src||'<em>none</em>'}</div></div>
-  <div class="actions"><button class="btn btn-approve" onclick="approve(${n.id})">✓ Approve</button><input class="reject-reason" id="reason-${n.id}" placeholder="Rejection reason (optional)"/><button class="btn btn-reject" onclick="reject(${n.id})">✗ Reject</button><button class="btn btn-copy" id="copy-btn-${n.id}" onclick="copyText(${n.id})">Copy</button></div>
+  <div class="card-body"><div class="narrative-text" id="nt-${n.id}">${escHtml(n.body)}</div><div class="sources-line"><strong>Sources:</strong> ${src||'<em>none</em>'}</div></div>
+  <div class="card-actions"><button class="btn btn-green" onclick="approve(${n.id})">✓ Approve</button><input class="reject-input" id="reason-${n.id}" placeholder="Rejection reason"/><button class="btn btn-red" onclick="reject(${n.id})">✗ Reject</button><button class="btn btn-blue" id="cp-${n.id}" onclick="copyText(${n.id})">Copy</button></div>
 </div>`;
 }
-
-function renderApprovedCard(n) {
-  const src = (n.sources||[]).map(s=>'<button class="btn-source" onclick="openNote('+s.id+')">'+escHtml(s.title)+'</button>').join(' &middot; ');
+function approvedCard(n) {
+  const src=(n.sources||[]).map(s=>'<button class="btn-source" style="background:none;border:none;color:#6ea8c8;font-size:.78rem;cursor:pointer;text-decoration:underline;padding:0" onclick="openNote('+s.id+')">'+escHtml(s.title)+'</button>').join(' · ');
   return `<div class="card" id="card-${n.id}">
   <div class="card-header"><div class="card-meta">${renderBadge(n.register)}<span class="theme-tag">${escHtml(n.queue_theme||n.seed_theme||'')}</span><span>${renderDate(n.produced_at)}</span><span class="approved-date">approved ${renderDate(n.approved_at)}</span></div></div>
-  <div class="card-body"><div class="narrative-text" id="narrative-text-${n.id}">${escHtml(n.body)}</div><div class="sources"><strong>Sources:</strong> ${src||'<em>none</em>'}</div></div>
-  <div class="actions"><button class="btn btn-copy" id="copy-btn-${n.id}" onclick="copyText(${n.id})">Copy</button></div>
+  <div class="card-body"><div class="narrative-text" id="nt-${n.id}">${escHtml(n.body)}</div><div class="sources-line"><strong>Sources:</strong> ${src||'<em>none</em>'}</div></div>
+  <div class="card-actions"><button class="btn btn-blue" id="cp-${n.id}" onclick="copyText(${n.id})">Copy</button></div>
 </div>`;
 }
 
-function renderStatsPage(db) {
+// ---------------------------------------------------------------------------
+// CONTROL PANEL PAGES
+// ---------------------------------------------------------------------------
+function vaultPage() {
+  return `<p class="page-title">Vault — git sync and indexing</p>
+<div class="ctrl-panel">
+  <h3>Git Sync</h3>
+  <div class="ctrl-row">
+    <button class="btn btn-primary" onclick="runCmd('git-pull','Git pull vault')">⬇ git pull (origin/master)</button>
+    <span style="font-size:.78rem;color:#555">git -C ~/vault pull origin master</span>
+  </div>
+</div>
+<div class="ctrl-panel">
+  <h3>Indexer</h3>
+  <div class="ctrl-row">
+    <button class="btn btn-primary" onclick="runCmd('index-diff','Indexer --diff')">Index changed files</button>
+    <button class="btn btn-grey" onclick="runCmd('index-full','Indexer full')">Full re-index</button>
+  </div>
+</div>
+<div class="ctrl-panel">
+  <h3>Word Count Sync</h3>
+  <div class="ctrl-row">
+    <button class="btn btn-primary" onclick="runCmd('sync-wc','Sync word counts')">sync-wc — recount from filesystem</button>
+  </div>
+</div>
+<div id="cmd-output"></div>
+${cmdJs()}`;
+}
+
+function taggerPage() {
+  return `<p class="page-title">Tagger — classify and tag vault notes</p>
+<div class="ctrl-panel">
+  <h3>Switch-1 &amp; Switch-2 — zero API cost</h3>
+  <div class="ctrl-row">
+    <button class="btn btn-primary" onclick="runCmd('sw1','Switch-1')">Switch-1 (filename heuristic)</button>
+    <button class="btn btn-primary" onclick="runCmd('sw2','Switch-2')">Switch-2 (first-paragraph vocab)</button>
+  </div>
+</div>
+<div class="ctrl-panel">
+  <h3>Switch-3 — OpenRouter free → Gemini fallback</h3>
+  <div class="ctrl-row">
+    <div class="field"><label>Limit:</label><input id="s3-limit" type="number" value="500" min="1" max="5000"></div>
+    <div class="field"><label>Provider:</label><select id="s3-prov"><option value="openrouter">openrouter</option><option value="gemini">gemini</option></select></div>
+    <button class="btn btn-primary" onclick="runS3()">Run Switch-3</button>
+  </div>
+</div>
+<div class="ctrl-panel">
+  <h3>Switch-4 — full document, Gemini only</h3>
+  <div class="ctrl-row">
+    <div class="field"><label>Limit:</label><input id="s4-limit" type="number" value="20" min="1" max="500"></div>
+    <button class="btn btn-primary" onclick="runS4()">Run Switch-4</button>
+    <button class="btn btn-grey" onclick="runCmd('sw4-dry','Switch-4 dry run')">Dry run</button>
+  </div>
+</div>
+<div class="ctrl-panel">
+  <h3>Mindful-WC — compress overlong notes (>15K words)</h3>
+  <div class="ctrl-row">
+    <div class="field"><label>Limit:</label><input id="mwc-limit" type="number" value="5" min="1" max="50"></div>
+    <button class="btn btn-primary" onclick="runMwc()">Run mindful-wc</button>
+    <button class="btn btn-grey" onclick="runCmd('mwc-dry','Mindful-WC dry run')">Dry run (candidates list)</button>
+  </div>
+</div>
+<div class="ctrl-panel">
+  <h3>Video Link Extraction</h3>
+  <div class="ctrl-row">
+    <button class="btn btn-primary" onclick="runCmd('extract-video','Extract video links')">Extract video links from all notes</button>
+    <button class="btn btn-grey" onclick="runCmd('extract-video-dry','Extract video links dry run')">Dry run</button>
+  </div>
+</div>
+<div id="cmd-output"></div>
+<script>
+function runS3(){fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd:'sw3',limit:document.getElementById('s3-limit').value,provider:document.getElementById('s3-prov').value})}).then(showCmdResult);}
+function runS4(){fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd:'sw4',limit:document.getElementById('s4-limit').value})}).then(showCmdResult);}
+function runMwc(){fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd:'mwc',limit:document.getElementById('mwc-limit').value})}).then(showCmdResult);}
+</script>
+${cmdJs()}`;
+}
+
+function curatorPage() {
+  return `<p class="page-title">Curator — build narrative queue</p>
+<div class="ctrl-panel">
+  <h3>Strategy: Informed Serendipity</h3>
+  <p style="font-size:.8rem;color:#666;margin-bottom:14px;line-height:1.6">80% random selection within quality+diversity constraints · 20% orphan rescue · 3-note clusters · No two notes from same domain · Different tag roots required</p>
+  <div class="ctrl-row">
+    <button class="btn btn-primary" onclick="runCmd('curator-force','Curator --force')">Force generate 20 clusters</button>
+    <button class="btn btn-grey" onclick="runCmd('curator-refill','Curator --refill')">Refill if below threshold</button>
+    <button class="btn btn-grey" onclick="runCmd('curator-status','Curator status')">Status</button>
+  </div>
+</div>
+<div id="cmd-output"></div>
+${cmdJs()}`;
+}
+
+function narratorPage() {
+  return `<p class="page-title">Narrator — generate narratives</p>
+<div class="ctrl-panel">
+  <h3>Live Mode — fresh selection at runtime</h3>
+  <div class="ctrl-row">
+    <div class="field"><label>Sources:</label>
+      <select id="ns-count">
+        <option value="1">1 — single note (junior)</option>
+        <option value="2">2 — tight braid</option>
+        <option value="3" selected>3 — default</option>
+        <option value="5">5 — ambitious</option>
+      </select>
+    </div>
+    <button class="btn btn-primary" onclick="runLive()">▶ Run --live</button>
+    <span style="font-size:.75rem;color:#555">Result appears in Pending queue</span>
+  </div>
+</div>
+<div class="ctrl-panel">
+  <h3>Queue Mode</h3>
+  <div class="ctrl-row">
+    <button class="btn btn-primary" onclick="runCmd('narrator-next','Narrator --next')">▶ Process next queued item</button>
+    <button class="btn btn-grey" onclick="runCmd('narrator-dry','Narrator --dry-run')">Dry run (show payload)</button>
+  </div>
+</div>
+<div id="cmd-output"></div>
+<script>
+function runLive(){fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd:'narrator-live',numSources:document.getElementById('ns-count').value})}).then(showCmdResult);}
+</script>
+${cmdJs()}`;
+}
+
+// ---------------------------------------------------------------------------
+// QUEUE VIEW — 3 notes per row
+// ---------------------------------------------------------------------------
+function queuePage(db, params) {
+  const page     = Math.max(1, parseInt(params.get('page')||'1',10));
+  const PAGE_SIZE = 10; // 10 clusters per page
+  const offset   = (page-1)*PAGE_SIZE;
+  const total    = db.prepare("SELECT COUNT(*) as n FROM narrative_queue WHERE status='queued'").get().n;
+  const items    = db.prepare("SELECT id,note_ids,seed_theme,priority_score,created_at FROM narrative_queue WHERE status='queued' ORDER BY priority_score DESC,id LIMIT ? OFFSET ?").all(PAGE_SIZE,offset);
+  const s4ids    = new Set(db.prepare('SELECT DISTINCT note_id FROM note_classifications WHERE switch_level=4').all().map(r=>r.note_id));
+
+  const rows = items.map(item => {
+    let noteIds=[];try{noteIds=JSON.parse(item.note_ids);}catch(_){}
+    const notes = noteIds.length ? db.prepare('SELECT id,title,word_count,tag_source FROM vault_notes WHERE id IN ('+noteIds.join(',')+')').all() : [];
+
+    const noteCells = notes.map(n=>`
+      <div class="q-note" onclick="openNote(${n.id})">
+        <div class="qt">${n.s4?'<span class="s4-dot"></span>':''}`+escHtml(n.title.slice(0,60))+`</div>
+        <div class="qm">${n.word_count}w · ${escHtml(n.tag_source||'')}</div>
+      </div>`).join('');
+
+    // pad to 3 cells if fewer notes
+    const padded = noteCells + '<div></div>'.repeat(Math.max(0,3-notes.length));
+
+    return `<div style="margin-bottom:16px">
+      <div class="q-theme">[${item.id}] ${escHtml(item.seed_theme)} · score ${item.priority_score.toFixed(2)} · ${renderDate(item.created_at)}</div>
+      <div class="queue-row">
+        ${padded}
+        <div class="q-actions">
+          <button class="btn btn-primary" onclick="narrateId(${item.id})">▶ Narrate</button>
+          <button class="btn btn-grey" onclick="discardId(${item.id})">✕ Discard</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  const totalPages = Math.ceil(total/PAGE_SIZE);
+  let pag = '<div class="pagination"><span>'+total+' queued, page '+page+' of '+totalPages+'</span>';
+  if (page>1) pag+='<a href="/queue?page='+(page-1)+'">‹ Prev</a>';
+  if (page<totalPages) pag+='<a href="/queue?page='+(page+1)+'">Next ›</a>';
+  pag+='</div>';
+
+  return `<p class="page-title">Narrative Queue — ${total} clusters awaiting narration</p>
+${rows||'<div class="empty">Queue is empty. Run the Curator to fill it.</div>'}
+${pag}
+<script>
+function narrateId(id){
+  fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd:'narrator-id',id})})
+  .then(r=>r.json()).then(d=>alert(d.ok?'Narration started — check Pending queue':'Failed: '+d.error));
+}
+function discardId(id){
+  if(!confirm('Discard queue item '+id+'?'))return;
+  fetch('/api/queue/'+id+'/discard',{method:'POST'}).then(r=>{if(r.ok)location.reload();});
+}
+</script>`;
+}
+
+// ---------------------------------------------------------------------------
+// REPORTS PAGE
+// ---------------------------------------------------------------------------
+const REPORTS = [
+  {
+    id: 'vault-coverage',
+    title: 'Vault Coverage',
+    desc: 'Total notes, tagged %, classified counts, unclassified by size bucket',
+    sql: `SELECT 'Total notes' as metric, COUNT(*) as value FROM vault_notes
+          UNION ALL SELECT 'Tagged', COUNT(*) FROM vault_notes WHERE has_tags=1
+          UNION ALL SELECT 'Classified S3/S4', COUNT(DISTINCT note_id) FROM note_classifications
+          UNION ALL SELECT 'Switch-4 specifically', COUNT(DISTINCT note_id) FROM note_classifications WHERE switch_level=4
+          UNION ALL SELECT 'quarry_exclude', COUNT(*) FROM vault_notes WHERE quarry_exclude=1
+          UNION ALL SELECT 'Stubs unclassified', COUNT(*) FROM vault_notes WHERE word_count<200 AND classification_at IS NULL
+          UNION ALL SELECT 'Short unclassified (200-1k)', COUNT(*) FROM vault_notes WHERE word_count BETWEEN 200 AND 999 AND classification_at IS NULL AND content_type IN ('article','note','video')
+          UNION ALL SELECT 'Medium unclassified (1k-5k)', COUNT(*) FROM vault_notes WHERE word_count BETWEEN 1000 AND 4999 AND classification_at IS NULL AND content_type IN ('article','note','video')
+          UNION ALL SELECT 'Long unclassified (5k+)', COUNT(*) FROM vault_notes WHERE word_count>=5000 AND classification_at IS NULL AND content_type IN ('article','note','video')`
+  },
+  {
+    id: 'richest-notes',
+    title: 'Top 15 Richest Classifications',
+    desc: 'Notes with most verified facts, evergreen concepts, and trivia nuggets',
+    sql: `SELECT vn.title, COUNT(*) as total_claims,
+          SUM(CASE WHEN nc.bucket='verified' THEN 1 ELSE 0 END) as verified,
+          SUM(CASE WHEN nc.bucket='evergreen' THEN 1 ELSE 0 END) as evergreen,
+          SUM(CASE WHEN nc.bucket='trivia' THEN 1 ELSE 0 END) as trivia
+          FROM note_classifications nc JOIN vault_notes vn ON vn.id=nc.note_id
+          GROUP BY nc.note_id ORDER BY evergreen DESC, trivia DESC LIMIT 15`
+  },
+  {
+    id: 'budget',
+    title: 'API Budget & Spend',
+    desc: 'Spend by provider and component, ceiling remaining',
+    sql: `SELECT provider, component, COUNT(*) as calls,
+          ROUND(SUM(tokens_in),0) as tokens_in,
+          ROUND(SUM(tokens_out),0) as tokens_out,
+          ROUND(SUM(cost_usd),4) as cost_usd
+          FROM api_budget GROUP BY provider,component ORDER BY cost_usd DESC`
+  },
+  {
+    id: 'narrative-pipeline',
+    title: 'Narrative Pipeline',
+    desc: 'Queue depth, narrative approval status counts',
+    sql: `SELECT 'Queued' as stage, COUNT(*) as n FROM narrative_queue WHERE status='queued'
+          UNION ALL SELECT 'In progress', COUNT(*) FROM narrative_queue WHERE status='in_progress'
+          UNION ALL SELECT 'Done', COUNT(*) FROM narrative_queue WHERE status='done'
+          UNION ALL SELECT 'Failed', COUNT(*) FROM narrative_queue WHERE status='failed'
+          UNION ALL SELECT 'Narratives total', COUNT(*) FROM narratives
+          UNION ALL SELECT 'Approved', COUNT(*) FROM narratives WHERE approval_status='approved'
+          UNION ALL SELECT 'Pending approval', COUNT(*) FROM narratives WHERE approval_status='pending' OR approval_status IS NULL
+          UNION ALL SELECT 'Rejected', COUNT(*) FROM narratives WHERE approval_status='rejected'`
+  },
+  {
+    id: 'mindful-candidates',
+    title: 'Mindful-WC Candidates',
+    desc: 'Notes above 15K words (compression candidates)',
+    sql: `SELECT id, title, word_count, content_type,
+          CASE WHEN quarry_exclude=1 THEN 'excluded' ELSE '' END as excluded
+          FROM vault_notes WHERE word_count>15000
+          ORDER BY word_count DESC LIMIT 30`
+  },
+  {
+    id: 'sw4-candidates',
+    title: 'Switch-4 Candidates',
+    desc: 'Unclassified notes >1500 words ordered by richness potential',
+    sql: `SELECT id, title, word_count, content_type
+          FROM vault_notes
+          WHERE word_count>=1500
+          AND classification_at IS NULL
+          AND content_type IN ('article','note','video')
+          AND (quarry_exclude IS NULL OR quarry_exclude=0)
+          ORDER BY word_count DESC LIMIT 30`
+  },
+  {
+    id: 'orphan-pool',
+    title: 'Orphan Pool',
+    desc: 'Unclassified, untagged notes >300 words — orphan rescue candidates',
+    sql: `SELECT id, title, word_count, content_type
+          FROM vault_notes
+          WHERE has_tags=0 AND classification_at IS NULL AND word_count>=300
+          AND content_type IN ('article','note','video')
+          AND (quarry_exclude IS NULL OR quarry_exclude=0)
+          ORDER BY word_count DESC LIMIT 30`
+  },
+  {
+    id: 'video-links',
+    title: 'Video Links',
+    desc: 'Notes with extracted video URLs',
+    sql: `SELECT id, title, word_count,
+          LENGTH(video_links) - LENGTH(REPLACE(video_links,',','')) + 1 as link_count,
+          SUBSTR(video_links,1,80) as sample_url
+          FROM vault_notes WHERE video_links IS NOT NULL AND video_links != ''
+          ORDER BY link_count DESC LIMIT 30`
+  },
+  {
+    id: 'excluded-notes',
+    title: 'Excluded Notes',
+    desc: 'Notes marked quarry_exclude — review what is hidden from the narrator',
+    sql: `SELECT id, title, word_count, content_type, origin
+          FROM vault_notes WHERE quarry_exclude=1
+          ORDER BY title LIMIT 100`
+  },
+  {
+    id: 'top-tags',
+    title: 'Top Tag Roots',
+    desc: 'Most common tag roots across the vault',
+    sql: `SELECT tag_root, COUNT(*) as notes
+          FROM note_tags GROUP BY tag_root ORDER BY notes DESC LIMIT 30`
+  },
+];
+
+function reportsPage() {
+  const cards = REPORTS.map(r=>`
+    <div class="report-card" id="rc-${r.id}">
+      <h4>${escHtml(r.title)}</h4>
+      <p>${escHtml(r.desc)}</p>
+      <button class="btn btn-primary" onclick="runReport('${r.id}')" style="font-size:.78rem;padding:5px 12px;">▶ Run</button>
+      <div class="report-result" id="rr-${r.id}"></div>
+    </div>`).join('');
+
+  return `<p class="page-title">Reports — live database queries</p>
+<div class="report-grid">${cards}</div>
+<script>
+function runReport(id){
+  var el=document.getElementById('rr-'+id);
+  el.innerHTML='<span style="color:#555;font-size:.75rem">Running...</span>';
+  fetch('/api/reports/'+id).then(r=>r.json()).then(function(rows){
+    if(!rows||!rows.length){el.innerHTML='<span style="color:#555;font-size:.75rem">No results</span>';return;}
+    var cols=Object.keys(rows[0]);
+    var th=cols.map(c=>'<th>'+c+'</th>').join('');
+    var tb=rows.map(function(r){return '<tr>'+cols.map(c=>'<td>'+(r[c]===null?'':String(r[c]).slice(0,120))+'</td>').join('')+'</tr>';}).join('');
+    el.innerHTML='<table><thead><tr>'+th+'</tr></thead><tbody>'+tb+'</tbody></table>';
+  }).catch(function(e){el.innerHTML='<span style="color:#c86e6e;font-size:.75rem">Error: '+e.message+'</span>';});
+}
+</script>`;
+}
+
+// ---------------------------------------------------------------------------
+// NOTES BROWSER
+// ---------------------------------------------------------------------------
+function notesPage(db, params) {
+  const page=Math.max(1,parseInt(params.get('page')||'1',10));
+  const filter=params.get('filter')||'all';
+  const search=(params.get('q')||'').trim();
+  const sort=params.get('sort')||'words';
+  const PS=100, offset=(page-1)*PS;
+
+  let where="WHERE content_type!='attachment'";
+  if(filter==='classified')   where+=' AND classification_at IS NOT NULL';
+  if(filter==='unclassified') where+=' AND classification_at IS NULL';
+  if(filter==='s4')           where+=' AND id IN (SELECT DISTINCT note_id FROM note_classifications WHERE switch_level=4)';
+  if(filter==='tagged')       where+=' AND has_tags=1';
+  if(filter==='untagged')     where+=' AND has_tags=0';
+  if(filter==='excluded')     where+=' AND quarry_exclude=1';
+  if(filter==='video')        where+=" AND video_links IS NOT NULL AND video_links!=''";
+  if(filter==='article')      where+=" AND content_type='article'";
+  if(filter==='note')         where+=" AND content_type='note'";
+  if(filter==='stub')         where+=" AND content_type='stub'";
+  if(search) where+=" AND (title LIKE '%"+search.replace(/'/g,"''")+"%' OR first_paragraph LIKE '%"+search.replace(/'/g,"''")+"%')";
+
+  const orderBy=sort==='title'?'title ASC':sort==='date'?'file_mtime DESC':'word_count DESC';
+  const total=db.prepare('SELECT COUNT(*) as n FROM vault_notes '+where).get().n;
+  const notes=db.prepare('SELECT id,title,word_count,content_type,origin,first_paragraph,tag_source,classification_at,quarry_exclude FROM vault_notes '+where+' ORDER BY '+orderBy+' LIMIT ? OFFSET ?').all(PS,offset);
+  const s4ids=new Set(db.prepare('SELECT DISTINCT note_id FROM note_classifications WHERE switch_level=4').all().map(r=>r.note_id));
+  const totalPages=Math.ceil(total/PS);
+
+  function pl(p){return '/notes?page='+p+'&filter='+encodeURIComponent(filter)+'&sort='+sort+'&q='+encodeURIComponent(search);}
+
+  const rows=notes.map(n=>{
+    const ex=(n.first_paragraph||'').slice(0,130).replace(/\n/g,' ');
+    const s4=s4ids.has(n.id)?'<span class="s4-dot" title="Switch-4"></span>':'';
+    const dim=n.quarry_exclude?' style="opacity:.4"':'';
+    return '<tr onclick="openNote('+n.id+')"'+dim+'><td><div class="nt">'+s4+escHtml(n.title)+'</div><div class="nx">'+escHtml(ex)+'</div></td><td class="nm">'+n.word_count+'w</td><td class="nm">'+escHtml(n.content_type)+'</td><td class="nm">'+escHtml(n.origin)+'</td><td class="ntag">'+escHtml(n.tag_source||'')+(n.classification_at?'<br><span style="color:#2a5a2a">✓</span>':'')+'</td></tr>';
+  }).join('');
+
+  const fOpts=[['all','All'],['article','Articles'],['note','Notes'],['stub','Stubs'],['video','Video'],['classified','Classified'],['unclassified','Unclassified'],['s4','Switch-4'],['tagged','Tagged'],['untagged','Untagged'],['excluded','Excluded']];
+  const sOpts=[['words','Words'],['title','Title'],['date','Date']];
+  const toolbar='<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px;background:#141414;border:1px solid #2a2a2a;border-radius:6px;padding:12px 16px">'+
+    '<label style="font-size:.8rem;color:#888">Filter: <select onchange="applyNF()" id="nf-sel" style="background:#0f0f0f;border:1px solid #333;color:#aaa;padding:4px 8px;border-radius:4px;font-size:.8rem">'+fOpts.map(([v,l])=>'<option value="'+v+'"'+(filter===v?' selected':'')+'>'+l+'</option>').join('')+'</select></label>'+
+    '<label style="font-size:.8rem;color:#888">Sort: <select onchange="applyNF()" id="ns-sel" style="background:#0f0f0f;border:1px solid #333;color:#aaa;padding:4px 8px;border-radius:4px;font-size:.8rem">'+sOpts.map(([v,l])=>'<option value="'+v+'"'+(sort===v?' selected':'')+'>'+l+'</option>').join('')+'</select></label>'+
+    '<input id="nq-box" placeholder="Search..." value="'+escHtml(search)+'" onkeydown="if(event.key===\'Enter\')applyNF()" style="background:#0f0f0f;border:1px solid #333;color:#aaa;padding:4px 8px;border-radius:4px;font-size:.8rem;width:160px">'+
+    '</div>';
+
+  let pag='<div class="pagination"><span>'+total.toLocaleString()+' notes, p'+page+'/'+totalPages+'</span>';
+  if(page>1) pag+='<a href="'+pl(1)+'">«</a><a href="'+pl(page-1)+'">‹</a>';
+  for(let p=Math.max(1,page-2);p<=Math.min(totalPages,page+2);p++) pag+='<a href="'+pl(p)+'"'+(p===page?' style="color:#c8b89a"':'')+'>'+p+'</a>';
+  if(page<totalPages) pag+='<a href="'+pl(page+1)+'">›</a><a href="'+pl(totalPages)+'">»</a>';
+  pag+='</div>';
+
+  return '<p class="page-title">Notes Browser — click row to read</p>'+toolbar+
+    '<table class="note-table"><thead><tr><th>Note</th><th>Words</th><th>Type</th><th>Origin</th><th>Tags</th></tr></thead><tbody>'+rows+'</tbody></table>'+pag+
+    '<script>function applyNF(){window.location="/notes?filter="+document.getElementById("nf-sel").value+"&sort="+document.getElementById("ns-sel").value+"&q="+encodeURIComponent(document.getElementById("nq-box").value);}</script>';
+}
+
+// ---------------------------------------------------------------------------
+// REVIEW PAGE
+// ---------------------------------------------------------------------------
+function reviewPage(db, params) {
+  const page=Math.max(1,parseInt(params.get('page')||'1',10));
+  const filter=params.get('filter')||'all';
+  const search=(params.get('q')||'').trim();
+  const PS=100, offset=(page-1)*PS;
+
+  let where="WHERE content_type!='attachment'";
+  if(filter==='obsidian') where+=" AND origin='obsidian'";
+  if(filter==='untagged') where+=' AND has_tags=0';
+  if(filter==='excluded') where+=' AND quarry_exclude=1';
+  if(filter==='short')    where+=' AND word_count<300';
+  if(search) where+=" AND (title LIKE '%"+search.replace(/'/g,"''")+"%' OR first_paragraph LIKE '%"+search.replace(/'/g,"''")+"%')";
+
+  const total=db.prepare('SELECT COUNT(*) as n FROM vault_notes '+where).get().n;
+  const notes=db.prepare('SELECT id,title,word_count,content_type,origin,first_paragraph,quarry_exclude,tag_source FROM vault_notes '+where+' ORDER BY origin,word_count DESC LIMIT ? OFFSET ?').all(PS,offset);
+  const totalPages=Math.ceil(total/PS);
+
+  function pl(p){return '/review?page='+p+'&filter='+encodeURIComponent(filter)+'&q='+encodeURIComponent(search);}
+
+  const rows=notes.map(n=>{
+    const ex=(n.first_paragraph||'').slice(0,150).replace(/\n/g,' ');
+    const ch=n.quarry_exclude?'checked':'';
+    const cl=n.quarry_exclude?'tr-excluded':'';
+    return '<tr class="'+cl+'" id="row-'+n.id+'"><td><input type="checkbox" class="cb-exclude" id="cb-'+n.id+'" '+ch+' onchange="markChanged('+n.id+')" data-id="'+n.id+'"></td><td><div class="nt">'+escHtml(n.title)+'</div><div class="nx">'+escHtml(ex)+'</div></td><td class="nm">'+n.word_count+'w</td><td class="nm">'+escHtml(n.origin)+'</td><td class="nm">'+escHtml(n.content_type)+'</td><td class="ntag">'+escHtml(n.tag_source||'')+'</td></tr>';
+  }).join('');
+
+  const fOpts=[['all','All'],['obsidian','Obsidian'],['untagged','Untagged'],['short','Short <300w'],['excluded','Excluded']];
+  const toolbar='<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px;background:#141414;border:1px solid #2a2a2a;border-radius:6px;padding:12px 16px">'+
+    '<label style="font-size:.8rem;color:#888">Filter: <select onchange="applyRF(this.value)" id="rf-sel" style="background:#0f0f0f;border:1px solid #333;color:#aaa;padding:4px 8px;border-radius:4px;font-size:.8rem">'+fOpts.map(([v,l])=>'<option value="'+v+'"'+(filter===v?' selected':'')+'>'+l+'</option>').join('')+'</select></label>'+
+    '<input id="rq-box" placeholder="Search..." value="'+escHtml(search)+'" onkeydown="if(event.key===\'Enter\')applyRF()" style="background:#0f0f0f;border:1px solid #333;color:#aaa;padding:4px 8px;border-radius:4px;font-size:.8rem;width:160px">'+
+    '<button class="btn-save" onclick="saveExclusions()">Save</button><span class="save-status" id="save-status"></span>'+
+    '<label style="margin-left:auto;font-size:.8rem;color:#888"><input type="checkbox" onchange="selectAll(this)"> All</label></div>';
+
+  let pag='<div class="pagination"><span>'+total.toLocaleString()+' notes, p'+page+'/'+totalPages+'</span>';
+  if(page>1) pag+='<a href="#" onclick="saveAndGo(\''+pl(page-1)+'\');return false">‹</a>';
+  if(page<totalPages) pag+='<a href="#" onclick="saveAndGo(\''+pl(page+1)+'\');return false">›</a>';
+  pag+='</div>';
+
+  return '<p class="page-title">Review — mark notes to exclude from QUARRY</p>'+toolbar+
+    '<table class="note-table"><thead><tr><th style="width:30px"></th><th>Note</th><th>Words</th><th>Origin</th><th>Type</th><th>Tags</th></tr></thead><tbody>'+rows+'</tbody></table>'+pag+
+    `<script>
+var _ch={};
+window.addEventListener('beforeunload',function(e){if(Object.keys(_ch).length){e.preventDefault();e.returnValue='';}});
+function markChanged(id){_ch[id]=document.getElementById('cb-'+id).checked;document.getElementById('row-'+id).className=_ch[id]?'tr-excluded':'';document.getElementById('save-status').textContent=Object.keys(_ch).length+' unsaved';}
+function selectAll(cb){document.querySelectorAll('.cb-exclude').forEach(c=>{c.checked=cb.checked;markChanged(c.dataset.id);});}
+function applyRF(val){var f=val||document.getElementById('rf-sel').value,q=document.getElementById('rq-box').value;saveAndGo('/review?filter='+f+'&q='+encodeURIComponent(q));}
+function saveAndGo(url){
+  if(!Object.keys(_ch).length){window.location=url;return;}
+  document.getElementById('save-status').textContent='Saving...';
+  fetch('/api/notes/exclude',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(_ch)})
+  .then(r=>r.json()).then(()=>{_ch={};window.location=url;})
+  .catch(()=>{document.getElementById('save-status').textContent='Save failed';});}
+function saveExclusions(){
+  var ids=Object.keys(_ch);if(!ids.length){document.getElementById('save-status').textContent='Nothing changed.';return;}
+  document.getElementById('save-status').textContent='Saving...';
+  fetch('/api/notes/exclude',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(_ch)})
+  .then(r=>r.json()).then(d=>{document.getElementById('save-status').textContent='Saved '+d.updated+' ✓';_ch={};})
+  .catch(()=>{document.getElementById('save-status').textContent='Save failed';});}
+</script>`;
+}
+
+// ---------------------------------------------------------------------------
+// STATS PAGE
+// ---------------------------------------------------------------------------
+function statsPage(db) {
   const total      = db.prepare('SELECT COUNT(*) as n FROM vault_notes').get().n;
   const tagged     = db.prepare('SELECT COUNT(*) as n FROM vault_notes WHERE has_tags=1').get().n;
   const classified = db.prepare('SELECT COUNT(DISTINCT note_id) as n FROM note_classifications').get().n;
-  const s4         = db.prepare("SELECT COUNT(DISTINCT note_id) as n FROM note_classifications WHERE switch_level=4").get().n;
+  const s4         = db.prepare('SELECT COUNT(DISTINCT note_id) as n FROM note_classifications WHERE switch_level=4').get().n;
   const excluded   = db.prepare('SELECT COUNT(*) as n FROM vault_notes WHERE quarry_exclude=1').get().n;
   const narratives = db.prepare('SELECT COUNT(*) as n FROM narratives').get().n;
   const approved   = db.prepare("SELECT COUNT(*) as n FROM narratives WHERE approval_status='approved'").get().n;
   const budget     = db.prepare('SELECT COALESCE(SUM(cost_usd),0) as t FROM api_budget').get().t;
   const s4cost     = db.prepare("SELECT COALESCE(SUM(cost_usd),0) as t FROM api_budget WHERE component='classifier-s4'").get().t;
+  const tagPct=Math.round(tagged/total*100), clsPct=Math.round(classified/total*100);
+  const byType=db.prepare("SELECT content_type,COUNT(*) as n FROM vault_notes GROUP BY content_type ORDER BY n DESC").all();
+  const byOrigin=db.prepare("SELECT origin,COUNT(*) as n FROM vault_notes GROUP BY origin ORDER BY n DESC").all();
+  const bySrc=db.prepare("SELECT COALESCE(tag_source,'original') as src,COUNT(*) as n FROM vault_notes WHERE has_tags=1 GROUP BY tag_source ORDER BY n DESC").all();
+  const bySize=db.prepare("SELECT CASE WHEN word_count<200 THEN 'stub' WHEN word_count<1000 THEN 'short' WHEN word_count<5000 THEN 'medium' ELSE 'long' END as bucket,COUNT(*) as n FROM vault_notes GROUP BY bucket ORDER BY n DESC").all();
+  const topTags=db.prepare("SELECT tag_root,COUNT(*) as n FROM note_tags GROUP BY tag_root ORDER BY n DESC LIMIT 15").all();
 
-  const byType   = db.prepare("SELECT content_type, COUNT(*) as n FROM vault_notes GROUP BY content_type ORDER BY n DESC").all();
-  const byOrigin = db.prepare("SELECT origin, COUNT(*) as n FROM vault_notes GROUP BY origin ORDER BY n DESC").all();
-  const bySrc    = db.prepare("SELECT COALESCE(tag_source,'original') as src, COUNT(*) as n FROM vault_notes WHERE has_tags=1 GROUP BY tag_source ORDER BY n DESC").all();
-  const bySize   = db.prepare("SELECT CASE WHEN word_count<200 THEN 'stub (<200w)' WHEN word_count<1000 THEN 'short (200-1k)' WHEN word_count<5000 THEN 'medium (1k-5k)' ELSE 'long (5k+)' END as bucket, COUNT(*) as n FROM vault_notes GROUP BY bucket ORDER BY n DESC").all();
-  const topTags  = db.prepare("SELECT tag_root, COUNT(*) as n FROM note_tags GROUP BY tag_root ORDER BY n DESC LIMIT 15").all();
-  const unclassifiedBySize = db.prepare("SELECT CASE WHEN word_count<200 THEN 'stub' WHEN word_count<1000 THEN 'short' WHEN word_count<5000 THEN 'medium' ELSE 'long' END as bucket, COUNT(*) as n FROM vault_notes WHERE classification_at IS NULL AND content_type IN ('article','note','video') GROUP BY bucket ORDER BY n DESC").all();
-
-  function breakdownHtml(title, rows, keyField, valField) {
-    return '<div class="breakdown"><h3>'+escHtml(title)+'</h3>' +
-      rows.map(r=>'<div class="breakdown-row"><span class="key">'+escHtml(String(r[keyField]))+'</span><span class="val">'+r[valField]+'</span></div>').join('') +
-      '</div>';
+  function bd(title,rows,k,v){
+    return '<div class="breakdown"><h3>'+escHtml(title)+'</h3>'+rows.map(r=>'<div class="br-row"><span class="k">'+escHtml(String(r[k]))+'</span><span class="v">'+r[v]+'</span></div>').join('')+'</div>';
   }
 
-  const tagPct = Math.round(tagged/total*100);
-  const clsPct = Math.round(classified/total*100);
-
-  return `
-<p class="section-title">Vault Statistics</p>
+  return `<p class="page-title">Statistics</p>
 <div class="stat-grid">
   <div class="stat-card"><div class="num">${total.toLocaleString()}</div><div class="lbl">Total Notes</div></div>
-  <div class="stat-card"><div class="num">${tagged.toLocaleString()}</div><div class="lbl">Tagged</div><div class="progress-bar"><div class="progress-fill" style="width:${tagPct}%"></div></div><div class="sub">${tagPct}% of vault</div></div>
-  <div class="stat-card"><div class="num">${classified.toLocaleString()}</div><div class="lbl">Classified (S3/S4)</div><div class="progress-bar"><div class="progress-fill" style="width:${clsPct}%;background:#1a4a2a"></div></div><div class="sub">${clsPct}% · ${s4} with Switch-4</div></div>
+  <div class="stat-card"><div class="num">${tagged.toLocaleString()}</div><div class="lbl">Tagged</div><div class="progress-bar"><div class="progress-fill" style="width:${tagPct}%"></div></div><div class="sub">${tagPct}%</div></div>
+  <div class="stat-card"><div class="num">${classified.toLocaleString()}</div><div class="lbl">Classified</div><div class="progress-bar"><div class="progress-fill" style="width:${clsPct}%;background:#1a4a2a"></div></div><div class="sub">${clsPct}% · ${s4} S4</div></div>
   <div class="stat-card"><div class="num">${narratives}</div><div class="lbl">Narratives</div><div class="sub">${approved} approved</div></div>
-  <div class="stat-card"><div class="num">$${budget.toFixed(3)}</div><div class="lbl">API Spend</div><div class="sub">S4: $${s4cost.toFixed(3)} · ceiling $10.00</div></div>
-  <div class="stat-card"><div class="num">${excluded}</div><div class="lbl">Excluded (quarry_exclude)</div></div>
+  <div class="stat-card"><div class="num">$${budget.toFixed(3)}</div><div class="lbl">API Spend</div><div class="sub">S4: $${s4cost.toFixed(3)}</div></div>
+  <div class="stat-card"><div class="num">${excluded}</div><div class="lbl">Excluded</div></div>
 </div>
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-  ${breakdownHtml('By Content Type', byType, 'content_type', 'n')}
-  ${breakdownHtml('By Origin', byOrigin, 'origin', 'n')}
-  ${breakdownHtml('By Word Count', bySize, 'bucket', 'n')}
-  ${breakdownHtml('By Tag Source', bySrc, 'src', 'n')}
-  ${breakdownHtml('Unclassified by Size', unclassifiedBySize, 'bucket', 'n')}
-  ${breakdownHtml('Top Tag Roots', topTags, 'tag_root', 'n')}
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+  ${bd('By Type',byType,'content_type','n')}${bd('By Origin',byOrigin,'origin','n')}
+  ${bd('By Size',bySize,'bucket','n')}${bd('Tag Source',bySrc,'src','n')}
+  ${bd('Top Tags',topTags,'tag_root','n')}
 </div>`;
 }
 
-function renderNotesPage(db, params) {
-  const page     = Math.max(1, parseInt(params.get('page')||'1',10));
-  const filter   = params.get('filter')||'all';
-  const search   = (params.get('q')||'').trim();
-  const sort     = params.get('sort')||'words';
-  const PAGE_SIZE = 100;
-  const offset   = (page-1)*PAGE_SIZE;
-
-  let where = "WHERE content_type != 'attachment'";
-  if (filter==='classified')   where += ' AND classification_at IS NOT NULL';
-  if (filter==='unclassified') where += ' AND classification_at IS NULL';
-  if (filter==='tagged')       where += ' AND has_tags=1';
-  if (filter==='untagged')     where += ' AND has_tags=0';
-  if (filter==='s4')           where += ' AND id IN (SELECT DISTINCT note_id FROM note_classifications WHERE switch_level=4)';
-  if (filter==='excluded')     where += ' AND quarry_exclude=1';
-  if (filter==='article')      where += " AND content_type='article'";
-  if (filter==='note')         where += " AND content_type='note'";
-  if (filter==='stub')         where += " AND content_type='stub'";
-  if (search) where += " AND (title LIKE '%"+search.replace(/'/g,"''") +"%' OR first_paragraph LIKE '%"+search.replace(/'/g,"''")+"%')";
-
-  const orderBy = sort==='title' ? 'title ASC' : sort==='date' ? 'file_mtime DESC' : 'word_count DESC';
-
-  const total = db.prepare('SELECT COUNT(*) as n FROM vault_notes '+where).get().n;
-  const notes = db.prepare('SELECT id,title,word_count,content_type,origin,first_paragraph,tag_source,classification_at,quarry_exclude FROM vault_notes '+where+' ORDER BY '+orderBy+' LIMIT ? OFFSET ?').all(PAGE_SIZE, offset);
-  const s4ids = new Set(db.prepare('SELECT DISTINCT note_id FROM note_classifications WHERE switch_level=4').all().map(r=>r.note_id));
-
-  const totalPages = Math.ceil(total/PAGE_SIZE);
-
-  function pageLink(p) { return '/notes?page='+p+'&filter='+encodeURIComponent(filter)+'&sort='+sort+'&q='+encodeURIComponent(search); }
-
-  const rows = notes.map(n => {
-    const excerpt = (n.first_paragraph||'').slice(0,140).replace(/\n/g,' ');
-    const s4 = s4ids.has(n.id) ? '<span class="s4-dot" title="Switch-4 classified"></span>' : '';
-    const excl = n.quarry_exclude ? ' style="opacity:.4"' : '';
-    return '<tr onclick="openNote('+n.id+')"'+excl+'><td><div class="nt">'+s4+escHtml(n.title)+'</div><div class="nx">'+escHtml(excerpt)+'</div></td>'+
-      '<td class="nm">'+n.word_count+'w</td>'+
-      '<td class="nm">'+escHtml(n.content_type)+'</td>'+
-      '<td class="nm">'+escHtml(n.origin)+'</td>'+
-      '<td class="ntag">'+escHtml(n.tag_source||'')+(n.classification_at?'<br><span style="color:#2a5a2a">✓cls</span>':'')+'</td></tr>';
-  }).join('');
-
-  const filterOpts = [['all','All'],['article','Articles'],['note','Notes'],['stub','Stubs'],['classified','Classified'],['unclassified','Unclassified'],['s4','Switch-4'],['tagged','Tagged'],['untagged','Untagged'],['excluded','Excluded']];
-  const sortOpts   = [['words','By words'],['title','By title'],['date','By date']];
-
-  const toolbar = '<div class="review-toolbar">'+
-    '<label>Filter: <select onchange="applyNotesFilter()" id="f-sel">'+filterOpts.map(([v,l])=>'<option value="'+v+'"'+(filter===v?' selected':'')+'>'+l+'</option>').join('')+'</select></label>'+
-    '<label>Sort: <select onchange="applyNotesFilter()" id="s-sel">'+sortOpts.map(([v,l])=>'<option value="'+v+'"'+(sort===v?' selected':'')+'>'+l+'</option>').join('')+'</select></label>'+
-    '<input type="text" id="q-box" placeholder="Search..." value="'+escHtml(search)+'" onkeydown="if(event.key===\'Enter\')applyNotesFilter()" style="width:180px">'+
-    '</div>';
-
-  let pag = '<div class="pagination"><span>'+total.toLocaleString()+' notes, page '+page+' of '+totalPages+'</span>';
-  if (page>1) pag += '<a href="'+pageLink(1)+'">«</a><a href="'+pageLink(page-1)+'">‹ Prev</a>';
-  // show up to 5 page links around current
-  for (let p=Math.max(1,page-2);p<=Math.min(totalPages,page+2);p++) {
-    pag += '<a href="'+pageLink(p)+'"'+(p===page?' style="color:#c8b89a;border-color:#555"':'')+'>'+p+'</a>';
-  }
-  if (page<totalPages) pag += '<a href="'+pageLink(page+1)+'">Next ›</a><a href="'+pageLink(totalPages)+'">»</a>';
-  pag += '</div>';
-
-  const script = '<script>function applyNotesFilter(){var f=document.getElementById("f-sel").value,s=document.getElementById("s-sel").value,q=document.getElementById("q-box").value;window.location="/notes?filter="+f+"&sort="+s+"&q="+encodeURIComponent(q);}</script>';
-
-  return '<p class="section-title">Notes Browser — click any row to read</p>'+
-    toolbar+
-    '<table class="note-table"><thead><tr><th>Note</th><th>Words</th><th>Type</th><th>Origin</th><th>Tags</th></tr></thead><tbody>'+rows+'</tbody></table>'+
-    pag+script;
+// ---------------------------------------------------------------------------
+// CMD JS — shared "run command + show log" client script
+// ---------------------------------------------------------------------------
+function cmdJs() {
+  return `<script>
+function runCmd(cmd,label,extra){
+  var el=document.getElementById('cmd-output');
+  el.innerHTML='<div class="log-box" id="log-box">Starting '+label+'...</div>';
+  fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({cmd},extra||{}))})
+  .then(showCmdResult);
+  startLogPoll();
+}
+function showCmdResult(r){return r.json().then(function(d){var el=document.getElementById('cmd-output');if(d.ok){el.innerHTML+='<div style="color:#6ec86e;font-size:.78rem;margin-top:6px">✓ '+d.msg+'</div>';}else{el.innerHTML+='<div style="color:#c86e6e;font-size:.78rem;margin-top:6px">✗ '+(d.error||'unknown error')+'</div>';}});}
+var _logInterval=null;
+function startLogPoll(){
+  if(_logInterval)clearInterval(_logInterval);
+  _logInterval=setInterval(function(){
+    fetch('/api/log').then(r=>r.text()).then(function(t){
+      var b=document.getElementById('log-box');if(b){b.textContent=t;b.scrollTop=b.scrollHeight;}
+    });
+  },3000);
+  setTimeout(function(){clearInterval(_logInterval);},5*60*1000);
+}
+</script>`;
 }
 
-function renderReviewPage(db, params) {
-  const page     = Math.max(1, parseInt(params.get('page')||'1',10));
-  const filter   = params.get('filter')||'all';
-  const search   = (params.get('q')||'').trim();
-  const PAGE_SIZE = 100;
-  const offset   = (page-1)*PAGE_SIZE;
+// ---------------------------------------------------------------------------
+// CHILD PROCESS RUNNER
+// ---------------------------------------------------------------------------
+const NODE = 'node';
+const FLAGS = ['--no-warnings'];
 
-  let where = "WHERE content_type != 'attachment'";
-  if (filter==='obsidian') where += " AND origin='obsidian'";
-  if (filter==='untagged') where += ' AND has_tags=0';
-  if (filter==='excluded') where += ' AND quarry_exclude=1';
-  if (filter==='short')    where += ' AND word_count<300';
-  if (search) where += " AND (title LIKE '%"+search.replace(/'/g,"''")+"%' OR first_paragraph LIKE '%"+search.replace(/'/g,"''")+"%')";
+function spawnDetached(args, env) {
+  const envFull = Object.assign({}, process.env, env||{});
+  const child = cp.spawn(NODE, FLAGS.concat(args), {
+    detached: true, stdio: 'ignore', env: envFull
+  });
+  child.unref();
+  return child.pid;
+}
 
-  const total = db.prepare('SELECT COUNT(*) as n FROM vault_notes '+where).get().n;
-  const notes = db.prepare('SELECT id,title,word_count,content_type,origin,first_paragraph,quarry_exclude,tag_source FROM vault_notes '+where+' ORDER BY origin,word_count DESC LIMIT ? OFFSET ?').all(PAGE_SIZE,offset);
-  const totalPages = Math.ceil(total/PAGE_SIZE);
+function resolveCmd(body) {
+  const cmd      = body.cmd;
+  const limit    = parseInt(body.limit||'0',10)||null;
+  const provider = body.provider||null;
+  const id       = body.id||null;
+  const numSources = body.numSources||'3';
 
-  function pageLink(p) { return '/review?page='+p+'&filter='+encodeURIComponent(filter)+'&q='+encodeURIComponent(search); }
+  const tagger   = path.join(CODE_DIR,'tagger.js');
+  const curator  = path.join(CODE_DIR,'curator.js');
+  const narrator = path.join(CODE_DIR,'narrator.js');
+  const indexer  = path.join(CODE_DIR,'indexer.js');
+  const extVid   = path.join(CODE_DIR,'extract_video_links.js');
 
-  const rows = notes.map(n=>{
-    const ex = (n.first_paragraph||'').slice(0,160).replace(/\n/g,' ');
-    const ch = n.quarry_exclude?'checked':'';
-    const cl = n.quarry_exclude?'tr-excluded':'';
-    return '<tr class="'+cl+'" id="row-'+n.id+'">'+
-      '<td><input type="checkbox" class="cb-exclude" id="cb-'+n.id+'" '+ch+' onchange="markChanged('+n.id+')" data-id="'+n.id+'"></td>'+
-      '<td><div class="nt">'+escHtml(n.title)+'</div><div class="nx">'+escHtml(ex)+'</div></td>'+
-      '<td class="nm">'+n.word_count+'w</td>'+
-      '<td class="nm">'+escHtml(n.origin)+'</td>'+
-      '<td class="nm">'+escHtml(n.content_type)+'</td>'+
-      '<td class="ntag">'+escHtml(n.tag_source||'')+'</td></tr>';
-  }).join('');
+  const cmds = {
+    'git-pull':          ()=>{ cp.execFileSync('git',['-C',VAULT_DIR,'pull','origin','master'],{env:process.env}); return 'git pull complete'; },
+    'index-diff':        ()=>{ spawnDetached([indexer,'--diff']); return 'Indexer started (--diff)'; },
+    'index-full':        ()=>{ spawnDetached([indexer]); return 'Indexer started (full)'; },
+    'sync-wc':           ()=>{ spawnDetached([tagger,'--sync-wc']); return 'sync-wc started'; },
+    'sw1':               ()=>{ spawnDetached([tagger,'--switch1']); return 'Switch-1 started'; },
+    'sw2':               ()=>{ spawnDetached([tagger,'--switch2']); return 'Switch-2 started'; },
+    'sw3':               ()=>{ const a=[tagger,'--switch3']; if(limit)a.push('--limit',String(limit)); if(provider)a.push('--provider',provider); spawnDetached(a); return 'Switch-3 started'; },
+    'sw4':               ()=>{ const a=[tagger,'--switch4']; if(limit)a.push('--limit',String(limit)); spawnDetached(a); return 'Switch-4 started'; },
+    'sw4-dry':           ()=>{ spawnDetached([tagger,'--switch4','--dry-run','--limit','10']); return 'Switch-4 dry run started'; },
+    'mwc':               ()=>{ const a=[tagger,'--mindful-wc']; if(limit)a.push('--limit',String(limit)); spawnDetached(a); return 'mindful-wc started'; },
+    'mwc-dry':           ()=>{ spawnDetached([tagger,'--mindful-wc','--dry-run']); return 'mindful-wc dry run started'; },
+    'extract-video':     ()=>{ spawnDetached([extVid]); return 'Video link extraction started'; },
+    'extract-video-dry': ()=>{ spawnDetached([extVid,'--dry-run']); return 'Video extraction dry run started'; },
+    'curator-force':     ()=>{ spawnDetached([curator,'--force']); return 'Curator --force started'; },
+    'curator-refill':    ()=>{ spawnDetached([curator,'--refill']); return 'Curator --refill started'; },
+    'curator-status':    ()=>{ spawnDetached([curator,'--status']); return 'Curator status started'; },
+    'narrator-next':     ()=>{ spawnDetached([narrator,'--next']); return 'Narrator --next started'; },
+    'narrator-dry':      ()=>{ spawnDetached([narrator,'--dry-run']); return 'Narrator dry run started'; },
+    'narrator-live':     ()=>{ spawnDetached([narrator,'--live','--numSources',String(numSources)]); return 'Narrator --live started (check Pending queue)'; },
+    'narrator-id':       ()=>{ if(!id)throw new Error('id required'); spawnDetached([narrator,'--id',String(id)]); return 'Narrator started for queue id '+id; },
+  };
 
-  const filterOpts = [['all','All'],['obsidian','Obsidian'],['untagged','Untagged'],['short','Short (<300w)'],['excluded','Already excluded']];
-  const toolbar = '<div class="review-toolbar">'+
-    '<label>Filter: <select onchange="applyRFilter(this.value)" id="rf-sel">'+filterOpts.map(([v,l])=>'<option value="'+v+'"'+(filter===v?' selected':'')+'>'+l+'</option>').join('')+'</select></label>'+
-    '<input type="text" id="rq-box" placeholder="Search..." value="'+escHtml(search)+'" onkeydown="if(event.key===\'Enter\')applyRFilter()" style="width:180px">'+
-    '<button class="btn-save-review" onclick="saveExclusions()">Save</button>'+
-    '<span class="save-status" id="save-status"></span>'+
-    '<label style="margin-left:auto"><input type="checkbox" onchange="selectAll(this)"> Select all</label>'+
-    '</div>';
-
-  let pag = '<div class="pagination"><span>'+total.toLocaleString()+' notes, page '+page+' of '+totalPages+'</span>';
-  if (page>1) pag += '<a href="#" onclick="saveAndGo(\''+pageLink(page-1)+'\');return false">‹ Prev</a>';
-  if (page<totalPages) pag += '<a href="#" onclick="saveAndGo(\''+pageLink(page+1)+'\');return false">Next ›</a>';
-  pag += '</div>';
-
-  const script = `<script>
-var _ch={},_pn=null;
-window.addEventListener('beforeunload',function(e){if(Object.keys(_ch).length){e.preventDefault();e.returnValue='';}});
-function markChanged(id){_ch[id]=document.getElementById('cb-'+id).checked;document.getElementById('row-'+id).className=_ch[id]?'tr-excluded':'';document.getElementById('save-status').textContent=Object.keys(_ch).length+' unsaved';}
-function selectAll(cb){document.querySelectorAll('.cb-exclude').forEach(function(c){c.checked=cb.checked;markChanged(c.dataset.id);});}
-function applyRFilter(val){var f=val||document.getElementById('rf-sel').value,q=document.getElementById('rq-box').value;saveAndGo('/review?filter='+f+'&q='+encodeURIComponent(q));}
-function saveAndGo(url){
-  if(!Object.keys(_ch).length){window.location=url;return;}
-  document.getElementById('save-status').textContent='Saving...';
-  fetch('/api/notes/exclude',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(_ch)})
-  .then(function(r){return r.json();}).then(function(){_ch={};window.location=url;})
-  .catch(function(){document.getElementById('save-status').textContent='Save failed';});}
-function saveExclusions(){
-  var ids=Object.keys(_ch);if(!ids.length){document.getElementById('save-status').textContent='Nothing changed.';return;}
-  document.getElementById('save-status').textContent='Saving...';
-  fetch('/api/notes/exclude',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(_ch)})
-  .then(function(r){return r.json();}).then(function(d){document.getElementById('save-status').textContent='Saved '+d.updated+' ✓';_ch={};})
-  .catch(function(){document.getElementById('save-status').textContent='Save failed';});}
-</script>`;
-
-  return '<p class="section-title">Review Notes — mark to exclude from QUARRY</p>'+toolbar+
-    '<table class="note-table"><thead><tr><th style="width:32px"></th><th>Note</th><th>Words</th><th>Origin</th><th>Type</th><th>Tags</th></tr></thead><tbody>'+rows+'</tbody></table>'+
-    pag+script;
+  if (!cmds[cmd]) throw new Error('Unknown command: '+cmd);
+  return cmds[cmd]();
 }
 
 // ---------------------------------------------------------------------------
@@ -470,139 +883,169 @@ function router(req, res) {
   const method = req.method;
   const params = new URLSearchParams(req.url.split('?')[1]||'');
 
-  const send = (content, nav) => {
-    res.writeHead(200, {'Content-Type':'text/html; charset=utf-8'});
-    res.end(htmlShell(nav, content, nav));
-  };
+  function send(content, active) {
+    res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});
+    res.end(shell(active, content, '/'+active.toLowerCase().replace(/ /g,'-')));
+  }
+  function sendHtml(title, content, activeHref) {
+    res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});
+    res.end(shell(title, content, activeHref));
+  }
+  function json(obj, status) {
+    res.writeHead(status||200,{'Content-Type':'application/json'});
+    res.end(JSON.stringify(obj));
+  }
 
-  // Pending queue
+  // --- Static pages ---
   if (method==='GET' && url==='/') {
-    const db = openDb(); ensureSchema(db);
-    const pending = db.prepare("SELECT n.*,nq.seed_theme as queue_theme FROM narratives n LEFT JOIN narrative_queue nq ON nq.id=n.queue_id WHERE n.approval_status='pending' OR n.approval_status IS NULL ORDER BY n.produced_at DESC").all().map(n=>enrichNarrative(db,n));
+    const db=openDb();ensureSchema(db);
+    const pending=db.prepare("SELECT n.*,nq.seed_theme as queue_theme FROM narratives n LEFT JOIN narrative_queue nq ON nq.id=n.queue_id WHERE n.approval_status='pending' OR n.approval_status IS NULL ORDER BY n.produced_at DESC").all().map(n=>enrichNarrative(db,n));
     db.close();
-    const cards = pending.length ? pending.map(renderPendingCard).join('') : '<div class="empty">No narratives pending approval.</div>';
-    send('<p class="section-title">Pending Approval</p><div class="stats-bar"><span>Pending: <strong id="pending-count">'+pending.length+'</strong></span></div>'+cards, 'pending');
+    const cards=pending.length?pending.map(pendingCard).join(''):'<div class="empty">No narratives pending approval.</div>';
+    sendHtml('Pending','<p class="page-title">Pending Approval</p><div style="background:#141414;border:1px solid #2a2a2a;border-radius:6px;padding:10px 18px;margin-bottom:20px;font-size:.85rem;color:#888">Pending: <strong id="pending-count" style="color:#c8b89a">'+pending.length+'</strong></div>'+cards,'/');
     return;
   }
-
-  // Approved archive
   if (method==='GET' && url==='/approved') {
-    const db = openDb(); ensureSchema(db);
-    const approved = db.prepare("SELECT n.*,nq.seed_theme as queue_theme FROM narratives n LEFT JOIN narrative_queue nq ON nq.id=n.queue_id WHERE n.approval_status='approved' ORDER BY n.approved_at DESC").all().map(n=>enrichNarrative(db,n));
+    const db=openDb();ensureSchema(db);
+    const approved=db.prepare("SELECT n.*,nq.seed_theme as queue_theme FROM narratives n LEFT JOIN narrative_queue nq ON nq.id=n.queue_id WHERE n.approval_status='approved' ORDER BY n.approved_at DESC").all().map(n=>enrichNarrative(db,n));
     db.close();
-    const cards = approved.length ? approved.map(renderApprovedCard).join('') : '<div class="empty">No narratives approved yet.</div>';
-    send('<p class="section-title">Approved Archive</p><div class="stats-bar"><span>Approved: <strong>'+approved.length+'</strong></span></div>'+cards, 'approved');
+    const cards=approved.length?approved.map(approvedCard).join(''):'<div class="empty">No narratives approved yet.</div>';
+    sendHtml('Approved','<p class="page-title">Approved Archive</p><div style="background:#141414;border:1px solid #2a2a2a;border-radius:6px;padding:10px 18px;margin-bottom:20px;font-size:.85rem;color:#888">Approved: <strong style="color:#c8b89a">'+approved.length+'</strong></div>'+cards,'/approved');
+    return;
+  }
+  if (method==='GET' && url==='/vault')    { sendHtml('Vault',   vaultPage(),   '/vault');    return; }
+  if (method==='GET' && url==='/tagger')   { sendHtml('Tagger',  taggerPage(),  '/tagger');   return; }
+  if (method==='GET' && url==='/curator')  { sendHtml('Curator', curatorPage(), '/curator');  return; }
+  if (method==='GET' && url==='/narrator') { sendHtml('Narrator',narratorPage(),'/narrator'); return; }
+  if (method==='GET' && url==='/reports')  { sendHtml('Reports', reportsPage(), '/reports');  return; }
+  if (method==='GET' && url==='/stats')    { const db=openDb();ensureSchema(db);const c=statsPage(db);db.close(); sendHtml('Stats',c,'/stats'); return; }
+  if (method==='GET' && /^\/queue/.test(url)) { const db=openDb();ensureSchema(db);const c=queuePage(db,params);db.close(); sendHtml('Queue',c,'/queue'); return; }
+  if (method==='GET' && /^\/notes/.test(url)) { const db=openDb();ensureSchema(db);const c=notesPage(db,params);db.close(); sendHtml('Browse',c,'/notes'); return; }
+  if (method==='GET' && /^\/review/.test(url)){ const db=openDb();ensureSchema(db);const c=reviewPage(db,params);db.close(); sendHtml('Review',c,'/review'); return; }
+
+  // --- API: run command ---
+  if (method==='POST' && url==='/api/run') {
+    readBody(req, function(b) {
+      var body={};try{body=JSON.parse(b);}catch(_){}
+      try {
+        const msg = resolveCmd(body);
+        json({ok:true, msg});
+      } catch(e) {
+        json({ok:false, error:e.message}, 400);
+      }
+    }); return;
+  }
+
+  // --- API: tail log ---
+  if (method==='GET' && url==='/api/log') {
+    // Return last 60 lines of tagger.log (most active log)
+    const logFile = params.get('file')||'tagger';
+    const fp = path.join(LOG_DIR, logFile+'.log');
+    try {
+      const lines = fs.readFileSync(fp,'utf8').split('\n').filter(Boolean);
+      res.writeHead(200,{'Content-Type':'text/plain'});
+      res.end(lines.slice(-60).join('\n'));
+    } catch(_) {
+      res.writeHead(200,{'Content-Type':'text/plain'});
+      res.end('(log not found)');
+    }
     return;
   }
 
-  // Stats
-  if (method==='GET' && url==='/stats') {
-    const db = openDb(); ensureSchema(db);
-    const content = renderStatsPage(db);
-    db.close();
-    send(content, 'stats');
+  // --- API: reports ---
+  const reportMatch = url.match(/^\/api\/reports\/([a-z-]+)$/);
+  if (method==='GET' && reportMatch) {
+    const r = REPORTS.find(x=>x.id===reportMatch[1]);
+    if (!r) { json({error:'Unknown report'},404); return; }
+    const db=openDb();ensureSchema(db);
+    try {
+      const rows=db.prepare(r.sql).all();
+      db.close(); json(rows);
+    } catch(e) { db.close(); json({error:e.message},500); }
     return;
   }
 
-  // Notes browser
-  if (method==='GET' && url==='/notes') {
-    const db = openDb(); ensureSchema(db);
-    const content = renderNotesPage(db, params);
-    db.close();
-    send(content, 'notes');
-    return;
+  // --- API: discard queue item ---
+  const discardMatch = url.match(/^\/api\/queue\/(\d+)\/discard$/);
+  if (method==='POST' && discardMatch) {
+    const db=openDb();
+    db.prepare("UPDATE narrative_queue SET status='failed' WHERE id=?").run(parseInt(discardMatch[1],10));
+    db.close(); json({ok:true}); return;
   }
 
-  // Review
-  if (method==='GET' && /^\/review/.test(url)) {
-    const db = openDb(); ensureSchema(db);
-    const content = renderReviewPage(db, params);
-    db.close();
-    send(content, 'review');
-    return;
-  }
-
-  // API: single note
+  // --- API: get note ---
   const noteMatch = url.match(/^\/api\/notes\/(\d+)$/);
   if (method==='GET' && noteMatch) {
-    const id = parseInt(noteMatch[1],10);
-    const db = openDb(); ensureSchema(db);
-    const note = db.prepare('SELECT id,title,filepath,source_url,word_count,content_type FROM vault_notes WHERE id=?').get(id);
-    if (!note) { db.close(); res.writeHead(404); res.end('{}'); return; }
-    const essayRow = db.prepare("SELECT claim FROM note_classifications WHERE note_id=? AND bucket='essay' ORDER BY switch_level DESC LIMIT 1").get(id);
-    const verified = db.prepare("SELECT claim FROM note_classifications WHERE note_id=? AND bucket='verified' ORDER BY switch_level DESC LIMIT 12").all(id).map(r=>r.claim);
+    const id=parseInt(noteMatch[1],10);
+    const db=openDb();ensureSchema(db);
+    const note=db.prepare('SELECT id,title,filepath,source_url,word_count,content_type FROM vault_notes WHERE id=?').get(id);
+    if (!note){db.close();res.writeHead(404);res.end('{}');return;}
+    const essay=db.prepare("SELECT claim FROM note_classifications WHERE note_id=? AND bucket='essay' ORDER BY switch_level DESC LIMIT 1").get(id);
+    const verified=db.prepare("SELECT claim FROM note_classifications WHERE note_id=? AND bucket='verified' ORDER BY switch_level DESC LIMIT 12").all(id).map(r=>r.claim);
     db.close();
     var body='';
-    try { body=fs.readFileSync(note.filepath,'utf8').replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/,'').replace(/_Created at[^_]*\._/g,'').replace(/_Source URL:[^_]*\._/g,'').trim(); } catch(_){}
-    res.writeHead(200,{'Content-Type':'application/json'});
-    res.end(JSON.stringify(Object.assign({},note,{body,essay:essayRow?essayRow.claim:null,verified})));
+    try{body=fs.readFileSync(note.filepath,'utf8').replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/,'').replace(/_Created at[^_]*\._/g,'').replace(/_Source URL:[^_]*\._/g,'').trim();}catch(_){}
+    json(Object.assign({},note,{body,essay:essay?essay.claim:null,verified}));
     return;
   }
 
-  // API: approve
-  const approveMatch = url.match(/^\/api\/narratives\/(\d+)\/approve$/);
-  if (method==='POST' && approveMatch) {
-    const db=openDb(); ensureSchema(db);
-    db.prepare("UPDATE narratives SET approval_status='approved',approved_at=? WHERE id=?").run(new Date().toISOString(),parseInt(approveMatch[1],10));
-    db.close(); res.writeHead(200,{'Content-Type':'application/json'}); res.end('{"ok":true}'); return;
-  }
-
-  // API: reject
-  const rejectMatch = url.match(/^\/api\/narratives\/(\d+)\/reject$/);
-  if (method==='POST' && rejectMatch) {
-    readBody(req, function(b) {
-      var reason=''; try{reason=JSON.parse(b).reason||'';}catch(_){}
-      const db=openDb(); ensureSchema(db);
-      db.prepare("UPDATE narratives SET approval_status='rejected',rejection_reason=? WHERE id=?").run(reason,parseInt(rejectMatch[1],10));
-      db.close(); res.writeHead(200,{'Content-Type':'application/json'}); res.end('{"ok":true}');
-    }); return;
-  }
-
-  // API: save exclusions
-  if (method==='POST' && url==='/api/notes/exclude') {
-    readBody(req, function(b) {
-      var ch={}; try{ch=JSON.parse(b);}catch(_){}
-      const db=openDb(); ensureSchema(db);
-      var n=0;
-      Object.keys(ch).forEach(function(id){db.prepare('UPDATE vault_notes SET quarry_exclude=? WHERE id=?').run(ch[id]?1:0,parseInt(id,10));n++;});
-      db.close(); res.writeHead(200,{'Content-Type':'application/json'}); res.end(JSON.stringify({ok:true,updated:n}));
-    }); return;
-  }
-
-  // API: save edited note body back to .md file (distinct URL — no collision with GET /api/notes/:id)
+  // --- API: save note ---
   const saveMatch = url.match(/^\/api\/notes\/(\d+)\/save$/);
   if (method==='POST' && saveMatch) {
-    const id = parseInt(saveMatch[1],10);
-    readBody(req, function(b) {
-      var data; try { data=JSON.parse(b); } catch(_) { res.writeHead(400,{'Content-Type':'application/json'}); res.end('{"error":"Invalid JSON"}'); return; }
-      const db   = openDb(); ensureSchema(db);
-      const note = db.prepare('SELECT filepath FROM vault_notes WHERE id=?').get(id);
+    const id=parseInt(saveMatch[1],10);
+    readBody(req,function(b){
+      var data={};try{data=JSON.parse(b);}catch(_){}
+      const db=openDb();
+      const note=db.prepare('SELECT filepath FROM vault_notes WHERE id=?').get(id);
       db.close();
-      if (!note) { res.writeHead(404,{'Content-Type':'application/json'}); res.end('{"error":"Note not found"}'); return; }
-      try {
-        const original = fs.readFileSync(note.filepath,'utf8');
-        const fm       = (original.match(/^(---\r?\n[\s\S]*?\r?\n---\r?\n?)/)||[''])[0];
-        const newBody  = (data.content||'').trim();
-        fs.writeFileSync(note.filepath+'.bak', original);
-        fs.writeFileSync(note.filepath, fm ? fm+'\n'+newBody : newBody, 'utf8');
-        // sync word count
-        const newWc = (newBody.match(/\S+/g)||[]).length;
-        const db2 = openDb();
-        db2.prepare('UPDATE vault_notes SET word_count=? WHERE id=?').run(newWc, id);
-        db2.close();
-        res.writeHead(200,{'Content-Type':'application/json'}); res.end('{"ok":true}');
-      } catch(e) { res.writeHead(500,{'Content-Type':'application/json'}); res.end(JSON.stringify({error:e.message})); }
+      if(!note){res.writeHead(404);res.end('{"error":"not found"}');return;}
+      try{
+        const orig=fs.readFileSync(note.filepath,'utf8');
+        const fm=(orig.match(/^(---\r?\n[\s\S]*?\r?\n---\r?\n?)/)||[''])[0];
+        const nb=(data.content||'').trim();
+        fs.writeFileSync(note.filepath+'.bak',orig);
+        fs.writeFileSync(note.filepath,fm?fm+'\n'+nb:nb,'utf8');
+        const wc=(nb.match(/\S+/g)||[]).length;
+        const db2=openDb();db2.prepare('UPDATE vault_notes SET word_count=? WHERE id=?').run(wc,id);db2.close();
+        json({ok:true});
+      }catch(e){res.writeHead(500);res.end(JSON.stringify({error:e.message}));}
     }); return;
   }
 
-  res.writeHead(404); res.end('Not found');
+  // --- API: approve/reject narrative ---
+  const approveMatch = url.match(/^\/api\/narratives\/(\d+)\/approve$/);
+  if (method==='POST' && approveMatch) {
+    const db=openDb();ensureSchema(db);
+    db.prepare("UPDATE narratives SET approval_status='approved',approved_at=? WHERE id=?").run(new Date().toISOString(),parseInt(approveMatch[1],10));
+    db.close();json({ok:true});return;
+  }
+  const rejectMatch = url.match(/^\/api\/narratives\/(\d+)\/reject$/);
+  if (method==='POST' && rejectMatch) {
+    readBody(req,function(b){
+      var reason='';try{reason=JSON.parse(b).reason||'';}catch(_){}
+      const db=openDb();ensureSchema(db);
+      db.prepare("UPDATE narratives SET approval_status='rejected',rejection_reason=? WHERE id=?").run(reason,parseInt(rejectMatch[1],10));
+      db.close();json({ok:true});
+    });return;
+  }
+
+  // --- API: save exclusions ---
+  if (method==='POST' && url==='/api/notes/exclude') {
+    readBody(req,function(b){
+      var ch={};try{ch=JSON.parse(b);}catch(_){}
+      const db=openDb();ensureSchema(db);
+      var n=0;Object.keys(ch).forEach(id=>{db.prepare('UPDATE vault_notes SET quarry_exclude=? WHERE id=?').run(ch[id]?1:0,parseInt(id,10));n++;});
+      db.close();json({ok:true,updated:n});
+    });return;
+  }
+
+  res.writeHead(404);res.end('Not found');
 }
 
 function readBody(req,cb){var b='';req.on('data',c=>{b+=c;});req.on('end',()=>cb(b));}
 
-const server = http.createServer(router);
+const server=http.createServer(router);
 server.listen(PORT,'0.0.0.0',function(){
   console.log('🪨 QUARRY server running at http://localhost:'+PORT);
-  console.log('   / Pending  /approved Archive  /stats  /notes  /review');
-  console.log('   DB: '+DB_PATH);
+  console.log('   Nav: / /approved /vault /tagger /curator /queue /narrator /reports /notes /review /stats');
 });
