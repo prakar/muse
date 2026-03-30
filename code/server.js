@@ -799,80 +799,94 @@ function statsPage(db) {
 // ---------------------------------------------------------------------------
 function cmdJs() {
   return `<script>
+var _logInterval=null;
 function runCmd(cmd,label,extra){
   var el=document.getElementById('cmd-output');
   el.innerHTML='<div class="log-box" id="log-box">Starting '+label+'...</div>';
   fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({cmd},extra||{}))})
-  .then(showCmdResult);
-  startLogPoll();
+  .then(function(r){return r.json();})
+  .then(function(d){
+    var el=document.getElementById('cmd-output');
+    if(d.ok){
+      el.innerHTML+='<div style="color:#6ec86e;font-size:.78rem;margin-top:6px">✓ '+d.msg+'</div>';
+      startLogPoll(d.log||'tagger.log');
+    } else {
+      el.innerHTML+='<div style="color:#c86e6e;font-size:.78rem;margin-top:6px">✗ '+(d.error||'unknown error')+'</div>';
+    }
+  });
 }
-function showCmdResult(r){return r.json().then(function(d){var el=document.getElementById('cmd-output');if(d.ok){el.innerHTML+='<div style="color:#6ec86e;font-size:.78rem;margin-top:6px">✓ '+d.msg+'</div>';}else{el.innerHTML+='<div style="color:#c86e6e;font-size:.78rem;margin-top:6px">✗ '+(d.error||'unknown error')+'</div>';}});}
-var _logInterval=null;
-function startLogPoll(){
+function showCmdResult(r){return r.json().then(function(d){var el=document.getElementById('cmd-output');if(!el)return;if(d.ok){el.innerHTML+='<div style="color:#6ec86e;font-size:.78rem;margin-top:6px">✓ '+d.msg+'</div>';startLogPoll(d.log||'tagger.log');}else{el.innerHTML+='<div style="color:#c86e6e;font-size:.78rem;margin-top:6px">✗ '+(d.error||'unknown error')+'</div>';}});}
+function startLogPoll(logFile){
   if(_logInterval)clearInterval(_logInterval);
+  var lf=logFile||'tagger.log';
   _logInterval=setInterval(function(){
-    fetch('/api/log').then(r=>r.text()).then(function(t){
+    fetch('/api/log?file='+encodeURIComponent(lf)).then(function(r){return r.text();}).then(function(t){
       var b=document.getElementById('log-box');if(b){b.textContent=t;b.scrollTop=b.scrollHeight;}
     });
   },3000);
-  setTimeout(function(){clearInterval(_logInterval);},5*60*1000);
+  // Stop polling after 10 minutes
+  setTimeout(function(){clearInterval(_logInterval);},10*60*1000);
 }
 </script>`;
 }
 
-// ---------------------------------------------------------------------------
-// CHILD PROCESS RUNNER
-// ---------------------------------------------------------------------------
-const NODE = 'node';
+const NODE  = process.execPath; // full path to the node binary running this server
 const FLAGS = ['--no-warnings'];
 
-function spawnDetached(args, env) {
-  const envFull = Object.assign({}, process.env, env||{});
-  const child = cp.spawn(NODE, FLAGS.concat(args), {
-    detached: true, stdio: 'ignore', env: envFull
-  });
-  child.unref();
-  return child.pid;
+// ---------------------------------------------------------------------------
+// COMMAND RUNNER — tmux sessions survive server restarts and Android process death
+// Each command gets a named tmux session and writes to its own log file.
+// Killing an existing session before starting ensures clean restarts.
+// ---------------------------------------------------------------------------
+
+// Map from cmd → {session, logFile, args(body)=>string[]}
+// logFile is relative to LOG_DIR. git-pull and index use their own logs.
+const CMD_MAP = {
+  'git-pull':          { session:'quarry-git',      log:'git.log',      build: ()=>['git',['-C',VAULT_DIR,'pull','origin','master']] },
+  'index-diff':        { session:'quarry-index',    log:'indexer.log',  build: (b,C)=>[NODE,[...FLAGS,path.join(C,'indexer.js'),'--diff']] },
+  'index-full':        { session:'quarry-index',    log:'indexer.log',  build: (b,C)=>[NODE,[...FLAGS,path.join(C,'indexer.js')]] },
+  'sync-wc':           { session:'quarry-syncwc',   log:'sync-wc.log',  build: (b,C)=>[NODE,[...FLAGS,path.join(C,'tagger.js'),'--sync-wc']] },
+  'sw1':               { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>[NODE,[...FLAGS,path.join(C,'tagger.js'),'--switch1']] },
+  'sw2':               { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>[NODE,[...FLAGS,path.join(C,'tagger.js'),'--switch2']] },
+  'sw3':               { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>{ const a=[NODE,[...FLAGS,path.join(C,'tagger.js'),'--switch3']]; if(b.limit)a[1].push('--limit',String(b.limit)); if(b.provider)a[1].push('--provider',b.provider); return a; } },
+  'sw4':               { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>{ const a=[NODE,[...FLAGS,path.join(C,'tagger.js'),'--switch4']]; if(b.limit)a[1].push('--limit',String(b.limit)); return a; } },
+  'sw4-dry':           { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>[NODE,[...FLAGS,path.join(C,'tagger.js'),'--switch4','--dry-run','--limit','10']] },
+  'mwc':               { session:'quarry-mwc',      log:'tagger.log',   build: (b,C)=>{ const a=[NODE,[...FLAGS,path.join(C,'tagger.js'),'--mindful-wc']]; if(b.limit)a[1].push('--limit',String(b.limit)); return a; } },
+  'mwc-dry':           { session:'quarry-mwc',      log:'tagger.log',   build: (b,C)=>[NODE,[...FLAGS,path.join(C,'tagger.js'),'--mindful-wc','--dry-run']] },
+  'extract-video':     { session:'quarry-video',    log:'video.log',    build: (b,C)=>[NODE,[...FLAGS,path.join(C,'extract_video_links.js')]] },
+  'extract-video-dry': { session:'quarry-video',    log:'video.log',    build: (b,C)=>[NODE,[...FLAGS,path.join(C,'extract_video_links.js'),'--dry-run']] },
+  'curator-force':     { session:'quarry-curator',  log:'curator.log',  build: (b,C)=>[NODE,[...FLAGS,path.join(C,'curator.js'),'--force']] },
+  'curator-refill':    { session:'quarry-curator',  log:'curator.log',  build: (b,C)=>[NODE,[...FLAGS,path.join(C,'curator.js'),'--refill']] },
+  'curator-status':    { session:'quarry-curator',  log:'curator.log',  build: (b,C)=>[NODE,[...FLAGS,path.join(C,'curator.js'),'--status']] },
+  'narrator-next':     { session:'quarry-narrator', log:'narrator.log', build: (b,C)=>[NODE,[...FLAGS,path.join(C,'narrator.js'),'--next']] },
+  'narrator-dry':      { session:'quarry-narrator', log:'narrator.log', build: (b,C)=>[NODE,[...FLAGS,path.join(C,'narrator.js'),'--dry-run']] },
+  'narrator-live':     { session:'quarry-narrator', log:'narrator.log', build: (b,C)=>[NODE,[...FLAGS,path.join(C,'narrator.js'),'--live','--numSources',String(b.numSources||3)]] },
+  'narrator-id':       { session:'quarry-narrator', log:'narrator.log', build: (b,C)=>{ if(!b.id)throw new Error('id required'); return [NODE,[...FLAGS,path.join(C,'narrator.js'),'--id',String(b.id)]]; } },
+};
+
+function launchInTmux(session, logFile, executable, args) {
+  const logPath = path.join(LOG_DIR, logFile);
+  // Build the shell command that runs inside tmux
+  // Redirect both stdout and stderr to the log file (append), then also to console
+  const quotedArgs = [executable].concat(args).map(a=>"'"+String(a).replace(/'/g,"'\\''")+"'").join(' ');
+  const shellCmd = quotedArgs + ' >> '+logPath+' 2>&1';
+
+  // Kill existing session — ignore error if session doesn't exist yet
+  try { cp.execFileSync('tmux',['kill-session','-t',session],{stdio:'ignore'}); } catch(_){}
+
+  // Start new tmux session running the command
+  cp.execFileSync('tmux',['new-session','-d','-s',session,shellCmd],{env:process.env});
+  return logPath;
 }
 
 function resolveCmd(body) {
-  const cmd      = body.cmd;
-  const limit    = parseInt(body.limit||'0',10)||null;
-  const provider = body.provider||null;
-  const id       = body.id||null;
-  const numSources = body.numSources||'3';
+  const cmd = body.cmd;
+  const def = CMD_MAP[cmd];
+  if (!def) throw new Error('Unknown command: '+cmd);
 
-  const tagger   = path.join(CODE_DIR,'tagger.js');
-  const curator  = path.join(CODE_DIR,'curator.js');
-  const narrator = path.join(CODE_DIR,'narrator.js');
-  const indexer  = path.join(CODE_DIR,'indexer.js');
-  const extVid   = path.join(CODE_DIR,'extract_video_links.js');
-
-  const cmds = {
-    'git-pull':          ()=>{ cp.execFileSync('git',['-C',VAULT_DIR,'pull','origin','master'],{env:process.env}); return 'git pull complete'; },
-    'index-diff':        ()=>{ spawnDetached([indexer,'--diff']); return 'Indexer started (--diff)'; },
-    'index-full':        ()=>{ spawnDetached([indexer]); return 'Indexer started (full)'; },
-    'sync-wc':           ()=>{ spawnDetached([tagger,'--sync-wc']); return 'sync-wc started'; },
-    'sw1':               ()=>{ spawnDetached([tagger,'--switch1']); return 'Switch-1 started'; },
-    'sw2':               ()=>{ spawnDetached([tagger,'--switch2']); return 'Switch-2 started'; },
-    'sw3':               ()=>{ const a=[tagger,'--switch3']; if(limit)a.push('--limit',String(limit)); if(provider)a.push('--provider',provider); spawnDetached(a); return 'Switch-3 started'; },
-    'sw4':               ()=>{ const a=[tagger,'--switch4']; if(limit)a.push('--limit',String(limit)); spawnDetached(a); return 'Switch-4 started'; },
-    'sw4-dry':           ()=>{ spawnDetached([tagger,'--switch4','--dry-run','--limit','10']); return 'Switch-4 dry run started'; },
-    'mwc':               ()=>{ const a=[tagger,'--mindful-wc']; if(limit)a.push('--limit',String(limit)); spawnDetached(a); return 'mindful-wc started'; },
-    'mwc-dry':           ()=>{ spawnDetached([tagger,'--mindful-wc','--dry-run']); return 'mindful-wc dry run started'; },
-    'extract-video':     ()=>{ spawnDetached([extVid]); return 'Video link extraction started'; },
-    'extract-video-dry': ()=>{ spawnDetached([extVid,'--dry-run']); return 'Video extraction dry run started'; },
-    'curator-force':     ()=>{ spawnDetached([curator,'--force']); return 'Curator --force started'; },
-    'curator-refill':    ()=>{ spawnDetached([curator,'--refill']); return 'Curator --refill started'; },
-    'curator-status':    ()=>{ spawnDetached([curator,'--status']); return 'Curator status started'; },
-    'narrator-next':     ()=>{ spawnDetached([narrator,'--next']); return 'Narrator --next started'; },
-    'narrator-dry':      ()=>{ spawnDetached([narrator,'--dry-run']); return 'Narrator dry run started'; },
-    'narrator-live':     ()=>{ spawnDetached([narrator,'--live','--numSources',String(numSources)]); return 'Narrator --live started (check Pending queue)'; },
-    'narrator-id':       ()=>{ if(!id)throw new Error('id required'); spawnDetached([narrator,'--id',String(id)]); return 'Narrator started for queue id '+id; },
-  };
-
-  if (!cmds[cmd]) throw new Error('Unknown command: '+cmd);
-  return cmds[cmd]();
+  const [executable, args] = def.build(body, CODE_DIR);
+  const logPath = launchInTmux(def.session, def.log, executable, args);
+  return { msg: cmd+' started in tmux session '+def.session, log: def.log };
 }
 
 // ---------------------------------------------------------------------------
@@ -928,26 +942,27 @@ function router(req, res) {
     readBody(req, function(b) {
       var body={};try{body=JSON.parse(b);}catch(_){}
       try {
-        const msg = resolveCmd(body);
-        json({ok:true, msg});
+        const result = resolveCmd(body);
+        json({ok:true, msg:result.msg, log:result.log});
       } catch(e) {
         json({ok:false, error:e.message}, 400);
       }
     }); return;
   }
 
-  // --- API: tail log ---
-  if (method==='GET' && url==='/api/log') {
-    // Return last 60 lines of tagger.log (most active log)
-    const logFile = params.get('file')||'tagger';
-    const fp = path.join(LOG_DIR, logFile+'.log');
+  // --- API: tail log — serves correct log based on ?file= param ---
+  if (method==='GET' && url.startsWith('/api/log')) {
+    const logFile = params.get('file') || 'tagger.log';
+    // Sanitise: only allow simple filenames, no path traversal
+    const safe = path.basename(logFile).replace(/[^a-z0-9._-]/gi,'');
+    const fp = path.join(LOG_DIR, safe.endsWith('.log') ? safe : safe+'.log');
     try {
       const lines = fs.readFileSync(fp,'utf8').split('\n').filter(Boolean);
       res.writeHead(200,{'Content-Type':'text/plain'});
       res.end(lines.slice(-60).join('\n'));
     } catch(_) {
       res.writeHead(200,{'Content-Type':'text/plain'});
-      res.end('(log not found)');
+      res.end('(log not yet created — command may still be starting)');
     }
     return;
   }
