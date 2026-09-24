@@ -25,7 +25,7 @@ const VAULT_PATH = process.env.VAULT_PATH
   || path.join(process.env.HOME, 'vault');
 
 const DB_PATH = process.env.QUARRY_DB
-  || path.join(process.env.HOME, 'quarry', 'vault.db');
+  || path.join(process.env.QUARRY_HOME || process.env.HOME, 'dev', 'quarry', 'vault.db');
 
 const BATCH_SIZE     = 200;
 const MAX_FIRST_PARA = 400;
@@ -51,7 +51,7 @@ if (!MODE_FULL && !MODE_DIFF && !MODE_DRY && !MODE_STATS && !SINGLE_FILE) {
 // ---------------------------------------------------------------------------
 // LOGGING
 // ---------------------------------------------------------------------------
-const TRACE_PATH = path.join(process.env.HOME, 'quarry', 'indexer.log');
+const TRACE_PATH = path.join(process.env.QUARRY_HOME || process.env.HOME, 'dev', 'quarry', 'indexer.log');
 
 function log(level, msg, data) {
   data = data || {};
@@ -328,6 +328,8 @@ function extractFirstParagraph(body) {
 function inferFolderHint(filepath) {
   if (filepath.indexOf('01_Networked_Notes') !== -1) return 'networked';
   if (filepath.indexOf('00_Primary_Sources') !== -1) return 'primary';
+  var m = filepath.match(/\/(20\d\d|19\d\d)\//);
+  if (m) return m[1];
   return 'unknown';
 }
 
@@ -537,6 +539,38 @@ async function main() {
       var before = files.length;
       files = getModifiedFiles(db, files);
       log('info', 'Diff filter applied', { before: before, after: files.length });
+
+      // Prune orphaned rows: notes in the DB whose files no longer
+      // exist on disk (removed/moved out of the vault on GitHub).
+      var currentPaths = {};
+      walkVault(VAULT_PATH).forEach(function(p) { currentPaths[p] = true; });
+
+      var allDbNotes = db.prepare('SELECT id, filepath, title FROM vault_notes').all();
+      var orphans = allDbNotes.filter(function(n) { return !currentPaths[n.filepath]; });
+
+      if (orphans.length > 0) {
+        log('info', 'Pruning orphaned notes (removed from vault)', { count: orphans.length });
+        db.exec('BEGIN');
+        try {
+          var delTags = db.prepare('DELETE FROM note_tags WHERE note_id = ?');
+          var delClass = db.prepare('DELETE FROM note_classifications WHERE note_id = ?');
+          var delWriteback = db.prepare('DELETE FROM writeback_log WHERE note_id = ?');
+          var delNote = db.prepare('DELETE FROM vault_notes WHERE id = ?');
+          orphans.forEach(function(o) {
+            try { delTags.run(o.id); } catch(e) {}
+            try { delClass.run(o.id); } catch(e) {}
+            try { delWriteback.run(o.id); } catch(e) {}
+            delNote.run(o.id);
+            log('info', 'Pruned', { title: o.title, filepath: o.filepath });
+          });
+          db.exec('COMMIT');
+        } catch (e) {
+          db.exec('ROLLBACK');
+          log('error', 'Orphan prune failed, rolled back', { err: e.message });
+        }
+      } else {
+        log('info', 'No orphaned notes found');
+      }
     }
   }
 

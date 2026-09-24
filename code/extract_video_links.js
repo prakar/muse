@@ -14,7 +14,7 @@ const fs   = require('fs');
 const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
 
-const DB_PATH = process.env.QUARRY_DB || path.join(process.env.HOME, 'quarry', 'vault.db');
+const DB_PATH = process.env.QUARRY_DB || path.join(process.env.QUARRY_HOME || process.env.HOME, 'dev', 'quarry', 'vault.db');
 
 // ---------------------------------------------------------------------------
 // CLI

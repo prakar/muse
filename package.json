@@ -1,17 +1,13 @@
 {
   "name": "quarry",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "version": "2.0.0",
+  "description": "Narrative engine for personal knowledge vault",
+  "main": "code/server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node --no-warnings code/server.js",
+    "migrate": "node --no-warnings code/migrate.js",
+    "index": "node --no-warnings code/indexer.js --diff"
   },
-  "keywords": [],
-  "author": "",
   "license": "ISC",
-  "type": "commonjs",
-  "dependencies": {
-    "node-sqlite3-wasm": "^0.8.54",
-    "sql.js": "^1.14.1"
-  }
+  "type": "commonjs"
 }

@@ -37,7 +37,7 @@ const { DatabaseSync } = require('node:sqlite');
 // CONFIG
 // ---------------------------------------------------------------------------
 const DB_PATH = process.env.QUARRY_DB
-  || path.join(process.env.HOME, 'quarry', 'vault.db');
+  || path.join(process.env.QUARRY_HOME || process.env.HOME, 'dev', 'quarry', 'vault.db');
 
 const QUEUE_MIN       = 15;   // refill when below this
 const QUEUE_TARGET    = 20;   // generate this many per refill
@@ -61,7 +61,7 @@ if (!MODE_REFILL && !MODE_FORCE && !MODE_STATUS) {
 // ---------------------------------------------------------------------------
 // LOGGING
 // ---------------------------------------------------------------------------
-const TRACE_PATH = path.join(process.env.HOME, 'quarry', 'curator.log');
+const TRACE_PATH = path.join(process.env.QUARRY_HOME || process.env.HOME, 'dev', 'quarry', 'curator.log');
 
 function log(level, msg, data) {
   data = data || {};

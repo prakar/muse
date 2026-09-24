@@ -16,8 +16,9 @@ const { DatabaseSync } = require('node:sqlite');
 // ---------------------------------------------------------------------------
 // CONFIG
 // ---------------------------------------------------------------------------
-const DB_PATH    = process.env.QUARRY_DB || path.join(process.env.HOME, 'quarry', 'vault.db');
+const DB_PATH    = process.env.QUARRY_DB || path.join(process.env.QUARRY_HOME || process.env.HOME, 'dev', 'quarry', 'vault.db');
 const GEMINI_API_KEY     = process.env.GEMINI_API_KEY     || '';
+const XAI_API_KEY        = process.env.XAI_API_KEY        || '';
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 const ANTHROPIC_API_KEY  = process.env.ANTHROPIC_API_KEY  || '';
 
@@ -29,14 +30,13 @@ const S4_MIN_WORDS = 1500;
 const MINDFUL_THRESHOLD = 15000; // words above which --mindful-wc acts (below this, notes have legitimate density)
 const CHUNK_WORD_LIMIT  = 5000;  // smaller chunks = shorter output per call, fewer timeouts
 
-const S3_SYSTEM = 'Expert analyst for personal knowledge management. Be conservative and strictly honest. Output only the six sections requested, no extra text.';
+const S3_SYSTEM = 'Expert analyst extracting narrative-ready material from personal knowledge notes. Be conservative on facts, generous on trivia. Output only the two sections requested, no extra text.';
 
 // ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
 const args        = process.argv.slice(2);
-const SW1         = args.includes('--switch1');
-const SW2         = args.includes('--switch2');
+const SW_VOCAB    = args.includes('--switch-vocab');
 const SW3         = args.includes('--switch3');
 const SW4         = args.includes('--switch4');
 const MODE_STATUS = args.includes('--status');
@@ -58,15 +58,15 @@ const PROVIDER_ARG = (() => {
   const i = args.indexOf('--provider');
   if (i === -1) return null;
   const p = (args[i+1]||'').toLowerCase();
-  if (!['gemini','openrouter','claude'].includes(p)) {
-    console.error('--provider must be: gemini | openrouter | claude');
+  if (!['gemini','openrouter','claude','grok'].includes(p)) {
+    console.error('--provider must be: gemini | openrouter | claude | grok');
     process.exit(1);
   }
   return p;
 })();
 
-if (!SW1 && !SW2 && !SW3 && !SW4 && !MODE_STATUS && !SYNC_WC && !MINDFUL_WC) {
-  console.error('Usage: node tagger.js [--switch1|2|3|4|--status|--sync-wc|--mindful-wc]');
+if (!SW_VOCAB && !SW3 && !SW4 && !MODE_STATUS && !SYNC_WC && !MINDFUL_WC) {
+  console.error('Usage: node tagger.js [--switch-vocab|3|4|--status|--sync-wc|--mindful-wc] [--dry-run]');
   console.error('       [--provider gemini|openrouter|claude] [--limit N] [--file <path>] [--dry-run]');
   process.exit(1);
 }
@@ -74,7 +74,7 @@ if (!SW1 && !SW2 && !SW3 && !SW4 && !MODE_STATUS && !SYNC_WC && !MINDFUL_WC) {
 // ---------------------------------------------------------------------------
 // LOGGING
 // ---------------------------------------------------------------------------
-const TRACE_PATH = path.join(process.env.HOME, 'quarry', 'tagger.log');
+const TRACE_PATH = path.join(process.env.QUARRY_HOME || process.env.HOME, 'dev', 'quarry', 'tagger.log');
 function log(level, msg, data) {
   data = data || {};
   const entry = Object.assign({ ts: new Date().toISOString(), level, msg }, data);
@@ -139,7 +139,7 @@ function writeTagsToDb(db, noteId, tags, switchLevel) {
 function writeClassificationsToDb(db, noteId, parsed, switchLevel) {
   const stmt = db.prepare('INSERT INTO note_classifications (note_id,bucket,claim,annotation,confidence,switch_level,created_at) VALUES (?,?,?,?,?,?,?)');
   const now = new Date().toISOString();
-  for (const bucket of ['verified','asserted','dubious','evergreen','trivia']) {
+  for (const bucket of ['verified','trivia']) {
     for (const item of (parsed[bucket]||[])) {
       stmt.run(noteId, bucket, item.claim||item, item.annotation||null, item.confidence||null, switchLevel, now);
     }
@@ -147,76 +147,85 @@ function writeClassificationsToDb(db, noteId, parsed, switchLevel) {
   db.prepare('UPDATE vault_notes SET classification_at=? WHERE id=?').run(now, noteId);
 }
 
+// Writes LLM-proposed new tags into tag_vocabulary as status='pending'.
+// Never auto-applies to notes - requires human review/approval before use.
+function writeProposedTags(db, proposals) {
+  if (!proposals || !proposals.length) return;
+  const ins = db.prepare(
+    'INSERT OR IGNORE INTO tag_vocabulary (tag_full,tag_root,tag_leaf,is_hierarchical,status,created_at) VALUES (?,?,?,?,?,?)'
+  );
+  const now = new Date().toISOString();
+  for (const raw of proposals) {
+    const clean = raw.trim().toLowerCase().replace(/\s+/g,'-');
+    if (!clean) continue;
+    const parts = clean.split('/').filter(Boolean);
+    ins.run(parts.join('/'), parts[0], parts[parts.length-1], parts.length>1?1:0, 'pending', now);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // SWITCH-1 (filename/H1 heuristic, zero API)
 // ---------------------------------------------------------------------------
-const S1_MAP = {
-  history:'history', war:'history/war', battle:'history/war', empire:'history/empire',
-  colonial:'history/colonialism', colonialism:'history/colonialism', revolution:'history/revolution',
-  politics:'politics', election:'politics/election', democracy:'politics/democracy',
-  parliament:'politics', government:'politics', nationalist:'politics/nationalism',
-  nationalism:'politics/nationalism', protest:'politics', geography:'geography',
-  city:'geography/urban', river:'geography/rivers', mountain:'geography',
-  ocean:'geography/oceans', cartography:'geography/cartography', border:'geography/borders',
-  enclave:'geography/borders', migration:'geography/migration', science:'science',
-  physics:'science/physics', biology:'science/biology', chemistry:'science/chemistry',
-  medicine:'medicine', disease:'medicine/disease', evolution:'science/evolution',
-  climate:'science/climate', technology:'technology', software:'technology/software',
-  computer:'technology/computing', internet:'technology/internet',
-  artificial:'technology/ai', algorithm:'technology/computing', culture:'culture',
-  music:'music', film:'arts/film', cinema:'arts/film', painting:'arts/painting',
-  literature:'literature', book:'literature', novel:'literature',
-  poetry:'literature/poetry', language:'linguistics', linguistics:'linguistics',
-  etymology:'linguistics/etymology', religion:'religion', hinduism:'religion/hinduism',
-  islam:'religion/islam', buddhism:'religion/buddhism', christianity:'religion/christianity',
-  philosophy:'philosophy', ethics:'philosophy/ethics', sufi:'religion/islam/sufism',
-  temple:'religion', pilgrimage:'religion', economics:'economics', economy:'economics',
-  business:'economics/business', trade:'economics/trade', market:'economics/markets',
-  finance:'economics/finance', money:'economics/money', bank:'economics/finance',
-  startup:'economics/business', entrepreneur:'economics/business', india:'india',
-  indian:'india', hindi:'india/language', sanskrit:'india/language', marathi:'india/language',
-  carnatic:'india/music/carnatic', mughal:'india/history', british:'history/colonialism',
-  partition:'india/history', gandhi:'india/history', nehru:'india/history',
-  caste:'india/society', vedic:'india/religion', biography:'biography',
-  philosopher:'philosophy', scientist:'science', artist:'arts', writer:'literature',
-  architect:'architecture', engineer:'technology', identity:'culture/identity',
-  slavery:'history/slavery', slave:'history/slavery', census:'demographics',
-  propaganda:'politics/propaganda', espionage:'history/espionage',
-  nazi:'history/world-war-ii', holocaust:'history/world-war-ii',
-  yoga:'india/philosophy', meditation:'religion/meditation', astronomy:'science/astronomy',
-  space:'science/astronomy', astro:'science/astronomy', marathon:'sports', athlete:'sports'
-};
-
-function switch1Tags(filepath, body) {
-  const filename = path.basename(filepath, '.md').toLowerCase();
-  const h1 = (body.match(/^#\s+(.+)$/m)||['',''])[1].toLowerCase();
-  const tokens = ((filename+' '+h1).replace(/[-_]/g,' ').match(/[a-z]{4,}/g)||[]);
-  const tagSet = {};
-  for (const t of tokens) { if (S1_MAP[t]) tagSet[S1_MAP[t]] = true; }
-  return Object.keys(tagSet).slice(0, 5);
-}
-
 // ---------------------------------------------------------------------------
-// SWITCH-2 (first-paragraph vocab match, zero API)
+// SWITCH-VOCAB (DB-driven, zero API) — replaces old Switch-1/Switch-2 split.
+// Reads the canonical vocabulary from tag_vocabulary (seeded by FORM/TAG
+// archaeology), matches against filename + H1 + first paragraph in one
+// combined pass. No hardcoded keyword map — every tag ever applied flows
+// through the same canonical vocabulary the vault's frontmatter now uses.
 // ---------------------------------------------------------------------------
-function buildTagVocab(db) {
-  const rows = db.prepare('SELECT DISTINCT tag_full FROM note_tags ORDER BY tag_full').all();
-  const vocab = {};
+function loadTagVocabulary(db) {
+  const rows = db.prepare(
+    "SELECT tag_full, tag_root, tag_leaf FROM tag_vocabulary WHERE status = 'approved'"
+  ).all();
+
+  // Build a lookup: matchable keyword -> canonical tag_full.
+  // IMPORTANT: only the tag's OWN leaf segment triggers it - a bare root
+  // word (e.g. "religion") must NOT fan out to every child tag sharing
+  // that root (religion/hinduism, religion/islam, ...). Each tag is
+  // triggered only by its most specific identifying word.
+  // First pass: count how many distinct tags share each leaf.
+  const leafCounts = {};
   for (const row of rows) {
-    for (const p of row.tag_full.split('/')) {
-      const key = p.toLowerCase().replace(/-/g,' ');
-      if (key.length >= 4) { if (!vocab[key]) vocab[key]=[]; if (!vocab[key].includes(row.tag_full)) vocab[key].push(row.tag_full); }
-    }
+    const key = row.tag_leaf.toLowerCase().replace(/[-_]/g, '');
+    if (key.length >= 4) leafCounts[key] = (leafCounts[key] || 0) + 1;
   }
+
+  // Second pass: build vocab, EXCLUDING any leaf shared by 2+ tags.
+  // A collided leaf (e.g. "history" -> history, science/history,
+  // economics/history, ...) is inherently ambiguous for keyword
+  // matching - "history of science" is a judgment call, not a keyword
+  // hit. Those compound concepts are reserved for Switch-3/4, which
+  // can actually read and understand the note.
+  // Words that are technically unambiguous (single tag owns the leaf)
+  // but are common/overloaded English words with a high false-positive
+  // rate for single-word substring matching, verified empirically
+  // against real switch-vocab output. Excluded from auto-matching.
+  const SEMANTICALLY_OVERLOADED = new Set([
+    'design', 'building', 'space', 'mind', 'culture', 'identity', 'product'
+  ]);
+
+  const vocab = {};
+  let skipped = 0;
+  for (const row of rows) {
+    const key = row.tag_leaf.toLowerCase().replace(/[-_]/g, '');
+    if (key.length < 4) continue;
+    if (leafCounts[key] > 1) { skipped++; continue; }
+    if (SEMANTICALLY_OVERLOADED.has(key)) { skipped++; continue; }
+    vocab[key] = [row.tag_full];
+  }
+  log('info', 'Vocabulary loaded', { total: rows.length, matchable: Object.keys(vocab).length, skippedAmbiguous: skipped });
   return vocab;
 }
-function switch2Tags(firstParagraph, title, vocab) {
-  const text = ((title||'')+' '+(firstParagraph||'')).toLowerCase();
-  const tokens = text.match(/[a-z]{4,}/g)||[];
+
+function switchVocabTags(filepath, body, firstParagraph, title, vocab) {
+  const filename = path.basename(filepath, '.md').toLowerCase();
+  const h1 = (body.match(/^#\s+(.+)$/m) || ['', ''])[1].toLowerCase();
+  const text = [filename, h1, title || '', firstParagraph || ''].join(' ').toLowerCase();
+
+  const tokens = text.replace(/[-_]/g, '').match(/[a-z]{4,}/g) || [];
   const tagSet = {};
   for (const t of tokens) {
-    if (vocab[t]) vocab[t].forEach(tag => tagSet[tag]=true);
-    if (S1_MAP[t]) tagSet[S1_MAP[t]] = true;
+    if (vocab[t]) vocab[t].forEach(tag => { tagSet[tag] = true; });
   }
   return Object.keys(tagSet).slice(0, 8);
 }
@@ -224,45 +233,52 @@ function switch2Tags(firstParagraph, title, vocab) {
 // ---------------------------------------------------------------------------
 // PROMPT BUILDERS
 // ---------------------------------------------------------------------------
-function buildS3Prompt(noteContent, sourceUrl, useFullContent) {
+function buildS3Prompt(noteContent, sourceUrl, useFullContent, vocabList) {
   const content = sourceUrl ? 'Source URL: '+sourceUrl+'\n\n'+noteContent : noteContent;
   const body = useFullContent ? content : content.slice(0, S3_MAX_CHARS);
-  return `You are an expert analyst processing content for personal knowledge management.
+  const vocabBlock = (vocabList && vocabList.length) ? vocabList.join(', ') : '(none loaded)';
+  return `You are an expert analyst extracting narrative-ready material and applying quality tags to a personal knowledge note.
 
 Content:
 ${body}
 
-Output EXACTLY these six sections with ## headers. No extra text.
+CANONICAL TAG VOCABULARY (select from this list only for the TAGS section):
+${vocabBlock}
+
+Output EXACTLY these four sections with ## headers. No extra text.
+
+## TAGS
+Select 2-6 tags from the CANONICAL TAG VOCABULARY above that genuinely fit this note.
+One tag per line, exact spelling from the list. Do not invent variants of listed tags.
+If none fit well: "No canonical tags fit."
+
+## PROPOSED NEW TAGS
+Only if the note's core subject has NO reasonable fit in the canonical vocabulary above.
+Follow these rules strictly:
+- Geography is never a parent (write "india" + "culture/food", never "india/food") unless the
+  concept has no meaningful existence outside that geography and the term itself is unambiguous
+  (e.g. "carnatic", "bharatanatyam" need no geography prefix at all).
+- Use parent/leaf hierarchy ONLY to resolve genuine ambiguity (e.g. "science/psychology" because
+  bare "psychology" overlaps philosophy). If the term is self-identifying, propose it flat.
+- One proposal per line, lowercase, hyphenated. Rare — most notes need none.
+If none: "No new tags needed."
 
 ## VERIFIED FACTS
 Bullet list: claims directly stated AND matching broad consensus an educated adult knows.
-Tag non-trivial knowledge [domain]. Use ⚠️ for imprecise/context-dependent claims.
+Tag non-trivial knowledge [domain]. Use \u26a0\ufe0f for imprecise/context-dependent claims.
 If none: "No claims meet strict verified-facts criteria."
 
-## TEXTUALLY ASSERTED
-Bullet list: factual-sounding claims needing external verification. Label: [attribution], [interpretation], [causation].
-If none: "No unverified factual assertions found."
-
-## DUBIOUS SPECULATION
-Bullet list: fuzzy, opinionated, or contested claims stated as fact.
-Format: claim → why dubious → level (HIGH/MEDIUM/LOW).
-If none: "No clearly speculative assertions identified."
-
-## EVERGREEN CONCEPTS
-3-10 durable intellectual concepts. For each: *name*, one-sentence definition, brief lineage, how it appears here.
-
 ## TRIVIA NUGGETS
-2-5 surprising verifiable micro-facts tied to explicit terms in the content.
-Tag: [etymology], [history], etc. + [training knowledge - unverified] if from model training.
+Exhaustive list (aim for 5-15, do not artificially limit): every surprising, specific,
+verifiable micro-fact tied to explicit terms in the content \u2014 names, dates, numbers,
+etymologies, firsts, records, ironies, coincidences, causal chains most readers would
+not already know. These are the raw material for engaging narrative generation:
+favour concrete and quotable over general. Tag: [etymology], [history], [science], etc.
++ [training knowledge - unverified] if drawn from model training rather than the text.
+If none: "No trivia-grade facts identified."
 
-## EXPOSITORY ESSAY
-200-400 words restating core substance in flowing narrative. Use ONLY VERIFIED FACTS. No added facts/opinions.
-If insufficient verified content: "Insufficient verified content for a meaningful essay."
-
-Be conservative. When in doubt, place in later sections or skip.`;
+Be conservative on VERIFIED FACTS and TAGS. Be generous and thorough on TRIVIA NUGGETS \u2014 this section is the priority. PROPOSED NEW TAGS should be rare.`;
 }
-
-// Detect if note is primarily a list (>15 bullet/numbered lines) or prose essay
 function isListFormat(body) {
   const lines      = body.split('\n');
   const listLines  = lines.filter(l => /^[-*•]|\d+\./.test(l.trim())).length;
@@ -325,22 +341,46 @@ function parseEvergreen(text) {
     claim: b, annotation: b
   }));
 }
-function parseS3Response(text) {
+function parseS3Response(text, vocabSet) {
   const clean = text.replace(/^```[a-z]*\n/m,'').replace(/```\s*$/m,'').trim();
-  const sections = { verified:[], asserted:[], dubious:[], evergreen:[], trivia:[], essay:'' };
+  const sections = { tags:[], proposedTags:[], verified:[], trivia:[] };
   for (const part of clean.split(/^##\s+/m)) {
     const lines = part.trim().split('\n');
     const header = lines[0].trim().toUpperCase();
     const body   = lines.slice(1).join('\n').trim();
-    if (header.includes('VERIFIED'))                       sections.verified  = parseBullets(body);
-    else if (header.includes('TEXTUALLY')||header.includes('ASSERTED')) sections.asserted  = parseBullets(body);
-    else if (header.includes('DUBIOUS'))                   sections.dubious   = parseDubious(body);
-    else if (header.includes('EVERGREEN'))                 sections.evergreen = parseEvergreen(body);
-    else if (header.includes('TRIVIA'))                    sections.trivia    = parseBullets(body);
-    else if (header.includes('EXPOSITORY')||header.includes('ESSAY')) sections.essay = body;
+    if (header.includes('PROPOSED'))         sections.proposedTags = parseTagLines(body, 'sane', vocabSet);
+    else if (header.includes('TAGS'))        sections.tags         = parseTagLines(body, 'strict', vocabSet);
+    else if (header.includes('VERIFIED'))    sections.verified     = parseBullets(body);
+    else if (header.includes('TRIVIA'))      sections.trivia       = parseBullets(body);
   }
-  sections.inferredTags = sections.evergreen.map(e=>e.name?e.name.toLowerCase().replace(/\s+/g,'-'):null).filter(Boolean).slice(0,6);
+  sections.inferredTags = sections.tags;
   return sections;
+}
+
+// Parses a one-tag-per-line block into a clean array. Skips "none" fallback
+// lines and strips leading bullet markers if the model adds them anyway.
+// mode='strict': only exact matches against vocabSet survive (used for TAGS section -
+// never trust LLM compliance with "select from this list" instructions alone).
+// mode='sane': basic garbage filtering only (used for PROPOSED NEW TAGS - short,
+// no commas/sentences, no consecutive-word slugs that are really a sentence fragment).
+function parseTagLines(text, mode, vocabSet) {
+  if (/^no (canonical |new )?tags?/i.test(text.trim())) return [];
+  let items = text.split('\n')
+    .map(l => l.replace(/^[-*•]\s*/, '').trim().toLowerCase())
+    .filter(l => l.length > 1 && !/^no /i.test(l));
+
+  if (mode === 'strict') {
+    return items.filter(l => vocabSet && vocabSet.has(l));
+  }
+
+  // sane mode: reject sentence-fragment garbage
+  return items.filter(l => {
+    if (l.length > 40) return false;               // real tags are short
+    if (l.split('-').length > 6) return false;      // too many hyphenated words = sentence
+    if (/,/.test(l)) return false;                  // commas = not a single tag
+    if (/\s/.test(l)) return false;                 // should be hyphenated, not spaced
+    return true;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -419,21 +459,34 @@ async function callOpenRouter(prompt) {
     const model = await getNextOrModel();
 
     try {
+      const startTime = Date.now();
       log('info', 'OpenRouter trying model', { model });
 
-      const res = await httpPost(
-        'openrouter.ai',
-        '/api/v1/chat/completions',
-        { 'Authorization': 'Bearer ' + OPENROUTER_API_KEY },
-        {
-          model:      model,
-          messages:   [
-            { role: 'system', content: S3_SYSTEM },
-            { role: 'user',   content: prompt }
-          ],
-          max_tokens: 8192
-        }
-      );
+      const heartbeat = setInterval(function() {
+        log('info', 'OpenRouter still waiting...', { model, elapsedSec: Math.round((Date.now()-startTime)/1000) });
+      }, 5000);
+
+      let res;
+      try {
+        res = await httpPost(
+          'openrouter.ai',
+          '/api/v1/chat/completions',
+          { 'Authorization': 'Bearer ' + OPENROUTER_API_KEY },
+          {
+            model:      model,
+            messages:   [
+              { role: 'system', content: S3_SYSTEM },
+              { role: 'user',   content: prompt }
+            ],
+            max_tokens: 8192
+          }
+        );
+      } finally {
+        clearInterval(heartbeat);
+      }
+
+      const elapsedSec = Math.round((Date.now()-startTime)/1000);
+      log('info', 'OpenRouter responded', { model, status: res.status, elapsedSec });
 
       if (res.status === 429) {
         log('warn', 'OpenRouter rate-limited, trying next', { model });
@@ -487,6 +540,44 @@ async function callGemini(prompt) {
   const text  = ((((res.body.candidates||[])[0]||{}).content||{}).parts||[]).map(p=>p.text||'').join('');
   const usage = res.body.usageMetadata||{};
   return {text, tokensIn:usage.promptTokenCount||0, tokensOut:usage.candidatesTokenCount||0, provider:'gemini'};
+}
+
+async function callGrok(prompt) {
+  if (!XAI_API_KEY) throw new Error('XAI_API_KEY not set');
+
+  const startTime = Date.now();
+  log('info', 'Grok request sent', { model: 'grok-4' });
+
+  const heartbeat = setInterval(function() {
+    log('info', 'Grok still waiting...', { elapsedSec: Math.round((Date.now()-startTime)/1000) });
+  }, 5000);
+
+  let res;
+  try {
+    res = await httpPost('api.x.ai', '/v1/chat/completions',
+      { 'Authorization': 'Bearer ' + XAI_API_KEY },
+      {
+        model: 'grok-4',
+        messages: [
+          { role: 'system', content: S3_SYSTEM },
+          { role: 'user',   content: prompt }
+        ],
+        max_tokens: 8192,
+        temperature: 0.1
+      }
+    );
+  } finally {
+    clearInterval(heartbeat);
+  }
+
+  const elapsedSec = Math.round((Date.now()-startTime)/1000);
+  log('info', 'Grok responded', { status: res.status, elapsedSec });
+
+  if (res.status !== 200) throw new Error('Grok error '+res.status+': '+JSON.stringify(res.body).slice(0,200));
+  const choice = (res.body.choices||[])[0];
+  if (!choice || !choice.message || !choice.message.content) throw new Error('Grok empty response');
+  const usage = res.body.usage || {};
+  return { text: choice.message.content, tokensIn: usage.prompt_tokens||0, tokensOut: usage.completion_tokens||0, provider: 'grok' };
 }
 
 // Mindful-wc uses higher output limit, warmer temperature, longer timeout, and retry
@@ -555,7 +646,7 @@ async function callGeminiMindful(prompt, attempt) {
 // Written immediately after each successful chunk.
 // On restart, already-written chunks are read from disk, skipping the API call.
 function chunkCacheDir(noteId) {
-  return path.join(process.env.HOME, 'quarry', 'chunks', String(noteId));
+  return path.join(process.env.QUARRY_HOME || process.env.HOME, 'dev', 'quarry', 'chunks', String(noteId));
 }
 function chunkCachePath(noteId, i) {
   return path.join(chunkCacheDir(noteId), 'chunk-'+i+'.txt');
@@ -623,6 +714,7 @@ async function callApi(prompt, provider) {
   if (provider==='gemini')      return callGemini(prompt);
   if (provider==='openrouter')  return callOpenRouter(prompt);
   if (provider==='claude')      return callClaude(prompt);
+  if (provider==='grok')        return callGrok(prompt);
   throw new Error('Unknown provider: '+provider);
 }
 
@@ -783,9 +875,25 @@ async function runMindfulWc(db) {
 // ---------------------------------------------------------------------------
 // SWITCH-3/4 PROCESSOR
 // ---------------------------------------------------------------------------
+let _vocabCache = null;
+let _vocabSetCache = null;
+function getVocabList(db) {
+  if (_vocabCache) return _vocabCache;
+  const rows = db.prepare("SELECT tag_full FROM tag_vocabulary WHERE status = 'approved' ORDER BY tag_full").all();
+  _vocabCache = rows.map(r => r.tag_full);
+  _vocabSetCache = new Set(_vocabCache);
+  return _vocabCache;
+}
+function getVocabSet(db) {
+  if (!_vocabSetCache) getVocabList(db);
+  return _vocabSetCache;
+}
+
 async function processNote(db, note, switchLevel, provider, useFullContent) {
-  const body   = readNoteBody(note.filepath);
-  const prompt = buildS3Prompt(body, note.source_url, useFullContent);
+  const body     = readNoteBody(note.filepath);
+  const vocab    = getVocabList(db);
+  const vocabSet = getVocabSet(db);
+  const prompt   = buildS3Prompt(body, note.source_url, useFullContent, vocab);
 
   if (MODE_DRY) {
     console.log('\n=== DRY RUN Switch-'+switchLevel+' ('+provider+') — '+note.title+' ===');
@@ -797,17 +905,18 @@ async function processNote(db, note, switchLevel, provider, useFullContent) {
   log('info', 'Calling Switch-'+switchLevel+' API', {title:note.title.slice(0,60), provider, words:note.word_count, chars:body.length});
 
   const result = await callApi(prompt, provider);
-  const parsed = parseS3Response(result.text);
+  const parsed = parseS3Response(result.text, vocabSet);
 
   db.exec('BEGIN');
   try {
     writeClassificationsToDb(db, note.id, parsed, switchLevel);
     if (parsed.inferredTags && parsed.inferredTags.length) writeTagsToDb(db, note.id, parsed.inferredTags, switchLevel);
+    if (parsed.proposedTags && parsed.proposedTags.length) writeProposedTags(db, parsed.proposedTags);
     db.exec('COMMIT');
   } catch(e) { db.exec('ROLLBACK'); throw e; }
 
   const cost = recordSpend(db, result.provider, switchLevel===4?'classifier-s4':'classifier', note.id, result.tokensIn, result.tokensOut);
-  log('info', 'Switch-'+switchLevel+' complete', {title:note.title.slice(0,60), provider:result.provider, verified:parsed.verified.length, trivia:parsed.trivia.length, cost_usd:cost.toFixed(5)});
+  log('info', 'Switch-'+switchLevel+' complete', {title:note.title.slice(0,60), provider:result.provider, tags:parsed.tags.length, proposed:parsed.proposedTags.length, verified:parsed.verified.length, trivia:parsed.trivia.length, cost_usd:cost.toFixed(5)});
 }
 
 // ---------------------------------------------------------------------------
@@ -852,7 +961,7 @@ function printStatus(db) {
 // MAIN
 // ---------------------------------------------------------------------------
 async function main() {
-  log('info', 'QUARRY tagger v0.7 starting', {sw1:SW1,sw2:SW2,sw3:SW3,sw4:SW4,syncWc:SYNC_WC,mindfulWc:MINDFUL_WC,provider:PROVIDER_ARG||'auto'});
+  log('info', 'QUARRY tagger v0.8 starting', {swVocab:SW_VOCAB,sw3:SW3,sw4:SW4,syncWc:SYNC_WC,mindfulWc:MINDFUL_WC,dryRun:MODE_DRY,provider:PROVIDER_ARG||'auto'});
 
   const db = openDb();
 
@@ -885,18 +994,21 @@ async function main() {
   log('info', 'Notes selected', {count:notes.length});
   if (!notes.length) { log('info','No eligible notes'); printStatus(db); db.close(); return; }
 
-  let vocab = SW2 ? buildTagVocab(db) : null;
+  let vocab = SW_VOCAB ? loadTagVocabulary(db) : null;
 
   for (const note of notes) {
     try {
-      if (SW1) {
+      if (SW_VOCAB) {
         const body = readNoteBody(note.filepath);
-        const tags = switch1Tags(note.filepath, body);
-        if (tags.length) { db.exec('BEGIN'); writeTagsToDb(db, note.id, tags, 1); db.exec('COMMIT'); log('info','Switch-1 tagged',{title:note.title.slice(0,60),tags}); }
-      }
-      if (SW2) {
-        const tags = switch2Tags(note.first_paragraph, note.title, vocab);
-        if (tags.length) { db.exec('BEGIN'); writeTagsToDb(db, note.id, tags, 2); db.exec('COMMIT'); log('info','Switch-2 tagged',{title:note.title.slice(0,60),tags}); }
+        const tags = switchVocabTags(note.filepath, body, note.first_paragraph, note.title, vocab);
+        if (tags.length) {
+          if (MODE_DRY) {
+            log('info', 'Would tag (switch-vocab)', {title:note.title.slice(0,60), tags});
+          } else {
+            db.exec('BEGIN'); writeTagsToDb(db, note.id, tags, 'vocab'); db.exec('COMMIT');
+            log('info','Vocab-tagged',{title:note.title.slice(0,60),tags});
+          }
+        }
       }
       if (SW3 || SW4) {
         await processNote(db, note, SW3?3:4, provider, useFullContent);

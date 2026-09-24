@@ -11,10 +11,10 @@ const path  = require('path');
 const cp    = require('child_process');
 const { DatabaseSync } = require('node:sqlite');
 
-const DB_PATH   = process.env.QUARRY_DB    || path.join(process.env.HOME, 'quarry', 'vault.db');
+const DB_PATH   = process.env.QUARRY_DB    || path.join(process.env.QUARRY_HOME || process.env.HOME, 'dev', 'quarry', 'vault.db');
 const VAULT_DIR = process.env.VAULT_PATH   || path.join(process.env.HOME, 'vault');
-const CODE_DIR  = path.join(process.env.HOME, 'quarry', 'code');
-const LOG_DIR   = path.join(process.env.HOME, 'quarry');
+const CODE_DIR  = path.join(process.env.QUARRY_HOME || process.env.HOME, 'dev', 'quarry', 'code');
+const LOG_DIR   = path.join(process.env.QUARRY_HOME || process.env.HOME, 'dev', 'quarry');
 const PORT      = (() => { const i = process.argv.indexOf('--port'); return i !== -1 ? parseInt(process.argv[i+1],10) : 3001; })();
 
 // ---------------------------------------------------------------------------

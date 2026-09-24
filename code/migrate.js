@@ -16,7 +16,7 @@ const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
 
 const DB_PATH = process.env.QUARRY_DB
-  || path.join(process.env.HOME, 'quarry', 'vault.db');
+  || path.join(process.env.QUARRY_HOME || process.env.HOME, 'dev', 'quarry', 'vault.db');
 
 const args       = process.argv.slice(2);
 const MODE_RUN    = args.includes('--run');
@@ -192,6 +192,55 @@ const MIGRATIONS = [
           ON vault_notes(word_count);
       `);
       log('  Created idx_notes_word_count (or already exists)');
+    }
+  },
+
+  {
+    id:   'M007',
+    desc: 'Add tag_vocabulary table for canonical vocabulary + writeback_log',
+    up: function(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS tag_vocabulary (
+          id              INTEGER PRIMARY KEY,
+          tag_full        TEXT UNIQUE NOT NULL,
+          tag_root        TEXT NOT NULL,
+          tag_leaf        TEXT NOT NULL,
+          is_hierarchical INTEGER DEFAULT 0,
+          note_count      INTEGER DEFAULT 0,
+          status          TEXT DEFAULT 'approved',
+          replaces        TEXT,
+          created_at      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_tag_vocab_root ON tag_vocabulary(tag_root);
+        CREATE INDEX IF NOT EXISTS idx_tag_vocab_status ON tag_vocabulary(status);
+
+        CREATE TABLE IF NOT EXISTS writeback_log (
+          id           INTEGER PRIMARY KEY,
+          note_id      INTEGER REFERENCES vault_notes(id),
+          stage        TEXT NOT NULL,
+          tags_before  TEXT,
+          tags_after   TEXT,
+          written_at   TEXT NOT NULL,
+          git_commit   TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_writeback_note ON writeback_log(note_id);
+        CREATE INDEX IF NOT EXISTS idx_writeback_stage ON writeback_log(stage);
+      `);
+      log('  Created tag_vocabulary and writeback_log tables (or already exist)');
+    }
+  },
+
+  {
+    id:   'M008',
+    desc: 'Add quarry_exclude column to vault_notes',
+    up: function(db) {
+      var cols = db.prepare("PRAGMA table_info(vault_notes)").all().map(function(c) { return c.name; });
+      if (cols.indexOf('quarry_exclude') === -1) {
+        db.exec('ALTER TABLE vault_notes ADD COLUMN quarry_exclude INTEGER DEFAULT 0');
+        log('  Added column vault_notes.quarry_exclude');
+      } else {
+        log('  vault_notes.quarry_exclude already exists — skipping');
+      }
     }
   }
 

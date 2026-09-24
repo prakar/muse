@@ -30,7 +30,7 @@ const { DatabaseSync } = require('node:sqlite');
 // CONFIG
 // ---------------------------------------------------------------------------
 const DB_PATH = process.env.QUARRY_DB
-  || path.join(process.env.HOME, 'quarry', 'vault.db');
+  || path.join(process.env.QUARRY_HOME || process.env.HOME, 'dev', 'quarry', 'vault.db');
 
 const VAULT_PATH = process.env.VAULT_PATH
   || path.join(process.env.HOME, 'vault');
@@ -75,7 +75,7 @@ if (!MODE_NEXT && !MODE_DRY && !MODE_LIVE && !MODE_RESET && SPECIFIC_ID === null
 // ---------------------------------------------------------------------------
 // LOGGING
 // ---------------------------------------------------------------------------
-const TRACE_PATH = path.join(process.env.HOME, 'quarry', 'narrator.log');
+const TRACE_PATH = path.join(process.env.QUARRY_HOME || process.env.HOME, 'dev', 'quarry', 'narrator.log');
 
 function log(level, msg, data) {
   data = data || {};
@@ -116,15 +116,10 @@ async function handleReset(db) {
       console.log(`   • ${n.seed_theme || '(no theme)'}  [${n.register || 'unknown'}]  ${n.produced_at?.slice(0,10) || ''}`);
     });
     console.log('\nThis will permanently delete ALL narratives and the entire queue.');
-    const readline = require('readline-sync');
-    
-    // DEV NOTE ^: I had to install bash$ npm install readline-sync, it wasn't in Termux by default
-    // Author: anseki (a Japanese developer).
-    // First published: Around 2014–2015 on npm.
-    // It was created specifically to solve a common pain point in Node.js: the built-in readline module is asynchronous 
-    // (event-driven), which makes simple scripts feel awkward and verbose.
-
-    const answer = readline.question('Type YES to confirm deletion: ');
+    const answer = await new Promise(function(resolve) {
+      const rl = require('readline').createInterface({input: process.stdin, output: process.stdout});
+      rl.question('Type YES to confirm deletion: ', function(a) { rl.close(); resolve(a); });
+    });
     if (answer.trim().toUpperCase() !== 'YES') {
       console.log('Reset cancelled by user.');
       return false;
