@@ -151,7 +151,7 @@ function writeProposedTags(db, noteId, tags, vocabSet) {
     seen.add(clean);
     const parts = clean.split('/').filter(Boolean);
     const inVocab = vocabSet && vocabSet.has(clean) ? 1 : 0;
-    ins.run(clean, parts[0], parts[parts.length-1], parts.length>1?1:0, inVocab, 'pending', now);
+    ins.run(noteId, clean, parts[0], parts[parts.length-1], parts.length>1?1:0, inVocab, 'pending', now);
   }
 }
 

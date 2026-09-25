@@ -175,10 +175,17 @@ function approvedCard(n) {
 function vaultPage() {
   return `<p class="page-title">Vault — git sync and indexing</p>
 <div class="ctrl-panel">
-  <h3>Git Sync</h3>
+  <h3>Sync (recommended - ZeroClaw candidate)</h3>
+  <p style="color:#666;font-size:.78rem;margin-bottom:10px">git pull, then index only new/moved/deleted files. Read-mostly, orphan-pruning tested, zero API cost - the pair to cron nightly.</p>
+  <div class="ctrl-row">
+    <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="git-pull-diff" data-label="Sync: pull + diff">&#8595; Sync (pull + index --diff)</button>
+  </div>
+</div>
+<div class="ctrl-panel">
+  <h3>Git Sync (manual, single steps)</h3>
   <div class="ctrl-row">
     <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="git-pull" data-label="Git pull vault">⬇ git pull (origin/master)</button>
-    <span style="font-size:.78rem;color:#555">git -C ~/vault pull origin master</span>
+    <span style="font-size:.78rem;color:#555">git -C ${VAULT_DIR} pull origin master</span>
   </div>
 </div>
 <div class="ctrl-panel">
@@ -201,24 +208,26 @@ function vaultPage() {
 function taggerPage() {
   return `<p class="page-title">Tagger — classify and tag vault notes</p>
 <div class="ctrl-panel">
-  <h3>Switch-1 &amp; Switch-2 — zero API cost</h3>
+  <h3>Switch-Vocab — zero API cost</h3>
+  <p style="color:#666;font-size:.78rem;margin-bottom:10px">Matches untagged notes against the canonical tag_vocabulary. Replaces the old Switch-1/Switch-2 split - one DB-driven pass, no hardcoded keyword map.</p>
   <div class="ctrl-row">
-    <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="sw1" data-label="Switch-1">Switch-1 (filename heuristic)</button>
-    <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="sw2" data-label="Switch-2">Switch-2 (first-paragraph vocab)</button>
+    <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="sw-vocab" data-label="Switch-Vocab">Run Switch-Vocab</button>
   </div>
 </div>
 <div class="ctrl-panel">
   <h3>Switch-3 — OpenRouter free → Gemini fallback</h3>
   <div class="ctrl-row">
     <div class="field"><label>Limit:</label><input id="s3-limit" type="number" value="500" min="1" max="5000"></div>
-    <div class="field"><label>Provider:</label><select id="s3-prov"><option value="openrouter">openrouter</option><option value="gemini">gemini</option></select></div>
+    <div class="field"><label>Provider:</label><select id="s3-prov"><option value="grok">grok</option><option value="openrouter">openrouter</option><option value="gemini">gemini</option><option value="claude">claude</option></select></div>
     <button class="btn btn-primary" type="button" data-action="run-s3">Run Switch-3</button>
   </div>
 </div>
 <div class="ctrl-panel">
-  <h3>Switch-4 — full document, Gemini only</h3>
+  <h3>Switch-4 — full document classification</h3>
+  <p style="color:#666;font-size:.78rem;margin-bottom:10px">Sends the ENTIRE note body (no truncation). Restricted to large-context-window providers only - free OpenRouter models can silently truncate long documents.</p>
   <div class="ctrl-row">
     <div class="field"><label>Limit:</label><input id="s4-limit" type="number" value="20" min="1" max="500"></div>
+    <div class="field"><label>Provider:</label><select id="s4-prov"><option value="gemini">gemini</option><option value="grok">grok</option></select></div>
     <button class="btn btn-primary" type="button" data-action="run-s4">Run Switch-4</button>
     <button class="btn btn-grey" type="button" data-action="run-cmd" data-cmd="sw4-dry" data-label="Switch-4 dry run">Dry run</button>
   </div>
@@ -746,7 +755,7 @@ node --no-warnings ~/dev/quarry/code/tagger.js --switch3 --provider grok
 
 <h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">ZeroClaw cron candidates</h2>
 <table class="report-result" style="margin-top:0"><tbody>
-<tr><td style="color:#6ec86e">indexer.js --diff</td><td>Safe to automate. Read-mostly, orphan-pruning tested, zero API cost.</td></tr>
+<tr><td style="color:#6ec86e">git pull + indexer.js --diff</td><td><strong>Primary ZeroClaw candidate.</strong> Run as a pair: git pull picks up vault changes from GitHub, --diff picks up only new/moved/deleted files (not a full re-index), including tested orphan-pruning for removed notes. Read-mostly, zero API cost, safe nightly.</td></tr>
 <tr><td style="color:#6ec86e">curator.js --refill</td><td>Safe to automate. Self-limiting, zero API cost.</td></tr>
 <tr><td style="color:#c8b89a">tagger.js --switch-vocab</td><td>Fine to automate after each indexer --diff. Zero API cost.</td></tr>
 <tr><td style="color:#c8b89a">narrator.js --next</td><td>Automate with a cap (e.g. 3-5/run) so the Pending approval queue stays reviewable, not overwhelming.</td></tr>
@@ -823,13 +832,13 @@ const FLAGS = ['--no-warnings'];
 // logFile is relative to LOG_DIR. git-pull and index use their own logs.
 const CMD_MAP = {
   'git-pull':          { session:'quarry-git',      log:'git.log',      build: ()=>['git',['-C',VAULT_DIR,'pull','origin','master']] },
+  'git-pull-diff':     { session:'quarry-git',      log:'git.log',      build: (b,C)=>['bash',['-c', 'git -C '+VAULT_DIR+' pull origin master && '+NODE+' '+FLAGS.join(' ')+' '+path.join(C,'indexer.js')+' --diff']] },
   'index-diff':        { session:'quarry-index',    log:'indexer.log',  build: (b,C)=>[NODE,[...FLAGS,path.join(C,'indexer.js'),'--diff']] },
   'index-full':        { session:'quarry-index',    log:'indexer.log',  build: (b,C)=>[NODE,[...FLAGS,path.join(C,'indexer.js')]] },
   'sync-wc':           { session:'quarry-syncwc',   log:'sync-wc.log',  build: (b,C)=>[NODE,[...FLAGS,path.join(C,'tagger.js'),'--sync-wc']] },
-  'sw1':               { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>[NODE,[...FLAGS,path.join(C,'tagger.js'),'--switch1']] },
-  'sw2':               { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>[NODE,[...FLAGS,path.join(C,'tagger.js'),'--switch2']] },
+  'sw-vocab':          { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>[NODE,[...FLAGS,path.join(C,'tagger.js'),'--switch-vocab']] },
   'sw3':               { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>{ const a=[NODE,[...FLAGS,path.join(C,'tagger.js'),'--switch3']]; if(b.limit)a[1].push('--limit',String(b.limit)); if(b.provider)a[1].push('--provider',b.provider); return a; } },
-  'sw4':               { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>{ const a=[NODE,[...FLAGS,path.join(C,'tagger.js'),'--switch4']]; if(b.limit)a[1].push('--limit',String(b.limit)); return a; } },
+  'sw4':               { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>{ const a=[NODE,[...FLAGS,path.join(C,'tagger.js'),'--switch4']]; if(b.limit)a[1].push('--limit',String(b.limit)); a[1].push('--provider',b.provider||'gemini'); return a; } },
   'sw4-dry':           { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>[NODE,[...FLAGS,path.join(C,'tagger.js'),'--switch4','--dry-run','--limit','10']] },
   'mwc':               { session:'quarry-mwc',      log:'tagger.log',   build: (b,C)=>{ const a=[NODE,[...FLAGS,path.join(C,'tagger.js'),'--mindful-wc']]; if(b.limit)a[1].push('--limit',String(b.limit)); return a; } },
   'mwc-dry':           { session:'quarry-mwc',      log:'tagger.log',   build: (b,C)=>[NODE,[...FLAGS,path.join(C,'tagger.js'),'--mindful-wc','--dry-run']] },
@@ -1041,7 +1050,7 @@ function router(req, res) {
   }
 
   // --- API: reports ---
-  const reportMatch = url.match(/^\/api\/reports\/([a-z-]+)$/);
+  const reportMatch = url.match(/^\/api\/reports\/([a-z0-9-]+)$/);
   if (method==='GET' && reportMatch) {
     const r = REPORTS.find(x=>x.id===reportMatch[1]);
     if (!r) { json({error:'Unknown report'},404); return; }

@@ -311,10 +311,11 @@ function runS3() {
 
 function runS4() {
   var limit = document.getElementById('s4-limit');
+  var prov = document.getElementById('s4-prov');
   fetch('/api/run', {
     method: 'POST',
     headers: apiHeaders(),
-    body: JSON.stringify({ cmd: 'sw4', limit: limit ? limit.value : 20 }),
+    body: JSON.stringify({ cmd: 'sw4', limit: limit ? limit.value : 20, provider: prov ? prov.value : 'gemini' }),
   }).then(showCmdResult);
 }
 
