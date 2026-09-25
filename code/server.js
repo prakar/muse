@@ -101,6 +101,7 @@ const NAV_LINKS = [
   ['/notes', 'Browse'],
   ['/review', 'Review'],
   ['/review-tags', 'Tag Review'],
+  ['/help', 'Help'],
 ];
 
 function shell(title, body, active) {
@@ -675,6 +676,103 @@ function saveExclusions(){
 // ---------------------------------------------------------------------------
 // STATS PAGE
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// HELP PAGE — static reference. CLI usage, pipeline order, narrative modes,
+// cron candidates, architecture notes. Edit this function directly to keep
+// it current; it's plain HTML, no DB queries.
+// ---------------------------------------------------------------------------
+function helpPage() {
+  return `
+<div style="max-width:820px">
+
+<h2 style="color:#c8b89a;font-size:1.1rem;margin-bottom:6px">Pipeline order</h2>
+<p style="color:#999;font-size:.85rem;margin-bottom:14px">Run in this sequence after a vault change (new/moved/deleted notes):</p>
+<pre class="log-box" style="color:#ccc">cd ~/dev/md-vaults/knowledge &amp;&amp; git pull
+node --no-warnings ~/dev/quarry/code/indexer.js --diff
+node --no-warnings ~/dev/quarry/code/tagger.js --switch-vocab
+node --no-warnings ~/dev/quarry/code/tagger.js --switch3 --provider grok
+</pre>
+
+<h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">Tagging tiers (tag_source)</h2>
+<table class="report-result" style="margin-top:0"><tbody>
+<tr><td style="color:#c8b89a">original</td><td>Pre-existing frontmatter tags, kept as-is by FORM/TAG archaeology.</td></tr>
+<tr><td style="color:#c8b89a">switchvocab</td><td>Zero-cost keyword match against the canonical vocabulary. No API calls.</td></tr>
+<tr><td style="color:#c8b89a">switch3</td><td>LLM-suggested (Grok/Gemini/OpenRouter), sitting in note_tag_proposals awaiting HIL review at /review-tags.</td></tr>
+<tr><td style="color:#c8b89a">switch3-hil</td><td>LLM-suggested AND human-approved (or manually added via the Custom Tag(s) field). Highest-trust tier.</td></tr>
+</tbody></table>
+
+<h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">tagger.js flags</h2>
+<pre class="log-box" style="color:#ccc">--switch-vocab            zero-cost, matches canonical tag_vocabulary only
+--switch3                 LLM tags+verified+trivia -&gt; note_tag_proposals (HIL queue)
+--switch4                 richer per-note classification pass (word_count&gt;=threshold)
+--limit N                 cap notes processed this run
+--provider grok|gemini|openrouter|claude
+--dry-run                 show what would happen, write nothing
+--status                  print current tagging/budget status and exit
+</pre>
+
+<h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">Tag Review workflow (/review-tags)</h2>
+<ul style="color:#ccc;font-size:.85rem;line-height:1.8;padding-left:20px">
+<li>Each card = one note with pending LLM tag suggestions. Checked = approve, unchecked = reject.</li>
+<li>Click a note's title to open the read/edit drawer (Tags, Trivia, Facts, Raw, Essay tabs).</li>
+<li>In the drawer's Tags tab, click the &#10005; on any chip to delete that tag from the note immediately (no page reload needed on Submit).</li>
+<li><strong>Custom Tag(s)</strong> field: comma-separated tags you add by hand, independent of what the LLM suggested. Runs through the same sane-shape filter (max 4 hyphen-segments, no stopword joiners, no commas/periods inside a tag).</li>
+<li><strong>Submit Page</strong> applies all decisions on the current page only (40 notes/page) — approved and custom tags become real, queryable note_tags rows plus canonical tag_vocabulary entries; rejected ones are marked and never resurface.</li>
+</ul>
+
+<h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">Narrative generation — two independent modes</h2>
+<table class="report-result" style="margin-top:0"><tbody>
+<tr><td style="color:#c8b89a;white-space:nowrap">Planned<br><span style="color:#666;font-size:.75rem">curator --refill/--force<br>then narrator --next</span></td>
+<td>Curator pre-fills narrative_queue: 3-note clusters, 80% serendipity / 20% orphan rescue, avoids notes surfaced in the last 30 days. Narrator then pops the next queued cluster. Batchable, deliberate, good for cron.</td></tr>
+<tr><td style="color:#c8b89a;white-space:nowrap">Serendipitous<br><span style="color:#666;font-size:.75rem">narrator --live</span></td>
+<td>Bypasses the queue entirely — picks fresh notes at runtime and weaves a narrative on the spot. The "hit or miss" mode. No pre-planning, good for manual exploration.</td></tr>
+</tbody></table>
+
+<h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">narrator.js flags</h2>
+<pre class="log-box" style="color:#ccc">--next                    pop next from narrative_queue (planned mode)
+--live                    pick fresh notes now, bypass queue (serendipity mode)
+--dry-run                 build the prompt, show it, no API call, no write
+--reset                   delete a narrative (asks for typed YES confirmation)
+--id &lt;id&gt;                 regenerate a specific existing narrative
+--numSources 1-5          cluster size override (v1 testing found 2-note clusters
+                           tighter than 3-note - worth re-testing at v2 scale)
+</pre>
+
+<h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">curator.js flags</h2>
+<pre class="log-box" style="color:#ccc">--refill                  top up narrative_queue only if below 15 entries (target 20)
+--force                   regenerate 20 new candidates regardless of current depth
+--status                  print queue depth and exit, no writes
+</pre>
+
+<h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">ZeroClaw cron candidates</h2>
+<table class="report-result" style="margin-top:0"><tbody>
+<tr><td style="color:#6ec86e">indexer.js --diff</td><td>Safe to automate. Read-mostly, orphan-pruning tested, zero API cost.</td></tr>
+<tr><td style="color:#6ec86e">curator.js --refill</td><td>Safe to automate. Self-limiting, zero API cost.</td></tr>
+<tr><td style="color:#c8b89a">tagger.js --switch-vocab</td><td>Fine to automate after each indexer --diff. Zero API cost.</td></tr>
+<tr><td style="color:#c8b89a">narrator.js --next</td><td>Automate with a cap (e.g. 3-5/run) so the Pending approval queue stays reviewable, not overwhelming.</td></tr>
+<tr><td style="color:#e0a840">tagger.js --switch3</td><td>Real API cost per run - cron with --limit and a budget check in the wrapper, not just QUARRY's internal $10 ceiling.</td></tr>
+<tr><td style="color:#c86e6e">writeback.js (any stage)</td><td>Never automate. Writes directly to vault files + git; keep this a deliberate, reviewed action.</td></tr>
+</tbody></table>
+
+<h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">Ontological principles (tag_vocabulary governance)</h2>
+<ol style="color:#ccc;font-size:.85rem;line-height:1.8;padding-left:20px">
+<li><strong>Geography is a co-tag, never a parent</strong> — write "india" + "culture/food", never "india/food" — unless the concept has no meaningful existence outside that geography and the term itself is unambiguous without it (e.g. "carnatic", "bharatanatyam" need no geography prefix).</li>
+<li><strong>Hierarchy resolves ambiguity only</strong> — use parent/leaf (e.g. "science/psychology") only when the bare leaf term is genuinely ambiguous on its own. If a term is self-identifying, keep it flat.</li>
+<li><strong>No parent-path auto-creation</strong> — tagging "humour/nsfw" does not also create a standalone "humour" row. tag_root already supports "everything under X" queries (WHERE tag_root='humour') without a redundant parent tag.</li>
+</ol>
+
+<h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">Architecture notes</h2>
+<ul style="color:#ccc;font-size:.85rem;line-height:1.8;padding-left:20px">
+<li>Ground truth split: note content + frontmatter tags live in the vault/GitHub. QUARRY metadata (classifications, narratives, budget, proposals) lives in SQLite only.</li>
+<li>note_classifications now carries only two buckets: <strong>verified</strong> and <strong>trivia</strong>. evergreen/asserted/dubious/essay were tried and deliberately cut - they added token cost without adding narrative value; epistemic status (opinion/conspiracy) is captured as a tag instead, not a classification bucket.</li>
+<li>Client-side code lives in quarry.js, styling in quarry.css, both served as static files next to server.js. All dynamic content uses data-* attributes + fetch()/JSON, never inline onclick with interpolated strings - this was a real bug class (nested escaping across template layers) and is now structurally avoided.</li>
+<li>lib/tags.js is the single shared tag-insertion path for both server.js (HIL approve/custom) and tagger.js (switch-vocab). Edit tag-insertion policy there once, both processes pick it up.</li>
+</ul>
+
+</div>
+`;
+}
+
 function statsPage(db) {
   const total      = db.prepare('SELECT COUNT(*) as n FROM vault_notes').get().n;
   const tagged     = db.prepare('SELECT COUNT(*) as n FROM vault_notes WHERE has_tags=1').get().n;
@@ -832,6 +930,7 @@ function router(req, res) {
   if (method==='GET' && url==='/narrator') { sendHtml('Narrator',narratorPage(),'/narrator'); return; }
   if (method==='GET' && url==='/reports')  { sendHtml('Reports', reportsPage(), '/reports');  return; }
   if (method==='GET' && url==='/stats')    { const db=openDb();ensureSchema(db);const c=statsPage(db);db.close(); sendHtml('Stats',c,'/stats'); return; }
+  if (method==='GET' && url==='/help')     { sendHtml('Help',helpPage(),'/help'); return; }
   if (method==='GET' && /^\/queue/.test(url)) { const db=openDb();ensureSchema(db);const c=queuePage(db,params);db.close(); sendHtml('Queue',c,'/queue'); return; }
   if (method==='GET' && /^\/notes/.test(url)) { const db=openDb();ensureSchema(db);const c=notesPage(db,params);db.close(); sendHtml('Browse',c,'/notes'); return; }
   if (method==='GET' && /^\/review-tags/.test(url)){ const db=openDb();ensureSchema(db);const c=reviewTagsPage(db,params);db.close(); sendHtml('Tag Review',c,'/review-tags'); return; }
