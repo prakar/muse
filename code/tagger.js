@@ -12,6 +12,7 @@ const fs    = require('fs');
 const path  = require('path');
 const https = require('https');
 const { DatabaseSync } = require('node:sqlite');
+const { insertNoteTags } = require('./lib/tags');
 
 // ---------------------------------------------------------------------------
 // CONFIG
@@ -116,24 +117,10 @@ function recordSpend(db, provider, component, noteId, tokIn, tokOut) {
 // ---------------------------------------------------------------------------
 // TAG + CLASSIFICATION WRITERS
 // ---------------------------------------------------------------------------
+// Thin wrapper over lib/tags.js's insertNoteTags - single shared insertion
+// path with server.js's /api/tags/review approve and custom branches.
 function writeTagsToDb(db, noteId, tags, switchLevel) {
-  if (!tags || !tags.length) return;
-  const seen = {};
-  const rows = [];
-  for (const tag of tags) {
-    const clean = tag.trim().toLowerCase().replace(/\s+/g,'-');
-    if (!clean || seen[clean]) continue;
-    seen[clean] = true;
-    const parts = clean.split('/').filter(Boolean);
-    rows.push({ tag_full: parts.join('/'), tag_root: parts[0], tag_leaf: parts[parts.length-1], is_hierarchical: parts.length>1?1:0 });
-    for (let d=1; d<parts.length; d++) {
-      const partial = parts.slice(0,d).join('/');
-      if (!seen[partial]) { seen[partial]=true; rows.push({ tag_full:partial, tag_root:parts[0], tag_leaf:parts[d-1], is_hierarchical:1 }); }
-    }
-  }
-  const ins = db.prepare('INSERT OR IGNORE INTO note_tags (note_id,tag_full,tag_root,tag_leaf,is_hierarchical) VALUES (?,?,?,?,?)');
-  for (const t of rows) ins.run(noteId, t.tag_full, t.tag_root, t.tag_leaf, t.is_hierarchical);
-  db.prepare('UPDATE vault_notes SET has_tags=1, tag_source=? WHERE id=?').run('switch'+switchLevel, noteId);
+  insertNoteTags(db, noteId, tags, 'switch'+switchLevel);
 }
 
 function writeClassificationsToDb(db, noteId, parsed, switchLevel) {
@@ -147,19 +134,24 @@ function writeClassificationsToDb(db, noteId, parsed, switchLevel) {
   db.prepare('UPDATE vault_notes SET classification_at=? WHERE id=?').run(now, noteId);
 }
 
-// Writes LLM-proposed new tags into tag_vocabulary as status='pending'.
-// Never auto-applies to notes - requires human review/approval before use.
-function writeProposedTags(db, proposals) {
-  if (!proposals || !proposals.length) return;
+// Writes every Switch-3 suggested tag into note_tag_proposals for HIL review.
+// Nothing is applied to note_tags directly - the /review-tags page in server.js
+// is the only path from here into a note's real tags (or into the canonical
+// tag_vocabulary, for proposals not already covered).
+function writeProposedTags(db, noteId, tags, vocabSet) {
+  if (!tags || !tags.length) return;
   const ins = db.prepare(
-    'INSERT OR IGNORE INTO tag_vocabulary (tag_full,tag_root,tag_leaf,is_hierarchical,status,created_at) VALUES (?,?,?,?,?,?)'
+    'INSERT INTO note_tag_proposals (note_id,tag_full,tag_root,tag_leaf,is_hierarchical,in_vocabulary,status,created_at) VALUES (?,?,?,?,?,?,?,?)'
   );
   const now = new Date().toISOString();
-  for (const raw of proposals) {
+  const seen = new Set();
+  for (const raw of tags) {
     const clean = raw.trim().toLowerCase().replace(/\s+/g,'-');
-    if (!clean) continue;
+    if (!clean || seen.has(clean)) continue;
+    seen.add(clean);
     const parts = clean.split('/').filter(Boolean);
-    ins.run(parts.join('/'), parts[0], parts[parts.length-1], parts.length>1?1:0, 'pending', now);
+    const inVocab = vocabSet && vocabSet.has(clean) ? 1 : 0;
+    ins.run(clean, parts[0], parts[parts.length-1], parts.length>1?1:0, inVocab, 'pending', now);
   }
 }
 
@@ -242,26 +234,36 @@ function buildS3Prompt(noteContent, sourceUrl, useFullContent, vocabList) {
 Content:
 ${body}
 
-CANONICAL TAG VOCABULARY (select from this list only for the TAGS section):
+EXISTING TAG VOCABULARY (prefer these where they genuinely fit \u2014 reuse over inventing a near-duplicate):
 ${vocabBlock}
 
-Output EXACTLY these four sections with ## headers. No extra text.
+Output EXACTLY these three sections with ## headers. No extra text.
 
 ## TAGS
-Select 2-6 tags from the CANONICAL TAG VOCABULARY above that genuinely fit this note.
-One tag per line, exact spelling from the list. Do not invent variants of listed tags.
-If none fit well: "No canonical tags fit."
+List 3-8 tags that genuinely and specifically describe this note's actual subject matter.
+Prefer an exact match from the EXISTING TAG VOCABULARY above when one truly fits.
+When nothing in the existing vocabulary captures the specific concept, propose a new
+tag rather than settling for a vague parent category \u2014 specificity matters more than
+vocabulary reuse. One tag per line.
 
-## PROPOSED NEW TAGS
-Only if the note's core subject has NO reasonable fit in the canonical vocabulary above.
-Follow these rules strictly:
-- Geography is never a parent (write "india" + "culture/food", never "india/food") unless the
-  concept has no meaningful existence outside that geography and the term itself is unambiguous
-  (e.g. "carnatic", "bharatanatyam" need no geography prefix at all).
-- Use parent/leaf hierarchy ONLY to resolve genuine ambiguity (e.g. "science/psychology" because
-  bare "psychology" overlaps philosophy). If the term is self-identifying, propose it flat.
-- One proposal per line, lowercase, hyphenated. Rare — most notes need none.
-If none: "No new tags needed."
+Two ontological rules, both non-negotiable:
+- Geography is a co-tag, never a parent: write "india" + "culture/food", never
+  "india/food" \u2014 UNLESS the concept has no meaningful existence outside that
+  geography and the term itself is unambiguous without it (e.g. "carnatic",
+  "bharatanatyam" need no geography prefix at all).
+- Use parent/leaf hierarchy ONLY to resolve genuine ambiguity (e.g. "science/psychology"
+  because bare "psychology" overlaps philosophy). If a term is self-identifying on its
+  own, propose it flat, not nested.
+
+Tag shape rules:
+- 1-3 words, hyphenated if more than one (e.g. "crusader-states", not "crusader states").
+- A proper noun or place name is not on its own a tag \u2014 tag the CONCEPT the place/person
+  exemplifies, not the entity itself (reject "adyar-library-and-research-centre"; a note
+  about a Chennai photography archive might instead earn "archival-photography" + "india").
+- No stopword joiners (and, of, in, on, for, with, the, by, at) inside a tag.
+- No commas, no sentence fragments, no numbers as the leading token.
+
+If genuinely nothing fits: "No tags identified."
 
 ## VERIFIED FACTS
 Bullet list: claims directly stated AND matching broad consensus an educated adult knows.
@@ -277,7 +279,7 @@ favour concrete and quotable over general. Tag: [etymology], [history], [science
 + [training knowledge - unverified] if drawn from model training rather than the text.
 If none: "No trivia-grade facts identified."
 
-Be conservative on VERIFIED FACTS and TAGS. Be generous and thorough on TRIVIA NUGGETS \u2014 this section is the priority. PROPOSED NEW TAGS should be rare.`;
+Be conservative on VERIFIED FACTS. Be generous and thorough on TRIVIA NUGGETS \u2014 this section is the priority. Be expressive and specific on TAGS \u2014 do not default to vague generic tags when a precise one is available.`;
 }
 function isListFormat(body) {
   const lines      = body.split('\n');
@@ -343,44 +345,44 @@ function parseEvergreen(text) {
 }
 function parseS3Response(text, vocabSet) {
   const clean = text.replace(/^```[a-z]*\n/m,'').replace(/```\s*$/m,'').trim();
-  const sections = { tags:[], proposedTags:[], verified:[], trivia:[] };
+  const sections = { tags:[], verified:[], trivia:[] };
   for (const part of clean.split(/^##\s+/m)) {
     const lines = part.trim().split('\n');
     const header = lines[0].trim().toUpperCase();
     const body   = lines.slice(1).join('\n').trim();
-    if (header.includes('PROPOSED'))         sections.proposedTags = parseTagLines(body, 'sane', vocabSet);
-    else if (header.includes('TAGS'))        sections.tags         = parseTagLines(body, 'strict', vocabSet);
-    else if (header.includes('VERIFIED'))    sections.verified     = parseBullets(body);
-    else if (header.includes('TRIVIA'))      sections.trivia       = parseBullets(body);
+    if (header.includes('TAGS'))             sections.tags     = parseTagLines(body);
+    else if (header.includes('VERIFIED'))    sections.verified = parseBullets(body);
+    else if (header.includes('TRIVIA'))      sections.trivia   = parseBullets(body);
   }
-  sections.inferredTags = sections.tags;
+  // Every tag goes through HIL review (tag_vocabulary status='pending') before
+  // being applied to a note. Exact vocabulary matches are marked auto-approvable
+  // by the caller; novel proposals wait for a human in the /review-tags page.
   return sections;
 }
 
-// Parses a one-tag-per-line block into a clean array. Skips "none" fallback
-// lines and strips leading bullet markers if the model adds them anyway.
-// mode='strict': only exact matches against vocabSet survive (used for TAGS section -
-// never trust LLM compliance with "select from this list" instructions alone).
-// mode='sane': basic garbage filtering only (used for PROPOSED NEW TAGS - short,
-// no commas/sentences, no consecutive-word slugs that are really a sentence fragment).
-function parseTagLines(text, mode, vocabSet) {
+// Parses a one-tag-per-line block into a clean array. No vocabulary gate here -
+// deliberately expressive. Only rejects clear garbage shapes (commas, sentence
+// fragments, stopword-joined phrases, numeric-leading tokens, overlong strings)
+// so the human review queue isn't flooded with obvious noise, while still
+// letting genuinely specific, correct tags like "crusader-states" or "sultan"
+// through even when they aren't yet in the canonical vocabulary.
+const TAG_STOPWORDS = new Set(['and','in','for','with','the','by','at','to','from','as','is','was','a','an']);
+function isSaneTagShape(t) {
+  if (!t || t.length < 2) return false;
+  if (t.length > 35) return false;
+  if (/[,.]/.test(t)) return false;
+  if (/^[\d\u2013-]/.test(t)) return false;
+  const parts = t.split('/').join('-').split('-');
+  if (parts.length > 4) return false;
+  if (parts.some(p => TAG_STOPWORDS.has(p))) return false;
+  return true;
+}
+function parseTagLines(text) {
   if (/^no (canonical |new )?tags?/i.test(text.trim())) return [];
-  let items = text.split('\n')
+  return text.split('\n')
     .map(l => l.replace(/^[-*•]\s*/, '').trim().toLowerCase())
-    .filter(l => l.length > 1 && !/^no /i.test(l));
-
-  if (mode === 'strict') {
-    return items.filter(l => vocabSet && vocabSet.has(l));
-  }
-
-  // sane mode: reject sentence-fragment garbage
-  return items.filter(l => {
-    if (l.length > 40) return false;               // real tags are short
-    if (l.split('-').length > 6) return false;      // too many hyphenated words = sentence
-    if (/,/.test(l)) return false;                  // commas = not a single tag
-    if (/\s/.test(l)) return false;                 // should be hyphenated, not spaced
-    return true;
-  });
+    .filter(l => l.length > 1 && !/^no /i.test(l))
+    .filter(isSaneTagShape);
 }
 
 // ---------------------------------------------------------------------------
@@ -910,13 +912,16 @@ async function processNote(db, note, switchLevel, provider, useFullContent) {
   db.exec('BEGIN');
   try {
     writeClassificationsToDb(db, note.id, parsed, switchLevel);
-    if (parsed.inferredTags && parsed.inferredTags.length) writeTagsToDb(db, note.id, parsed.inferredTags, switchLevel);
-    if (parsed.proposedTags && parsed.proposedTags.length) writeProposedTags(db, parsed.proposedTags);
+    // Tags no longer write directly to note_tags - every suggestion (whether
+    // already in the canonical vocabulary or brand new) goes to the HIL
+    // review queue. This keeps the vault's real tags human-approved while
+    // still letting the model be as expressive as the note warrants.
+    if (parsed.tags && parsed.tags.length) writeProposedTags(db, note.id, parsed.tags, vocabSet);
     db.exec('COMMIT');
   } catch(e) { db.exec('ROLLBACK'); throw e; }
 
   const cost = recordSpend(db, result.provider, switchLevel===4?'classifier-s4':'classifier', note.id, result.tokensIn, result.tokensOut);
-  log('info', 'Switch-'+switchLevel+' complete', {title:note.title.slice(0,60), provider:result.provider, tags:parsed.tags.length, proposed:parsed.proposedTags.length, verified:parsed.verified.length, trivia:parsed.trivia.length, cost_usd:cost.toFixed(5)});
+  log('info', 'Switch-'+switchLevel+' complete', {title:note.title.slice(0,60), provider:result.provider, tagsProposed:parsed.tags.length, verified:parsed.verified.length, trivia:parsed.trivia.length, cost_usd:cost.toFixed(5)});
 }
 
 // ---------------------------------------------------------------------------

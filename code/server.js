@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// QUARRY server.js v0.3
+// QUARRY server.js v0.4
 // Usage: node server.js [--port 3001]
 // Views: / /approved /vault /tagger /curator /queue /narrator /reports /stats /notes /review
 
@@ -8,6 +8,7 @@
 const http  = require('http');
 const fs    = require('fs');
 const path  = require('path');
+const { insertNoteTag } = require('./lib/tags');
 const cp    = require('child_process');
 const { DatabaseSync } = require('node:sqlite');
 
@@ -16,6 +17,8 @@ const VAULT_DIR = process.env.VAULT_PATH   || path.join(process.env.HOME, 'vault
 const CODE_DIR  = path.join(process.env.QUARRY_HOME || process.env.HOME, 'dev', 'quarry', 'code');
 const LOG_DIR   = path.join(process.env.QUARRY_HOME || process.env.HOME, 'dev', 'quarry');
 const PORT      = (() => { const i = process.argv.indexOf('--port'); return i !== -1 ? parseInt(process.argv[i+1],10) : 3001; })();
+const HERE      = path.dirname(process.argv[1] || __filename);
+const API_TOKEN = process.env.QUARRY_API_TOKEN || ''; // if set, required on mutating API routes via X-Quarry-Token
 
 // ---------------------------------------------------------------------------
 // DB HELPERS
@@ -38,7 +41,7 @@ function enrichNarrative(db, n) {
   try {
     const ids = JSON.parse(n.note_ids||'[]');
     if (!ids.length) return Object.assign({},n,{sources:[]});
-    const sources = db.prepare('SELECT id,title,source_url FROM vault_notes WHERE id IN ('+ids.join(',')+')').all();
+    const sources = db.prepare('SELECT id,title,source_url FROM vault_notes WHERE id IN ('+inPlaceholders(ids)+')').all(...ids);
     return Object.assign({},n,{sources});
   } catch(_) { return Object.assign({},n,{sources:[]}); }
 }
@@ -57,128 +60,34 @@ function renderBadge(r) {
   const cls = r==='senior'?'badge-senior':r==='junior'?'badge-junior':'badge-unknown';
   return '<span class="badge '+cls+'">'+(r||'?')+'</span>';
 }
+function inPlaceholders(ids) {
+  return ids.map(function () { return '?'; }).join(',');
+}
+function paginationHtml(total, page, totalPages, hrefForPage) {
+  var pag = '<div class="pagination"><span>' + Number(total).toLocaleString() + ', p' + page + '/' + totalPages + '</span>';
+  if (page > 1) {
+    pag += '<a href="' + hrefForPage(1) + '">«</a><a href="' + hrefForPage(page - 1) + '">‹</a>';
+  }
+  for (var p = Math.max(1, page - 2); p <= Math.min(totalPages, page + 2); p++) {
+    pag += '<a href="' + hrefForPage(p) + '"' + (p === page ? ' style="color:#c8b89a"' : '') + '>' + p + '</a>';
+  }
+  if (page < totalPages) {
+    pag += '<a href="' + hrefForPage(page + 1) + '">›</a><a href="' + hrefForPage(totalPages) + '">»</a>';
+  }
+  return pag + '</div>';
+}
+function requireToken(req, res) {
+  if (!API_TOKEN) return true;
+  var got = req.headers['x-quarry-token'] || '';
+  if (got === API_TOKEN) return true;
+  res.writeHead(401, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'unauthorized' }));
+  return false;
+}
 
 // ---------------------------------------------------------------------------
 // CSS + HTML SHELL
 // ---------------------------------------------------------------------------
-const CSS = `
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:Georgia,serif;background:#0f0f0f;color:#e8e4dc;min-height:100vh}
-a{color:#6ea8c8;text-decoration:none}a:hover{text-decoration:underline}
-header{background:#1a1a1a;border-bottom:1px solid #333;padding:14px 24px;display:flex;align-items:center;gap:16px}
-header h1{font-size:1.3rem;letter-spacing:.05em;color:#c8b89a}
-nav{display:flex;gap:6px;flex-wrap:wrap}
-nav a{color:#888;font-size:.82rem;padding:5px 12px;border-radius:4px;border:1px solid #333}
-nav a:hover,nav a.active{color:#c8b89a;border-color:#555;text-decoration:none}
-.container{max-width:1100px;margin:0 auto;padding:28px 24px}
-.page-title{font-size:.8rem;color:#666;letter-spacing:.1em;text-transform:uppercase;margin-bottom:20px}
-/* Cards & panels */
-.card{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;margin-bottom:20px;overflow:hidden}
-.card-header{padding:12px 18px;background:#141414;border-bottom:1px solid #2a2a2a;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
-.card-body{padding:18px}
-.card-actions{padding:12px 18px;background:#141414;border-top:1px solid #2a2a2a;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.card-meta{font-size:.75rem;color:#666}
-.card-meta span{margin-right:10px}
-/* Badges */
-.badge{display:inline-block;font-size:.68rem;padding:2px 7px;border-radius:9px;font-family:monospace}
-.badge-senior{background:#2a1f0e;color:#c8a96e;border:1px solid #5a3e1a}
-.badge-junior{background:#0e1f2a;color:#6eacc8;border:1px solid #1a5a7a}
-.badge-unknown{background:#1f1f1f;color:#888;border:1px solid #333}
-/* Buttons */
-.btn{padding:7px 16px;border-radius:4px;border:none;font-size:.85rem;cursor:pointer;font-family:Georgia,serif;transition:opacity .15s;white-space:nowrap}
-.btn:hover{opacity:.8}
-.btn:disabled{opacity:.4;cursor:not-allowed}
-.btn-primary{background:#2a1f0e;color:#c8a96e;border:1px solid #5a3e1a}
-.btn-green{background:#1a3a1a;color:#6ec86e;border:1px solid #2a5a2a}
-.btn-red{background:#3a1a1a;color:#c86e6e;border:1px solid #5a2a2a}
-.btn-blue{background:#1f1f2a;color:#8888cc;border:1px solid #33335a}
-.btn-grey{background:#1f1f1f;color:#888;border:1px solid #333}
-/* Forms */
-.field{display:flex;align-items:center;gap:8px;font-size:.82rem;color:#888}
-.field label{white-space:nowrap}
-.field input,.field select{background:#0f0f0f;border:1px solid #333;color:#aaa;padding:5px 9px;border-radius:4px;font-size:.82rem;font-family:Georgia,serif;width:80px}
-.field input[type=text]{width:160px}
-.reject-input{flex:1;background:#0f0f0f;border:1px solid #333;color:#aaa;padding:6px 10px;border-radius:4px;font-size:.82rem;font-family:Georgia,serif}
-/* Narrative text */
-.narrative-text{line-height:1.75;font-size:1rem;color:#d8d0c4;white-space:pre-wrap}
-.sources-line{margin-top:14px;padding-top:12px;border-top:1px solid #2a2a2a;font-size:.8rem;color:#666}
-.sources-line strong{color:#888}
-.theme-tag{font-size:.72rem;color:#8a7a6a;font-family:monospace;background:#1f1a12;padding:2px 7px;border-radius:3px;border:1px solid #3a3020}
-.approved-date{font-size:.75rem;color:#4a6a4a}
-/* Stats */
-.stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px;margin-bottom:24px}
-.stat-card{background:#141414;border:1px solid #2a2a2a;border-radius:7px;padding:16px}
-.stat-card .num{font-size:1.8rem;color:#c8b89a;font-weight:bold;line-height:1;margin-bottom:4px}
-.stat-card .lbl{font-size:.72rem;color:#666;text-transform:uppercase;letter-spacing:.07em}
-.stat-card .sub{font-size:.78rem;color:#555;margin-top:3px}
-.progress-bar{background:#1a1a1a;border-radius:3px;height:6px;overflow:hidden;margin:5px 0}
-.progress-fill{height:100%;background:#5a3e1a;border-radius:3px}
-.breakdown{background:#141414;border:1px solid #2a2a2a;border-radius:7px;padding:16px;margin-bottom:16px}
-.breakdown h3{font-size:.75rem;color:#888;text-transform:uppercase;letter-spacing:.07em;margin-bottom:12px}
-.br-row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #1a1a1a;font-size:.85rem}
-.br-row:last-child{border-bottom:none}
-.br-row .k{color:#aaa}.br-row .v{color:#c8b89a;font-family:monospace}
-/* Notes browser */
-.note-table{width:100%;border-collapse:collapse;font-size:.82rem}
-.note-table th{text-align:left;padding:7px 9px;color:#555;font-weight:normal;border-bottom:1px solid #2a2a2a;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em}
-.note-table td{padding:7px 9px;border-bottom:1px solid #141414;vertical-align:top}
-.note-table tr:hover td{background:#141414;cursor:pointer}
-.nt{color:#c8b89a;font-size:.85rem;line-height:1.3}
-.nx{color:#555;font-size:.75rem;margin-top:2px;max-width:440px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.nm{color:#444;font-size:.72rem;white-space:nowrap}
-.ntag{font-size:.68rem;color:#5a4a3a;font-family:monospace}
-.s4-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#5a3e1a;margin-right:3px}
-/* Review */
-.cb-exclude{width:15px;height:15px;accent-color:#c86e6e;cursor:pointer}
-.btn-save{background:#1a3a1a;color:#6ec86e;border:1px solid #2a5a2a;padding:7px 20px;border-radius:4px;font-size:.85rem;cursor:pointer;font-family:Georgia,serif}
-.save-status{font-size:.78rem;color:#666}
-.tr-excluded td{opacity:.4}
-/* Queue view */
-.queue-row{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:12px;margin-bottom:14px;align-items:start}
-.q-note{background:#141414;border:1px solid #2a2a2a;border-radius:6px;padding:12px;cursor:pointer}
-.q-note:hover{border-color:#555}
-.q-note .qt{color:#c8b89a;font-size:.85rem;line-height:1.3;margin-bottom:4px}
-.q-note .qm{font-size:.72rem;color:#555}
-.q-actions{display:flex;flex-direction:column;gap:6px;justify-content:center}
-.q-theme{font-size:.72rem;color:#666;font-family:monospace;margin-bottom:6px}
-/* Pagination */
-.pagination{display:flex;gap:7px;align-items:center;margin-top:18px;flex-wrap:wrap}
-.pagination a{color:#888;padding:4px 10px;border:1px solid #333;border-radius:4px;font-size:.82rem}
-.pagination a:hover{color:#c8b89a;border-color:#555;text-decoration:none}
-.pagination span{color:#555;font-size:.82rem}
-/* Drawer */
-.drawer-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100}
-.drawer-overlay.open{display:block}
-.drawer{position:fixed;top:0;right:0;width:min(700px,95vw);height:100vh;background:#141414;border-left:1px solid #333;z-index:101;display:flex;flex-direction:column;transform:translateX(100%);transition:transform .25s ease}
-.drawer-overlay.open .drawer{transform:translateX(0)}
-.drawer-head{padding:14px 18px;border-bottom:1px solid #2a2a2a;display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
-.drawer-title{font-size:.92rem;color:#c8b89a;line-height:1.4;flex:1}
-.drawer-close{background:none;border:1px solid #444;color:#888;width:26px;height:26px;border-radius:4px;cursor:pointer;font-size:.9rem;flex-shrink:0}
-.drawer-tabs{display:flex;border-bottom:1px solid #2a2a2a}
-.drawer-tab{padding:8px 16px;font-size:.8rem;color:#666;cursor:pointer;border-bottom:2px solid transparent;background:none;border-top:none;border-left:none;border-right:none;font-family:Georgia,serif}
-.drawer-tab.active{color:#c8b89a;border-bottom-color:#c8b89a}
-.drawer-body{flex:1;overflow-y:auto;padding:18px}
-.drawer-content{line-height:1.75;font-size:.9rem;color:#ccc;white-space:pre-wrap}
-.drawer-meta{font-size:.75rem;color:#555;margin-bottom:12px}
-.drawer-meta a{color:#6ea8c8}
-/* Log viewer */
-.log-box{background:#0a0a0a;border:1px solid #2a2a2a;border-radius:6px;padding:14px;font-family:monospace;font-size:.75rem;color:#8a8;max-height:320px;overflow-y:auto;white-space:pre-wrap;margin-top:14px}
-/* Control panel */
-.ctrl-panel{background:#141414;border:1px solid #2a2a2a;border-radius:8px;padding:18px;margin-bottom:18px}
-.ctrl-panel h3{font-size:.8rem;color:#888;text-transform:uppercase;letter-spacing:.08em;margin-bottom:14px}
-.ctrl-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
-.ctrl-row:last-child{margin-bottom:0}
-/* Report */
-.report-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;margin-bottom:24px}
-.report-card{background:#141414;border:1px solid #2a2a2a;border-radius:7px;padding:16px}
-.report-card h4{font-size:.88rem;color:#c8b89a;margin-bottom:6px}
-.report-card p{font-size:.78rem;color:#666;margin-bottom:12px;line-height:1.5}
-.report-result{margin-top:12px;overflow-x:auto}
-.report-result table{width:100%;border-collapse:collapse;font-size:.78rem}
-.report-result th{text-align:left;padding:5px 8px;color:#666;border-bottom:1px solid #2a2a2a;font-weight:normal;font-size:.72rem;text-transform:uppercase}
-.report-result td{padding:5px 8px;border-bottom:1px solid #141414;color:#aaa;font-family:monospace}
-.empty{text-align:center;color:#555;padding:48px;font-size:1rem}
-`;
 
 const NAV_LINKS = [
   ['/', 'Pending'],
@@ -191,16 +100,22 @@ const NAV_LINKS = [
   ['/reports', 'Reports'],
   ['/notes', 'Browse'],
   ['/review', 'Review'],
+  ['/review-tags', 'Tag Review'],
 ];
 
 function shell(title, body, active) {
   const nav = NAV_LINKS.map(([href,label])=>
     '<a href="'+href+'"'+(active===href?' class="active"':'')+'>'+label+'</a>'
   ).join('');
+  const tokenMeta = API_TOKEN
+    ? '<meta name="quarry-token" content="'+escHtml(API_TOKEN)+'">'
+    : '';
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+${tokenMeta}
 <title>🪨 QUARRY — ${escHtml(title)}</title>
-<style>${CSS}</style></head><body>
+<link rel="stylesheet" href="/quarry.css">
+</head><body>
 <header>
   <span style="font-size:1.5rem">🪨</span>
   <h1>QUARRY</h1>
@@ -210,7 +125,7 @@ function shell(title, body, active) {
 ${body}
 </div>
 ${DRAWER_HTML}
-${COMMON_JS}
+<script src="/quarry.js"></script>
 </body></html>`;
 }
 
@@ -218,11 +133,11 @@ ${COMMON_JS}
 // DRAWER
 // ---------------------------------------------------------------------------
 const DRAWER_HTML = `
-<div class="drawer-overlay" id="drawer-overlay" onclick="closeDrawer(event)">
+<div class="drawer-overlay" id="drawer-overlay" data-action="close-drawer">
   <div class="drawer" id="drawer">
     <div class="drawer-head">
       <div class="drawer-title" id="drawer-title"></div>
-      <button class="drawer-close" onclick="closeDrawer()">✕</button>
+      <button type="button" class="drawer-close" data-action="close-drawer">✕</button>
     </div>
     <div class="drawer-tabs" id="drawer-tabs"></div>
     <div class="drawer-body">
@@ -232,86 +147,24 @@ const DRAWER_HTML = `
   </div>
 </div>`;
 
-const COMMON_JS = `<script>
-var _dd={};
-function openNote(id){
-  var o=document.getElementById('drawer-overlay'),c=document.getElementById('drawer-content'),
-      t=document.getElementById('drawer-title'),m=document.getElementById('drawer-meta'),
-      tb=document.getElementById('drawer-tabs');
-  c.textContent='Loading...';tb.innerHTML='';m.innerHTML='';o.classList.add('open');
-  fetch('/api/notes/'+id).then(r=>r.json()).then(d=>{
-    _dd[id]=d;t.textContent=d.title||'Note';
-    var mp=[];if(d.word_count)mp.push(d.word_count+' words');if(d.content_type)mp.push(d.content_type);
-    if(d.source_url)mp.push('<a href="'+d.source_url+'" target="_blank">source ↗</a>');
-    m.innerHTML=mp.join(' · ')+'&nbsp;<button onclick="startEdit('+id+')" style="background:none;border:1px solid #444;color:#888;padding:1px 8px;border-radius:3px;cursor:pointer;font-size:.72rem;">✎</button>';
-    var th='',ft='raw';
-    if(d.essay){th+='<button class="drawer-tab active" onclick="showTab('+id+',\\'essay\\',this)">Essay</button>';ft='essay';}
-    th+='<button class="drawer-tab'+(ft==='raw'?' active':'')+'" onclick="showTab('+id+',\\'raw\\',this)">Raw</button>';
-    if(d.verified&&d.verified.length)th+='<button class="drawer-tab" onclick="showTab('+id+',\\'facts\\',this)">Facts ('+d.verified.length+')</button>';
-    tb.innerHTML=th;showTabContent(id,ft);
-  }).catch(e=>{c.textContent='Error: '+e.message;});
-}
-function startEdit(id){
-  var d=_dd[id];if(!d)return;
-  document.getElementById('drawer-content').innerHTML=
-    '<textarea id="note-ed" style="width:100%;height:calc(100vh - 270px);background:#0f0f0f;color:#e8e4dc;border:1px solid #555;padding:12px;font-family:monospace;font-size:.88rem;line-height:1.6;resize:none;">'+escH(d.body||'')+'</textarea>'+
-    '<div style="margin-top:8px;display:flex;gap:8px">'+
-    '<button onclick="saveNote('+id+')" class="btn btn-green" style="font-size:.8rem;padding:5px 14px;">💾 Save</button>'+
-    '<button onclick="openNote('+id+')" class="btn btn-red" style="font-size:.8rem;padding:5px 14px;">Cancel</button></div>';
-}
-function saveNote(id){
-  var ta=document.getElementById('note-ed');if(!ta)return;
-  fetch('/api/notes/'+id+'/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:ta.value})})
-  .then(r=>r.json()).then(res=>{if(res.ok){alert('Saved');openNote(id);}else alert('Save failed');})
-  .catch(e=>alert('Error: '+e.message));
-}
-function showTab(id,tab,btn){
-  document.querySelectorAll('.drawer-tab').forEach(b=>b.classList.remove('active'));
-  if(btn)btn.classList.add('active');showTabContent(id,tab);
-}
-function showTabContent(id,tab){
-  var d=_dd[id];if(!d)return;
-  var c=document.getElementById('drawer-content');
-  if(tab==='essay')c.textContent=d.essay||'(no essay)';
-  else if(tab==='facts')c.textContent=(d.verified||[]).map(f=>'• '+f).join('\\n');
-  else c.textContent=d.body||'(no content)';
-}
-function closeDrawer(e){
-  if(e&&e.target!==document.getElementById('drawer-overlay'))return;
-  document.getElementById('drawer-overlay').classList.remove('open');
-}
-function escH(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
-function approve(id){fetch('/api/narratives/'+id+'/approve',{method:'POST'}).then(r=>{if(r.ok){document.getElementById('card-'+id).remove();updateCount();}});}
-function reject(id){
-  var reason=document.getElementById('reason-'+id).value.trim();
-  fetch('/api/narratives/'+id+'/reject',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason})})
-  .then(r=>{if(r.ok){document.getElementById('card-'+id).remove();updateCount();}});
-}
-function copyText(id){
-  navigator.clipboard.writeText(document.getElementById('nt-'+id).innerText).then(()=>{
-    var b=document.getElementById('cp-'+id);b.textContent='Copied!';setTimeout(()=>b.textContent='Copy',1500);
-  });
-}
-function updateCount(){var r=document.querySelectorAll('.card').length,e=document.getElementById('pending-count');if(e)e.textContent=r;}
-</script>`;
 
 // ---------------------------------------------------------------------------
 // NARRATIVE CARDS
 // ---------------------------------------------------------------------------
 function pendingCard(n) {
-  const src=(n.sources||[]).map(s=>'<button class="btn-source" style="background:none;border:none;color:#6ea8c8;font-size:.78rem;cursor:pointer;text-decoration:underline;padding:0" onclick="openNote('+s.id+')">'+escHtml(s.title)+'</button>').join(' · ');
+  const src=(n.sources||[]).map(s=>'<button type="button" class="btn-source" style="background:none;border:none;color:#6ea8c8;font-size:.78rem;cursor:pointer;text-decoration:underline;padding:0" data-action="open-note" data-id="'+s.id+'">'+escHtml(s.title)+'</button>').join(' · ');
   return `<div class="card" id="card-${n.id}">
   <div class="card-header"><div class="card-meta">${renderBadge(n.register)}<span class="theme-tag">${escHtml(n.queue_theme||n.seed_theme||'')}</span><span>${renderDate(n.produced_at)}</span><span style="color:#444">${escHtml(n.model_used||'')}</span></div></div>
   <div class="card-body"><div class="narrative-text" id="nt-${n.id}">${escHtml(n.body)}</div><div class="sources-line"><strong>Sources:</strong> ${src||'<em>none</em>'}</div></div>
-  <div class="card-actions"><button class="btn btn-green" onclick="approve(${n.id})">✓ Approve</button><input class="reject-input" id="reason-${n.id}" placeholder="Rejection reason"/><button class="btn btn-red" onclick="reject(${n.id})">✗ Reject</button><button class="btn btn-blue" id="cp-${n.id}" onclick="copyText(${n.id})">Copy</button></div>
+  <div class="card-actions"><button type="button" class="btn btn-green" data-action="approve" data-id="${n.id}">✓ Approve</button><input class="reject-input" id="reason-${n.id}" placeholder="Rejection reason"/><button type="button" class="btn btn-red" data-action="reject" data-id="${n.id}">✗ Reject</button><button type="button" class="btn btn-blue" id="cp-${n.id}" data-action="copy" data-id="${n.id}">Copy</button></div>
 </div>`;
 }
 function approvedCard(n) {
-  const src=(n.sources||[]).map(s=>'<button class="btn-source" style="background:none;border:none;color:#6ea8c8;font-size:.78rem;cursor:pointer;text-decoration:underline;padding:0" onclick="openNote('+s.id+')">'+escHtml(s.title)+'</button>').join(' · ');
+  const src=(n.sources||[]).map(s=>'<button type="button" class="btn-source" style="background:none;border:none;color:#6ea8c8;font-size:.78rem;cursor:pointer;text-decoration:underline;padding:0" data-action="open-note" data-id="'+s.id+'">'+escHtml(s.title)+'</button>').join(' · ');
   return `<div class="card" id="card-${n.id}">
   <div class="card-header"><div class="card-meta">${renderBadge(n.register)}<span class="theme-tag">${escHtml(n.queue_theme||n.seed_theme||'')}</span><span>${renderDate(n.produced_at)}</span><span class="approved-date">approved ${renderDate(n.approved_at)}</span></div></div>
   <div class="card-body"><div class="narrative-text" id="nt-${n.id}">${escHtml(n.body)}</div><div class="sources-line"><strong>Sources:</strong> ${src||'<em>none</em>'}</div></div>
-  <div class="card-actions"><button class="btn btn-blue" id="cp-${n.id}" onclick="copyText(${n.id})">Copy</button></div>
+  <div class="card-actions"><button type="button" class="btn btn-blue" id="cp-${n.id}" data-action="copy" data-id="${n.id}">Copy</button></div>
 </div>`;
 }
 
@@ -323,25 +176,25 @@ function vaultPage() {
 <div class="ctrl-panel">
   <h3>Git Sync</h3>
   <div class="ctrl-row">
-    <button class="btn btn-primary" onclick="runCmd('git-pull','Git pull vault')">⬇ git pull (origin/master)</button>
+    <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="git-pull" data-label="Git pull vault">⬇ git pull (origin/master)</button>
     <span style="font-size:.78rem;color:#555">git -C ~/vault pull origin master</span>
   </div>
 </div>
 <div class="ctrl-panel">
   <h3>Indexer</h3>
   <div class="ctrl-row">
-    <button class="btn btn-primary" onclick="runCmd('index-diff','Indexer --diff')">Index changed files</button>
-    <button class="btn btn-grey" onclick="runCmd('index-full','Indexer full')">Full re-index</button>
+    <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="index-diff" data-label="Indexer --diff">Index changed files</button>
+    <button class="btn btn-grey" type="button" data-action="run-cmd" data-cmd="index-full" data-label="Indexer full">Full re-index</button>
   </div>
 </div>
 <div class="ctrl-panel">
   <h3>Word Count Sync</h3>
   <div class="ctrl-row">
-    <button class="btn btn-primary" onclick="runCmd('sync-wc','Sync word counts')">sync-wc — recount from filesystem</button>
+    <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="sync-wc" data-label="Sync word counts">sync-wc — recount from filesystem</button>
   </div>
 </div>
 <div id="cmd-output"></div>
-${cmdJs()}`;
+`;
 }
 
 function taggerPage() {
@@ -349,8 +202,8 @@ function taggerPage() {
 <div class="ctrl-panel">
   <h3>Switch-1 &amp; Switch-2 — zero API cost</h3>
   <div class="ctrl-row">
-    <button class="btn btn-primary" onclick="runCmd('sw1','Switch-1')">Switch-1 (filename heuristic)</button>
-    <button class="btn btn-primary" onclick="runCmd('sw2','Switch-2')">Switch-2 (first-paragraph vocab)</button>
+    <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="sw1" data-label="Switch-1">Switch-1 (filename heuristic)</button>
+    <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="sw2" data-label="Switch-2">Switch-2 (first-paragraph vocab)</button>
   </div>
 </div>
 <div class="ctrl-panel">
@@ -358,39 +211,34 @@ function taggerPage() {
   <div class="ctrl-row">
     <div class="field"><label>Limit:</label><input id="s3-limit" type="number" value="500" min="1" max="5000"></div>
     <div class="field"><label>Provider:</label><select id="s3-prov"><option value="openrouter">openrouter</option><option value="gemini">gemini</option></select></div>
-    <button class="btn btn-primary" onclick="runS3()">Run Switch-3</button>
+    <button class="btn btn-primary" type="button" data-action="run-s3">Run Switch-3</button>
   </div>
 </div>
 <div class="ctrl-panel">
   <h3>Switch-4 — full document, Gemini only</h3>
   <div class="ctrl-row">
     <div class="field"><label>Limit:</label><input id="s4-limit" type="number" value="20" min="1" max="500"></div>
-    <button class="btn btn-primary" onclick="runS4()">Run Switch-4</button>
-    <button class="btn btn-grey" onclick="runCmd('sw4-dry','Switch-4 dry run')">Dry run</button>
+    <button class="btn btn-primary" type="button" data-action="run-s4">Run Switch-4</button>
+    <button class="btn btn-grey" type="button" data-action="run-cmd" data-cmd="sw4-dry" data-label="Switch-4 dry run">Dry run</button>
   </div>
 </div>
 <div class="ctrl-panel">
   <h3>Mindful-WC — compress overlong notes (>15K words)</h3>
   <div class="ctrl-row">
     <div class="field"><label>Limit:</label><input id="mwc-limit" type="number" value="5" min="1" max="50"></div>
-    <button class="btn btn-primary" onclick="runMwc()">Run mindful-wc</button>
-    <button class="btn btn-grey" onclick="runCmd('mwc-dry','Mindful-WC dry run')">Dry run (candidates list)</button>
+    <button class="btn btn-primary" type="button" data-action="run-mwc">Run mindful-wc</button>
+    <button class="btn btn-grey" type="button" data-action="run-cmd" data-cmd="mwc-dry" data-label="Mindful-WC dry run">Dry run (candidates list)</button>
   </div>
 </div>
 <div class="ctrl-panel">
   <h3>Video Link Extraction</h3>
   <div class="ctrl-row">
-    <button class="btn btn-primary" onclick="runCmd('extract-video','Extract video links')">Extract video links from all notes</button>
-    <button class="btn btn-grey" onclick="runCmd('extract-video-dry','Extract video links dry run')">Dry run</button>
+    <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="extract-video" data-label="Extract video links">Extract video links from all notes</button>
+    <button class="btn btn-grey" type="button" data-action="run-cmd" data-cmd="extract-video-dry" data-label="Extract video links dry run">Dry run</button>
   </div>
 </div>
 <div id="cmd-output"></div>
-<script>
-function runS3(){fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd:'sw3',limit:document.getElementById('s3-limit').value,provider:document.getElementById('s3-prov').value})}).then(showCmdResult);}
-function runS4(){fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd:'sw4',limit:document.getElementById('s4-limit').value})}).then(showCmdResult);}
-function runMwc(){fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd:'mwc',limit:document.getElementById('mwc-limit').value})}).then(showCmdResult);}
-</script>
-${cmdJs()}`;
+`;
 }
 
 function curatorPage() {
@@ -399,13 +247,13 @@ function curatorPage() {
   <h3>Strategy: Informed Serendipity</h3>
   <p style="font-size:.8rem;color:#666;margin-bottom:14px;line-height:1.6">80% random selection within quality+diversity constraints · 20% orphan rescue · 3-note clusters · No two notes from same domain · Different tag roots required</p>
   <div class="ctrl-row">
-    <button class="btn btn-primary" onclick="runCmd('curator-force','Curator --force')">Force generate 20 clusters</button>
-    <button class="btn btn-grey" onclick="runCmd('curator-refill','Curator --refill')">Refill if below threshold</button>
-    <button class="btn btn-grey" onclick="runCmd('curator-status','Curator status')">Status</button>
+    <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="curator-force" data-label="Curator --force">Force generate 20 clusters</button>
+    <button class="btn btn-grey" type="button" data-action="run-cmd" data-cmd="curator-refill" data-label="Curator --refill">Refill if below threshold</button>
+    <button class="btn btn-grey" type="button" data-action="run-cmd" data-cmd="curator-status" data-label="Curator status">Status</button>
   </div>
 </div>
 <div id="cmd-output"></div>
-${cmdJs()}`;
+`;
 }
 
 function narratorPage() {
@@ -421,22 +269,19 @@ function narratorPage() {
         <option value="5">5 — ambitious</option>
       </select>
     </div>
-    <button class="btn btn-primary" onclick="runLive()">▶ Run --live</button>
+    <button class="btn btn-primary" type="button" data-action="run-live">▶ Run --live</button>
     <span style="font-size:.75rem;color:#555">Result appears in Pending queue</span>
   </div>
 </div>
 <div class="ctrl-panel">
   <h3>Queue Mode</h3>
   <div class="ctrl-row">
-    <button class="btn btn-primary" onclick="runCmd('narrator-next','Narrator --next')">▶ Process next queued item</button>
-    <button class="btn btn-grey" onclick="runCmd('narrator-dry','Narrator --dry-run')">Dry run (show payload)</button>
+    <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="narrator-next" data-label="Narrator --next">▶ Process next queued item</button>
+    <button class="btn btn-grey" type="button" data-action="run-cmd" data-cmd="narrator-dry" data-label="Narrator --dry-run">Dry run (show payload)</button>
   </div>
 </div>
 <div id="cmd-output"></div>
-<script>
-function runLive(){fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd:'narrator-live',numSources:document.getElementById('ns-count').value})}).then(showCmdResult);}
-</script>
-${cmdJs()}`;
+`;
 }
 
 // ---------------------------------------------------------------------------
@@ -452,10 +297,10 @@ function queuePage(db, params) {
 
   const rows = items.map(item => {
     let noteIds=[];try{noteIds=JSON.parse(item.note_ids);}catch(_){}
-    const notes = noteIds.length ? db.prepare('SELECT id,title,word_count,tag_source FROM vault_notes WHERE id IN ('+noteIds.join(',')+')').all() : [];
+    const notes = noteIds.length ? db.prepare('SELECT id,title,word_count,tag_source FROM vault_notes WHERE id IN ('+inPlaceholders(noteIds)+')').all(...noteIds) : [];
 
     const noteCells = notes.map(n=>`
-      <div class="q-note" onclick="openNote(${n.id})">
+      <div class="q-note" data-action="open-note" data-id="${n.id}">
         <div class="qt">${n.s4?'<span class="s4-dot"></span>':''}`+escHtml(n.title.slice(0,60))+`</div>
         <div class="qm">${n.word_count}w · ${escHtml(n.tag_source||'')}</div>
       </div>`).join('');
@@ -468,8 +313,8 @@ function queuePage(db, params) {
       <div class="queue-row">
         ${padded}
         <div class="q-actions">
-          <button class="btn btn-primary" onclick="narrateId(${item.id})">▶ Narrate</button>
-          <button class="btn btn-grey" onclick="discardId(${item.id})">✕ Discard</button>
+          <button type="button" class="btn btn-primary" data-action="narrate" data-id="${item.id}">▶ Narrate</button>
+          <button type="button" class="btn btn-grey" data-action="discard" data-id="${item.id}">✕ Discard</button>
         </div>
       </div>
     </div>`;
@@ -483,17 +328,7 @@ function queuePage(db, params) {
 
   return `<p class="page-title">Narrative Queue — ${total} clusters awaiting narration</p>
 ${rows||'<div class="empty">Queue is empty. Run the Curator to fill it.</div>'}
-${pag}
-<script>
-function narrateId(id){
-  fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd:'narrator-id',id})})
-  .then(r=>r.json()).then(d=>alert(d.ok?'Narration started — check Pending queue':'Failed: '+d.error));
-}
-function discardId(id){
-  if(!confirm('Discard queue item '+id+'?'))return;
-  fetch('/api/queue/'+id+'/discard',{method:'POST'}).then(r=>{if(r.ok)location.reload();});
-}
-</script>`;
+${pag}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -612,25 +447,12 @@ function reportsPage() {
     <div class="report-card" id="rc-${r.id}">
       <h4>${escHtml(r.title)}</h4>
       <p>${escHtml(r.desc)}</p>
-      <button class="btn btn-primary" onclick="runReport('${r.id}')" style="font-size:.78rem;padding:5px 12px;">▶ Run</button>
+      <button type="button" class="btn btn-primary" data-action="run-report" data-report="${r.id}" style="font-size:.78rem;padding:5px 12px;">▶ Run</button>
       <div class="report-result" id="rr-${r.id}"></div>
     </div>`).join('');
 
   return `<p class="page-title">Reports — live database queries</p>
-<div class="report-grid">${cards}</div>
-<script>
-function runReport(id){
-  var el=document.getElementById('rr-'+id);
-  el.innerHTML='<span style="color:#555;font-size:.75rem">Running...</span>';
-  fetch('/api/reports/'+id).then(r=>r.json()).then(function(rows){
-    if(!rows||!rows.length){el.innerHTML='<span style="color:#555;font-size:.75rem">No results</span>';return;}
-    var cols=Object.keys(rows[0]);
-    var th=cols.map(c=>'<th>'+c+'</th>').join('');
-    var tb=rows.map(function(r){return '<tr>'+cols.map(c=>'<td>'+(r[c]===null?'':String(r[c]).slice(0,120))+'</td>').join('')+'</tr>';}).join('');
-    el.innerHTML='<table><thead><tr>'+th+'</tr></thead><tbody>'+tb+'</tbody></table>';
-  }).catch(function(e){el.innerHTML='<span style="color:#c86e6e;font-size:.75rem">Error: '+e.message+'</span>';});
-}
-</script>`;
+<div class="report-grid">${cards}</div>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -654,11 +476,15 @@ function notesPage(db, params) {
   if(filter==='article')      where+=" AND content_type='article'";
   if(filter==='note')         where+=" AND content_type='note'";
   if(filter==='stub')         where+=" AND content_type='stub'";
-  if(search) where+=" AND (title LIKE '%"+search.replace(/'/g,"''")+"%' OR first_paragraph LIKE '%"+search.replace(/'/g,"''")+"%')";
-
+  const bind = [];
+  if (search) {
+    where += ' AND (title LIKE ? OR first_paragraph LIKE ?)';
+    const q = '%' + search + '%';
+    bind.push(q, q);
+  }
   const orderBy=sort==='title'?'title ASC':sort==='date'?'file_mtime DESC':'word_count DESC';
-  const total=db.prepare('SELECT COUNT(*) as n FROM vault_notes '+where).get().n;
-  const notes=db.prepare('SELECT id,title,word_count,content_type,origin,first_paragraph,tag_source,classification_at,quarry_exclude FROM vault_notes '+where+' ORDER BY '+orderBy+' LIMIT ? OFFSET ?').all(PS,offset);
+  const total=db.prepare('SELECT COUNT(*) as n FROM vault_notes '+where).get(...bind).n;
+  const notes=db.prepare('SELECT id,title,word_count,content_type,origin,first_paragraph,tag_source,classification_at,quarry_exclude FROM vault_notes '+where+' ORDER BY '+orderBy+' LIMIT ? OFFSET ?').all(...bind, PS, offset);
   const s4ids=new Set(db.prepare('SELECT DISTINCT note_id FROM note_classifications WHERE switch_level=4').all().map(r=>r.note_id));
   const totalPages=Math.ceil(total/PS);
 
@@ -668,7 +494,7 @@ function notesPage(db, params) {
     const ex=(n.first_paragraph||'').slice(0,130).replace(/\n/g,' ');
     const s4=s4ids.has(n.id)?'<span class="s4-dot" title="Switch-4"></span>':'';
     const dim=n.quarry_exclude?' style="opacity:.4"':'';
-    return '<tr onclick="openNote('+n.id+')"'+dim+'><td><div class="nt">'+s4+escHtml(n.title)+'</div><div class="nx">'+escHtml(ex)+'</div></td><td class="nm">'+n.word_count+'w</td><td class="nm">'+escHtml(n.content_type)+'</td><td class="nm">'+escHtml(n.origin)+'</td><td class="ntag">'+escHtml(n.tag_source||'')+(n.classification_at?'<br><span style="color:#2a5a2a">✓</span>':'')+'</td></tr>';
+    return '<tr data-action="open-note" data-id="'+n.id+'"'+dim+'><td><div class="nt">'+s4+escHtml(n.title)+'</div><div class="nx">'+escHtml(ex)+'</div></td><td class="nm">'+n.word_count+'w</td><td class="nm">'+escHtml(n.content_type)+'</td><td class="nm">'+escHtml(n.origin)+'</td><td class="ntag">'+escHtml(n.tag_source||'')+(n.classification_at?'<br><span style="color:#2a5a2a">✓</span>':'')+'</td></tr>';
   }).join('');
 
   const fOpts=[['all','All'],['article','Articles'],['note','Notes'],['stub','Stubs'],['video','Video'],['classified','Classified'],['unclassified','Unclassified'],['s4','Switch-4'],['tagged','Tagged'],['untagged','Untagged'],['excluded','Excluded']];
@@ -693,6 +519,94 @@ function notesPage(db, params) {
 // ---------------------------------------------------------------------------
 // REVIEW PAGE
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// TAG REVIEW PAGE — HIL approval queue for Switch-3 tag suggestions.
+// Grouped by note so the reviewer sees full context: title, excerpt, every
+// proposed tag for that note with a checkbox. Approve writes into note_tags
+// (and tag_vocabulary if the tag is genuinely new); reject just marks the
+// proposal row so it never resurfaces. Bulk save, same pattern as reviewPage.
+// ---------------------------------------------------------------------------
+function reviewTagsPage(db, params) {
+  const page = Math.max(1, parseInt(params.get('page')||'1',10));
+  const PS = 40; // notes per page (each note can have several tag rows)
+  const offset = (page-1)*PS;
+
+  const totalNotes = db.prepare(
+    "SELECT COUNT(DISTINCT note_id) as n FROM note_tag_proposals WHERE status='pending'"
+  ).get().n;
+
+  const noteIds = db.prepare(
+    "SELECT DISTINCT note_id FROM note_tag_proposals WHERE status='pending' ORDER BY note_id DESC LIMIT ? OFFSET ?"
+  ).all(PS, offset).map(r => r.note_id);
+
+  const totalPages = Math.max(1, Math.ceil(totalNotes/PS));
+
+  const rows = noteIds.map(noteId => {
+    const note = db.prepare('SELECT title, first_paragraph, word_count FROM vault_notes WHERE id=?').get(noteId);
+    if (!note) return '';
+    const proposals = db.prepare(
+      "SELECT id, tag_full, in_vocabulary FROM note_tag_proposals WHERE note_id=? AND status='pending' ORDER BY tag_full"
+    ).all(noteId);
+    const excerpt = (note.first_paragraph||'').slice(0,160).replace(/\n/g,' ');
+
+    const tagChips = proposals.map(p => {
+      const vocabBadge = p.in_vocabulary ? '<span style="color:#3a5a3a;font-size:.68rem"> \u2713existing</span>' : '<span style="color:#8a6a2a;font-size:.68rem"> new</span>';
+      return '<label style="display:inline-flex;align-items:center;gap:4px;background:#141414;border:1px solid #333;border-radius:4px;padding:4px 8px;margin:2px;font-size:.82rem;cursor:pointer">'+
+        '<input type="checkbox" class="cb-tag" data-pid="'+p.id+'" checked>'+
+        escHtml(p.tag_full)+vocabBadge+'</label>';
+    }).join('');
+
+    return '<div class="card" style="margin-bottom:14px" id="note-'+noteId+'">'+
+      '<div class="card-header"><div class="nt" style="cursor:pointer" data-action="open-note" data-id="'+noteId+'">'+escHtml(note.title)+'</div><div class="nm">'+note.word_count+'w</div></div>'+
+      '<div class="card-body">'+
+      '<div class="nx" style="margin-bottom:10px">'+escHtml(excerpt)+'</div>'+
+      '<div>'+tagChips+'</div>'+
+      '<div style="margin-top:10px">'+
+      '<input type="text" class="custom-tags-input" data-note="'+noteId+'" placeholder="Custom tag(s), comma-separated e.g. humour/nsfw, miscellany" '+
+      'style="width:100%;background:#0f0f0f;border:1px solid #333;color:#aaa;padding:6px 10px;border-radius:4px;font-size:.8rem;font-family:Georgia,serif">'+
+      '</div>'+
+      '</div></div>';
+  }).join('');
+
+  const toolbar = '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px;background:#141414;border:1px solid #2a2a2a;border-radius:6px;padding:12px 16px">'+
+    '<span style="font-size:.8rem;color:#888">Checked = approve. Uncheck to reject.</span>'+
+    '<button class="btn-save" onclick="submitTagReview()">Submit Page</button>'+
+    '<span class="save-status" id="save-status"></span>'+
+    '</div>';
+
+  let pag = '<div class="pagination"><span>'+totalNotes+' notes pending, p'+page+'/'+totalPages+'</span>';
+  if (page>1) pag += '<a href="/review-tags?page='+(page-1)+'">\u2039</a>';
+  if (page<totalPages) pag += '<a href="/review-tags?page='+(page+1)+'">\u203a</a>';
+  pag += '</div>';
+
+  const script = `<script>
+function submitTagReview(){
+  var approve=[], reject=[], custom={};
+  document.querySelectorAll('.cb-tag').forEach(function(cb){
+    var pid=parseInt(cb.dataset.pid,10);
+    if(cb.checked) approve.push(pid); else reject.push(pid);
+  });
+  document.querySelectorAll('.custom-tags-input').forEach(function(inp){
+    var raw=inp.value.trim();
+    if(!raw) return;
+    var noteId=inp.dataset.note;
+    var tags=raw.split(',').map(function(t){return t.trim();}).filter(function(t){return t.length>0;});
+    if(tags.length) custom[noteId]=tags;
+  });
+  document.getElementById('save-status').textContent='Saving...';
+  fetch('/api/tags/review',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({approve:approve,reject:reject,custom:custom})})
+  .then(r=>r.json()).then(d=>{
+    document.getElementById('save-status').textContent='Approved '+d.approved+', rejected '+d.rejected+', custom '+d.custom+' \u2713';
+    setTimeout(function(){ window.location.reload(); }, 700);
+  })
+  .catch(()=>{document.getElementById('save-status').textContent='Save failed';});
+}
+</script>`;
+
+  return '<p class="page-title">Tag Review \u2014 approve or reject Switch-3 tag suggestions</p>'+
+    toolbar + (rows || '<div class="empty">No pending tag proposals.</div>') + pag + script;
+}
+
 function reviewPage(db, params) {
   const page=Math.max(1,parseInt(params.get('page')||'1',10));
   const filter=params.get('filter')||'all';
@@ -704,10 +618,14 @@ function reviewPage(db, params) {
   if(filter==='untagged') where+=' AND has_tags=0';
   if(filter==='excluded') where+=' AND quarry_exclude=1';
   if(filter==='short')    where+=' AND word_count<300';
-  if(search) where+=" AND (title LIKE '%"+search.replace(/'/g,"''")+"%' OR first_paragraph LIKE '%"+search.replace(/'/g,"''")+"%')";
-
-  const total=db.prepare('SELECT COUNT(*) as n FROM vault_notes '+where).get().n;
-  const notes=db.prepare('SELECT id,title,word_count,content_type,origin,first_paragraph,quarry_exclude,tag_source FROM vault_notes '+where+' ORDER BY origin,word_count DESC LIMIT ? OFFSET ?').all(PS,offset);
+  const bind = [];
+  if (search) {
+    where += ' AND (title LIKE ? OR first_paragraph LIKE ?)';
+    const q = '%' + search + '%';
+    bind.push(q, q);
+  }
+  const total=db.prepare('SELECT COUNT(*) as n FROM vault_notes '+where).get(...bind).n;
+  const notes=db.prepare('SELECT id,title,word_count,content_type,origin,first_paragraph,quarry_exclude,tag_source FROM vault_notes '+where+' ORDER BY origin,word_count DESC LIMIT ? OFFSET ?').all(...bind, PS, offset);
   const totalPages=Math.ceil(total/PS);
 
   function pl(p){return '/review?page='+p+'&filter='+encodeURIComponent(filter)+'&q='+encodeURIComponent(search);}
@@ -716,7 +634,7 @@ function reviewPage(db, params) {
     const ex=(n.first_paragraph||'').slice(0,150).replace(/\n/g,' ');
     const ch=n.quarry_exclude?'checked':'';
     const cl=n.quarry_exclude?'tr-excluded':'';
-    return '<tr class="'+cl+'" id="row-'+n.id+'"><td><input type="checkbox" class="cb-exclude" id="cb-'+n.id+'" '+ch+' onchange="markChanged('+n.id+')" data-id="'+n.id+'"></td><td><div class="nt">'+escHtml(n.title)+'</div><div class="nx">'+escHtml(ex)+'</div></td><td class="nm">'+n.word_count+'w</td><td class="nm">'+escHtml(n.origin)+'</td><td class="nm">'+escHtml(n.content_type)+'</td><td class="ntag">'+escHtml(n.tag_source||'')+'</td></tr>';
+    return '<tr class="'+cl+'" id="row-'+n.id+'"><td><input type="checkbox" class="cb-exclude" id="cb-'+n.id+'" '+ch+' onchange="markChanged('+n.id+')" data-id="'+n.id+'"></td><td><div class="nt" style="cursor:pointer" data-action="open-note" data-id="'+n.id+'">'+escHtml(n.title)+'</div><div class="nx">'+escHtml(ex)+'</div></td><td class="nm">'+n.word_count+'w</td><td class="nm">'+escHtml(n.origin)+'</td><td class="nm">'+escHtml(n.content_type)+'</td><td class="ntag">'+escHtml(n.tag_source||'')+'</td></tr>';
   }).join('');
 
   const fOpts=[['all','All'],['obsidian','Obsidian'],['untagged','Untagged'],['short','Short <300w'],['excluded','Excluded']];
@@ -794,42 +712,6 @@ function statsPage(db) {
 </div>`;
 }
 
-// ---------------------------------------------------------------------------
-// CMD JS — shared "run command + show log" client script
-// ---------------------------------------------------------------------------
-function cmdJs() {
-  return `<script>
-var _logInterval=null;
-function runCmd(cmd,label,extra){
-  var el=document.getElementById('cmd-output');
-  el.innerHTML='<div class="log-box" id="log-box">Starting '+label+'...</div>';
-  fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({cmd},extra||{}))})
-  .then(function(r){return r.json();})
-  .then(function(d){
-    var el=document.getElementById('cmd-output');
-    if(d.ok){
-      el.innerHTML+='<div style="color:#6ec86e;font-size:.78rem;margin-top:6px">✓ '+d.msg+'</div>';
-      startLogPoll(d.log||'tagger.log');
-    } else {
-      el.innerHTML+='<div style="color:#c86e6e;font-size:.78rem;margin-top:6px">✗ '+(d.error||'unknown error')+'</div>';
-    }
-  });
-}
-function showCmdResult(r){return r.json().then(function(d){var el=document.getElementById('cmd-output');if(!el)return;if(d.ok){el.innerHTML+='<div style="color:#6ec86e;font-size:.78rem;margin-top:6px">✓ '+d.msg+'</div>';startLogPoll(d.log||'tagger.log');}else{el.innerHTML+='<div style="color:#c86e6e;font-size:.78rem;margin-top:6px">✗ '+(d.error||'unknown error')+'</div>';}});}
-function startLogPoll(logFile){
-  if(_logInterval)clearInterval(_logInterval);
-  var lf=logFile||'tagger.log';
-  _logInterval=setInterval(function(){
-    fetch('/api/log?file='+encodeURIComponent(lf)).then(function(r){return r.text();}).then(function(t){
-      var b=document.getElementById('log-box');if(b){b.textContent=t;b.scrollTop=b.scrollHeight;}
-    });
-  },3000);
-  // Stop polling after 10 minutes
-  setTimeout(function(){clearInterval(_logInterval);},10*60*1000);
-}
-</script>`;
-}
-
 const NODE  = process.execPath; // full path to the node binary running this server
 const FLAGS = ['--no-warnings'];
 
@@ -897,6 +779,23 @@ function router(req, res) {
   const method = req.method;
   const params = new URLSearchParams(req.url.split('?')[1]||'');
 
+  // Static assets (next to server.js)
+  if (method === 'GET' && (url === '/quarry.css' || url === '/quarry.js')) {
+    const fp = path.join(HERE, path.basename(url));
+    try {
+      const body = fs.readFileSync(fp);
+      res.writeHead(200, {
+        'Content-Type': url.endsWith('.css') ? 'text/css; charset=utf-8' : 'application/javascript; charset=utf-8',
+        'Cache-Control': 'no-cache',
+      });
+      res.end(body);
+    } catch (e) {
+      res.writeHead(404);
+      res.end('not found: place quarry.css / quarry.js next to server.js');
+    }
+    return;
+  }
+
   function send(content, active) {
     res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});
     res.end(shell(active, content, '/'+active.toLowerCase().replace(/ /g,'-')));
@@ -935,10 +834,85 @@ function router(req, res) {
   if (method==='GET' && url==='/stats')    { const db=openDb();ensureSchema(db);const c=statsPage(db);db.close(); sendHtml('Stats',c,'/stats'); return; }
   if (method==='GET' && /^\/queue/.test(url)) { const db=openDb();ensureSchema(db);const c=queuePage(db,params);db.close(); sendHtml('Queue',c,'/queue'); return; }
   if (method==='GET' && /^\/notes/.test(url)) { const db=openDb();ensureSchema(db);const c=notesPage(db,params);db.close(); sendHtml('Browse',c,'/notes'); return; }
+  if (method==='GET' && /^\/review-tags/.test(url)){ const db=openDb();ensureSchema(db);const c=reviewTagsPage(db,params);db.close(); sendHtml('Tag Review',c,'/review-tags'); return; }
   if (method==='GET' && /^\/review/.test(url)){ const db=openDb();ensureSchema(db);const c=reviewPage(db,params);db.close(); sendHtml('Review',c,'/review'); return; }
+
+  // --- API: approve/reject tag proposals ---
+  if (method==='POST' && url==='/api/tags/review') {
+    if (!requireToken(req, res)) return;
+    readBody(req, function(b) {
+      var data={}; try{ data=JSON.parse(b); }catch(_){}
+      const approve = data.approve || [];
+      const reject  = data.reject  || [];
+      const custom  = data.custom  || {};
+      const db = openDb(); ensureSchema(db);
+      const now = new Date().toISOString();
+      let approvedCount = 0, rejectedCount = 0, customCount = 0;
+
+      // Same shape-sanity rules as tagger.js's isSaneTagShape - kept minimal
+      // and duplicated here since server.js and tagger.js don't share code.
+      const TAG_STOPWORDS = new Set(['and','in','for','with','the','by','at','to','from','as','is','was','a','an']);
+      function isSaneTag(t) {
+        if (!t || t.length < 2 || t.length > 35) return false;
+        if (/[,.]/.test(t)) return false;
+        if (/^[\d\u2013-]/.test(t)) return false;
+        const parts = t.split('/').join('-').split('-');
+        if (parts.length > 4) return false;
+        if (parts.some(p => TAG_STOPWORDS.has(p))) return false;
+        return true;
+      }
+
+      db.exec('BEGIN');
+      try {
+        for (const noteId of Object.keys(custom)) {
+          const tags = custom[noteId] || [];
+          for (const raw of tags) {
+            const clean = raw.trim().toLowerCase().replace(/\s+/g,'-');
+            if (!isSaneTag(clean)) continue;
+            const t = insertNoteTag(db, noteId, clean, { markVocabApproved: true });
+            if (!t) continue;
+            db.prepare("UPDATE vault_notes SET has_tags=1, tag_source='switch3-hil' WHERE id=?").run(noteId);
+            customCount++;
+          }
+        }
+        for (const pid of approve) {
+          const p = db.prepare('SELECT * FROM note_tag_proposals WHERE id=?').get(pid);
+          if (!p || p.status !== 'pending') continue;
+
+          // insertNoteTag handles both tag_vocabulary promotion and the
+          // note_tags row - single shared code path with the custom-tag
+          // branch above and with tagger.js's switch-vocab writer.
+          insertNoteTag(db, p.note_id, p.tag_full, { markVocabApproved: true });
+          db.prepare("UPDATE vault_notes SET has_tags=1, tag_source='switch3-hil' WHERE id=?").run(p.note_id);
+
+          db.prepare("UPDATE note_tag_proposals SET status='approved', reviewed_at=? WHERE id=?").run(now, pid);
+          approvedCount++;
+        }
+        for (const pid of reject) {
+          const p = db.prepare('SELECT status FROM note_tag_proposals WHERE id=?').get(pid);
+          if (!p || p.status !== 'pending') continue;
+          db.prepare("UPDATE note_tag_proposals SET status='rejected', reviewed_at=? WHERE id=?").run(now, pid);
+          rejectedCount++;
+        }
+        db.exec('COMMIT');
+      } catch(e) {
+        db.exec('ROLLBACK');
+        db.close();
+        res.writeHead(500,{'Content-Type':'application/json'});
+        res.end(JSON.stringify({error:e.message}));
+        return;
+      }
+
+      db.close();
+      res.writeHead(200,{'Content-Type':'application/json'});
+      res.end(JSON.stringify({ok:true, approved:approvedCount, rejected:rejectedCount, custom:customCount}));
+    });
+    return;
+  }
 
   // --- API: run command ---
   if (method==='POST' && url==='/api/run') {
+    if (!requireToken(req, res)) return;
     readBody(req, function(b) {
       var body={};try{body=JSON.parse(b);}catch(_){}
       try {
@@ -983,6 +957,7 @@ function router(req, res) {
   // --- API: discard queue item ---
   const discardMatch = url.match(/^\/api\/queue\/(\d+)\/discard$/);
   if (method==='POST' && discardMatch) {
+    if (!requireToken(req, res)) return;
     const db=openDb();
     db.prepare("UPDATE narrative_queue SET status='failed' WHERE id=?").run(parseInt(discardMatch[1],10));
     db.close(); json({ok:true}); return;
@@ -994,26 +969,49 @@ function router(req, res) {
     const id=parseInt(noteMatch[1],10);
     const db=openDb();ensureSchema(db);
     const note=db.prepare('SELECT id,title,filepath,source_url,word_count,content_type FROM vault_notes WHERE id=?').get(id);
-    if (!note){db.close();res.writeHead(404);res.end('{}');return;}
+    if (!note){db.close();res.writeHead(404);res.end(JSON.stringify({}));return;}
     const essay=db.prepare("SELECT claim FROM note_classifications WHERE note_id=? AND bucket='essay' ORDER BY switch_level DESC LIMIT 1").get(id);
     const verified=db.prepare("SELECT claim FROM note_classifications WHERE note_id=? AND bucket='verified' ORDER BY switch_level DESC LIMIT 12").all(id).map(r=>r.claim);
+    const trivia=db.prepare("SELECT claim FROM note_classifications WHERE note_id=? AND bucket='trivia' ORDER BY switch_level DESC LIMIT 20").all(id).map(r=>r.claim);
+    const tags=db.prepare('SELECT tag_full FROM note_tags WHERE note_id=? ORDER BY tag_full').all(id).map(r=>r.tag_full);
     db.close();
     var body='';
     try{body=fs.readFileSync(note.filepath,'utf8').replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/,'').replace(/_Created at[^_]*\._/g,'').replace(/_Source URL:[^_]*\._/g,'').trim();}catch(_){}
-    json(Object.assign({},note,{body,essay:essay?essay.claim:null,verified}));
+    json(Object.assign({},note,{body,essay:essay?essay.claim:null,verified,trivia,tags}));
+    return;
+  }
+
+  // --- API: remove a single tag from a note ---
+  const delTagMatch = url.match(/^\/api\/notes\/(\d+)\/tags\/delete$/);
+  if (method==='POST' && delTagMatch) {
+    if (!requireToken(req, res)) return;
+    const id = parseInt(delTagMatch[1],10);
+    readBody(req, function(b) {
+      var data={}; try{ data=JSON.parse(b); }catch(_){}
+      const tag = (data.tag||'').trim();
+      if (!tag) { res.writeHead(400,{'Content-Type':'application/json'}); res.end(JSON.stringify({error:'missing tag'})); return; }
+      const db = openDb(); ensureSchema(db);
+      db.prepare('DELETE FROM note_tags WHERE note_id=? AND tag_full=?').run(id, tag);
+      const remaining = db.prepare('SELECT COUNT(*) as n FROM note_tags WHERE note_id=?').get(id).n;
+      if (remaining===0) db.prepare('UPDATE vault_notes SET has_tags=0 WHERE id=?').run(id);
+      db.close();
+      res.writeHead(200,{'Content-Type':'application/json'});
+      res.end(JSON.stringify({ok:true}));
+    });
     return;
   }
 
   // --- API: save note ---
   const saveMatch = url.match(/^\/api\/notes\/(\d+)\/save$/);
   if (method==='POST' && saveMatch) {
+    if (!requireToken(req, res)) return;
     const id=parseInt(saveMatch[1],10);
     readBody(req,function(b){
       var data={};try{data=JSON.parse(b);}catch(_){}
       const db=openDb();
       const note=db.prepare('SELECT filepath FROM vault_notes WHERE id=?').get(id);
       db.close();
-      if(!note){res.writeHead(404);res.end('{"error":"not found"}');return;}
+      if(!note){res.writeHead(404);res.end(JSON.stringify({error:'not found'}));return;}
       try{
         const orig=fs.readFileSync(note.filepath,'utf8');
         const fm=(orig.match(/^(---\r?\n[\s\S]*?\r?\n---\r?\n?)/)||[''])[0];
@@ -1030,12 +1028,14 @@ function router(req, res) {
   // --- API: approve/reject narrative ---
   const approveMatch = url.match(/^\/api\/narratives\/(\d+)\/approve$/);
   if (method==='POST' && approveMatch) {
+    if (!requireToken(req, res)) return;
     const db=openDb();ensureSchema(db);
     db.prepare("UPDATE narratives SET approval_status='approved',approved_at=? WHERE id=?").run(new Date().toISOString(),parseInt(approveMatch[1],10));
     db.close();json({ok:true});return;
   }
   const rejectMatch = url.match(/^\/api\/narratives\/(\d+)\/reject$/);
   if (method==='POST' && rejectMatch) {
+    if (!requireToken(req, res)) return;
     readBody(req,function(b){
       var reason='';try{reason=JSON.parse(b).reason||'';}catch(_){}
       const db=openDb();ensureSchema(db);
@@ -1046,6 +1046,7 @@ function router(req, res) {
 
   // --- API: save exclusions ---
   if (method==='POST' && url==='/api/notes/exclude') {
+    if (!requireToken(req, res)) return;
     readBody(req,function(b){
       var ch={};try{ch=JSON.parse(b);}catch(_){}
       const db=openDb();ensureSchema(db);
@@ -1063,4 +1064,6 @@ const server=http.createServer(router);
 server.listen(PORT,'0.0.0.0',function(){
   console.log('🪨 QUARRY server running at http://localhost:'+PORT);
   console.log('   Nav: / /approved /vault /tagger /curator /queue /narrator /reports /notes /review /stats');
+  if (API_TOKEN) console.log('   API token required (QUARRY_API_TOKEN) on mutating routes');
+  else console.log('   No API token set — mutating routes open (set QUARRY_API_TOKEN to lock)');
 });

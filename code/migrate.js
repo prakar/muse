@@ -242,6 +242,31 @@ const MIGRATIONS = [
         log('  vault_notes.quarry_exclude already exists — skipping');
       }
     }
+  },
+
+  {
+    id:   'M009',
+    desc: 'Add note_tag_proposals table for Switch-3 HIL tag review',
+    up: function(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS note_tag_proposals (
+          id              INTEGER PRIMARY KEY,
+          note_id         INTEGER NOT NULL REFERENCES vault_notes(id),
+          tag_full        TEXT NOT NULL,
+          tag_root        TEXT NOT NULL,
+          tag_leaf        TEXT NOT NULL,
+          is_hierarchical INTEGER DEFAULT 0,
+          in_vocabulary   INTEGER DEFAULT 0,
+          status          TEXT DEFAULT 'pending',
+          created_at      TEXT NOT NULL,
+          reviewed_at     TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_proposals_note ON note_tag_proposals(note_id);
+        CREATE INDEX IF NOT EXISTS idx_proposals_status ON note_tag_proposals(status);
+        CREATE INDEX IF NOT EXISTS idx_proposals_tag ON note_tag_proposals(tag_full);
+      `);
+      log('  Created note_tag_proposals table (or already exists)');
+    }
   }
 
 ];
