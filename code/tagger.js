@@ -13,7 +13,7 @@ const path  = require('path');
 const https = require('https');
 const { DatabaseSync } = require('node:sqlite');
 const { insertNoteTags } = require('./lib/tags');
-const { resolveModel, fetchFreeModels, getNextFreeModel, resetFreeModelIndex } = require('failsafe-llm-model-resolver');
+const { resolveModel, fetchFreeModels, getNextFreeModel, resetFreeModelIndex, markModelBad } = require('failsafe-llm-model-resolver');
 
 // ---------------------------------------------------------------------------
 // CONFIG
@@ -605,22 +605,42 @@ async function callOpenRouter(prompt) {
 
 async function callGemini(prompt) {
   if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not set');
-  // NOTE: as of this integration, failsafe-llm-model-resolver's Gemini path has
-  // a known bug (scoping error in its internal filter) that always falls
-  // through to the pinned fallback below - live Gemini resolution doesn't yet
-  // work end-to-end. Safe either way: resolveModel's own try/catch guarantees
-  // a usable model id regardless, and GEMINI_MODEL is that fallback.
-  const resolved = await resolveModel('gemini', GEMINI_API_KEY, { fallback: GEMINI_MODEL });
+  let resolved = await resolveModel('gemini', GEMINI_API_KEY, { fallback: GEMINI_MODEL });
   log('info', 'Gemini model resolved', resolved);
-  const res = await httpPost('generativelanguage.googleapis.com',
-    '/v1beta/models/'+resolved.id+':generateContent?key='+GEMINI_API_KEY, {},
-    {
-      system_instruction: {parts:[{text:S3_SYSTEM}]},
-      contents: [{role:'user',parts:[{text:prompt}]}],
-      generationConfig: {maxOutputTokens:8192, temperature:0.1}
-    }
-  );
-  if (res.status!==200) throw new Error('Gemini error '+res.status+': '+JSON.stringify(res.body).slice(0,200));
+
+  async function sendWith(modelId) {
+    const res = await httpPost('generativelanguage.googleapis.com',
+      '/v1beta/models/'+modelId+':generateContent?key='+GEMINI_API_KEY, {},
+      {
+        system_instruction: {parts:[{text:S3_SYSTEM}]},
+        contents: [{role:'user',parts:[{text:prompt}]}],
+        generationConfig: {maxOutputTokens:8192, temperature:0.1}
+      }
+    );
+    if (res.status!==200) throw new Error('Gemini error '+res.status+': '+JSON.stringify(res.body).slice(0,200));
+    return res;
+  }
+
+  // A model can be genuinely listed in the live /models response and still
+  // fail the actual generateContent call - Gemini has returned 404 "no
+  // longer available to new users" for models its own listing still shows,
+  // an account-tier mismatch resolveModel's own try/catch can't see (that
+  // only wraps the list-fetch/selection step, not this call). markModelBad
+  // + re-resolving picks the NEXT live candidate (not just the one static
+  // pinned fallback), and - since resolveModel checks the known-bad set
+  // internally - every other call in this same process benefits from this
+  // discovery too, not just this one retry.
+  let res;
+  try {
+    res = await sendWith(resolved.id);
+  } catch (e) {
+    log('warn', 'Gemini resolved model failed, marking bad and re-resolving', { failedModel: resolved.id, err: e.message });
+    markModelBad('gemini', resolved.id);
+    resolved = await resolveModel('gemini', GEMINI_API_KEY, { fallback: GEMINI_MODEL });
+    log('info', 'Gemini model re-resolved after failure', resolved);
+    res = await sendWith(resolved.id); // let this one throw for real if it also fails
+  }
+
   const text  = ((((res.body.candidates||[])[0]||{}).content||{}).parts||[]).map(p=>p.text||'').join('');
   const usage = res.body.usageMetadata||{};
   return {text, tokensIn:usage.promptTokenCount||0, tokensOut:usage.candidatesTokenCount||0, provider:'gemini'};
@@ -667,11 +687,17 @@ async function callGrok(prompt) {
 }
 
 // Mindful-wc uses higher output limit, warmer temperature, longer timeout, and retry
-async function callGeminiMindful(prompt, attempt) {
+async function callGeminiMindful(prompt, attempt, modelRetried) {
   if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not set');
   attempt = attempt || 1;
   const MAX_ATTEMPTS = 3;
   const TIMEOUT_MS   = 5 * 60 * 1000; // 5 minutes — large outputs take time
+
+  // resolveModel checks the process-wide known-bad set internally (see
+  // markModelBad in failsafe-llm-model-resolver), so once a model fails once
+  // below, this call automatically gets the next-best live candidate on the
+  // retry - no need to force a specific id here.
+  const resolved = await resolveModel('gemini', GEMINI_API_KEY, { fallback: GEMINI_MODEL });
 
   return new Promise(function(resolve, reject) {
     const bodyStr = JSON.stringify({
@@ -681,7 +707,7 @@ async function callGeminiMindful(prompt, attempt) {
 
     const req = require('https').request({
       hostname: 'generativelanguage.googleapis.com',
-      path:     '/v1beta/models/'+GEMINI_MODEL+':generateContent?key='+GEMINI_API_KEY,
+      path:     '/v1beta/models/'+resolved.id+':generateContent?key='+GEMINI_API_KEY,
       method:   'POST',
       headers:  {'Content-Type':'application/json','Content-Length':Buffer.byteLength(bodyStr)}
     }, function(res) {
@@ -691,6 +717,22 @@ async function callGeminiMindful(prompt, attempt) {
         try {
           const body      = JSON.parse(data);
           if (res.statusCode !== 200) {
+            // A model can pass live resolution and still fail the actual
+            // call - e.g. Gemini returning 404 "no longer available to new
+            // users" for a model its own /models listing still shows
+            // (account-tier mismatch, not something resolveModel's own
+            // try/catch can see - that only wraps the list-fetch/selection
+            // step, not this call). markModelBad + one retry picks the next
+            // live candidate and benefits every other call in this process
+            // too. Bounded to a single retry (modelRetried) - if the SECOND
+            // pick also fails, fail loudly rather than keep chaining through
+            // every live model in the list.
+            if (!modelRetried) {
+              log('warn', 'Gemini mindful resolved model failed, marking bad and re-resolving', { failedModel: resolved.id, status: res.statusCode });
+              markModelBad('gemini', resolved.id);
+              callGeminiMindful(prompt, attempt, true).then(resolve).catch(reject);
+              return;
+            }
             reject(new Error('Gemini mindful error '+res.statusCode+': '+JSON.stringify(body).slice(0,200)));
             return;
           }
