@@ -52,6 +52,23 @@ function enrichNarrative(db, n) {
 function escHtml(s) {
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+
+// Plain-language labels for the tag_source column - the raw DB values
+// (switchvocab, switch3, switch3-hil, original) are Quarry-internal
+// history, not self-explanatory. Single lookup used everywhere a note's
+// tag provenance is shown, so a renamed pass never drifts out of sync
+// with what the UI displays. See the Help page's glossary for the
+// full explanation of each.
+const TAG_SOURCE_LABELS = {
+  'original':    'Original',
+  'switchvocab': 'Quick Match',
+  'switch3':     'AI (pending)',
+  'switch3-hil': 'AI (approved)',
+};
+function friendlyTagSource(src) {
+  if (!src) return '';
+  return TAG_SOURCE_LABELS[src] || src;
+}
 function renderDate(iso) {
   if (!iso) return '';
   try { return new Date(iso).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}); } catch(_) { return iso.slice(0,10); }
@@ -196,9 +213,10 @@ function vaultPage() {
   </div>
 </div>
 <div class="ctrl-panel">
-  <h3>Word Count Sync</h3>
+  <h3>Recount Word Counts <span style="color:#666;font-weight:normal;font-family:monospace;font-size:.75rem">(sync-wc)</span></h3>
+  <p style="color:#666;font-size:.78rem;margin-bottom:10px">Recounts every note's word count directly from the files on disk. Run this if word counts look stale after a manual edit outside the normal git-pull flow.</p>
   <div class="ctrl-row">
-    <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="sync-wc" data-label="Sync word counts">sync-wc — recount from filesystem</button>
+    <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="sync-wc" data-label="Recount word counts">Recount from filesystem</button>
   </div>
 </div>
 <div id="cmd-output"></div>
@@ -207,46 +225,65 @@ function vaultPage() {
 
 function taggerPage() {
   return `<p class="page-title">Tagger — classify and tag vault notes</p>
+
 <div class="ctrl-panel">
-  <h3>Switch-Vocab — zero API cost</h3>
-  <p style="color:#666;font-size:.78rem;margin-bottom:10px">Matches untagged notes against the canonical tag_vocabulary. Replaces the old Switch-1/Switch-2 split - one DB-driven pass, no hardcoded keyword map.</p>
+  <h3>1. Quick Tag Match <span style="color:#666;font-weight:normal;font-family:monospace;font-size:.75rem">(switch-vocab)</span></h3>
+  <p style="color:#666;font-size:.78rem;margin-bottom:10px">Free, no AI call. Matches each untagged note's filename/title/first paragraph against tags you already have in the canonical vocabulary. Fast, zero cost, but only ever reuses existing tags - never invents anything new. Good first pass before spending on the AI passes below.</p>
   <div class="ctrl-row">
-    <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="sw-vocab" data-label="Switch-Vocab">Run Switch-Vocab</button>
+    <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="sw-vocab" data-label="Quick Tag Match">Run Quick Tag Match</button>
   </div>
 </div>
+
 <div class="ctrl-panel">
-  <h3>Switch-3 — OpenRouter free → Gemini fallback</h3>
+  <h3>2. AI Tag Suggestions + Facts &amp; Trivia <span style="color:#666;font-weight:normal;font-family:monospace;font-size:.75rem">(switch-3)</span></h3>
+  <p style="color:#666;font-size:.78rem;margin-bottom:10px">The main AI pass. Reads each untagged/unclassified note, proposes tags (landing in the Tag Review queue - nothing is applied automatically), and extracts verified facts + trivia for narrative generation. This is what most of your API spend goes to.</p>
   <div class="ctrl-row">
     <div class="field"><label>Limit:</label><input id="s3-limit" type="number" value="500" min="1" max="5000"></div>
     <div class="field"><label>Provider:</label><select id="s3-prov"><option value="grok">grok</option><option value="openrouter">openrouter</option><option value="gemini">gemini</option><option value="claude">claude</option></select></div>
-    <button class="btn btn-primary" type="button" data-action="run-s3">Run Switch-3</button>
+    <button class="btn btn-primary" type="button" data-action="run-s3">Run AI Tag Suggestions</button>
   </div>
 </div>
+
 <div class="ctrl-panel">
-  <h3>Switch-4 — full document classification</h3>
-  <p style="color:#666;font-size:.78rem;margin-bottom:10px">Sends the ENTIRE note body (no truncation). Restricted to large-context-window providers only - free OpenRouter models can silently truncate long documents.</p>
+  <h3>3. AI Tag Correction <span style="color:#666;font-weight:normal;font-family:monospace;font-size:.75rem">(switch-3-retag)</span></h3>
+  <p style="color:#666;font-size:.78rem;margin-bottom:10px">Re-reviews notes that ALREADY have tags (real or still-pending in the Tag Review queue) and corrects them against the current ontology rules - drops attribution tags, collapses redundant categories, fixes bad hierarchy, replaces overly-specific instance tags with the right general category. Old pending suggestions for a note are marked superseded and replaced by the corrected set, so the review queue never shows both versions at once. Does not touch facts/trivia. Use this after tightening the ontology rules, or whenever a batch of AI tag suggestions looks systematically off.</p>
+  <div class="ctrl-row">
+    <div class="field"><label>Limit:</label><input id="retag-limit" type="number" value="500" min="1" max="5000"></div>
+    <div class="field"><label>Provider:</label><select id="retag-prov"><option value="grok">grok</option><option value="openrouter">openrouter</option><option value="gemini">gemini</option><option value="claude">claude</option></select></div>
+    <button class="btn btn-primary" type="button" data-action="run-retag">Run AI Tag Correction</button>
+  </div>
+</div>
+
+<div class="ctrl-panel">
+  <h3>4. Full-Document Deep Read <span style="color:#666;font-weight:normal;font-family:monospace;font-size:.75rem">(switch-4)</span></h3>
+  <p style="color:#666;font-size:.78rem;margin-bottom:10px">Sends the ENTIRE note body, no truncation - for your longest/richest notes where a partial read would miss the point. Restricted to large-context-window providers only; a free OpenRouter model can silently truncate a long document and give a shallow read without telling you.</p>
   <div class="ctrl-row">
     <div class="field"><label>Limit:</label><input id="s4-limit" type="number" value="20" min="1" max="500"></div>
     <div class="field"><label>Provider:</label><select id="s4-prov"><option value="gemini">gemini</option><option value="grok">grok</option></select></div>
-    <button class="btn btn-primary" type="button" data-action="run-s4">Run Switch-4</button>
-    <button class="btn btn-grey" type="button" data-action="run-cmd" data-cmd="sw4-dry" data-label="Switch-4 dry run">Dry run</button>
+    <button class="btn btn-primary" type="button" data-action="run-s4">Run Full-Document Deep Read</button>
+    <button class="btn btn-grey" type="button" data-action="run-cmd" data-cmd="sw4-dry" data-label="Full-Document dry run">Dry run</button>
   </div>
 </div>
+
 <div class="ctrl-panel">
-  <h3>Mindful-WC — compress overlong notes (>15K words)</h3>
+  <h3>5. Compress Overlong Notes <span style="color:#666;font-weight:normal;font-family:monospace;font-size:.75rem">(mindful-wc)</span></h3>
+  <p style="color:#666;font-size:.78rem;margin-bottom:10px">For notes over 15,000 words - summarizes them down to a manageable size so later AI passes can afford to read the whole thing.</p>
   <div class="ctrl-row">
     <div class="field"><label>Limit:</label><input id="mwc-limit" type="number" value="5" min="1" max="50"></div>
-    <button class="btn btn-primary" type="button" data-action="run-mwc">Run mindful-wc</button>
-    <button class="btn btn-grey" type="button" data-action="run-cmd" data-cmd="mwc-dry" data-label="Mindful-WC dry run">Dry run (candidates list)</button>
+    <button class="btn btn-primary" type="button" data-action="run-mwc">Run Compression</button>
+    <button class="btn btn-grey" type="button" data-action="run-cmd" data-cmd="mwc-dry" data-label="Compression dry run">Dry run (candidates list)</button>
   </div>
 </div>
+
 <div class="ctrl-panel">
-  <h3>Video Link Extraction</h3>
+  <h3>6. Extract Video Links</h3>
+  <p style="color:#666;font-size:.78rem;margin-bottom:10px">Scans every note for embedded video URLs (YouTube, Vimeo, etc) and stores them for the Video Links report. No AI, just pattern matching.</p>
   <div class="ctrl-row">
     <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="extract-video" data-label="Extract video links">Extract video links from all notes</button>
     <button class="btn btn-grey" type="button" data-action="run-cmd" data-cmd="extract-video-dry" data-label="Extract video links dry run">Dry run</button>
   </div>
 </div>
+
 <div id="cmd-output"></div>
 `;
 }
@@ -312,7 +349,7 @@ function queuePage(db, params) {
     const noteCells = notes.map(n=>`
       <div class="q-note" data-action="open-note" data-id="${n.id}">
         <div class="qt">${n.s4?'<span class="s4-dot"></span>':''}`+escHtml(n.title.slice(0,60))+`</div>
-        <div class="qm">${n.word_count}w · ${escHtml(n.tag_source||'')}</div>
+        <div class="qm">${n.word_count}w · ${escHtml(friendlyTagSource(n.tag_source))}</div>
       </div>`).join('');
 
     // pad to 3 cells if fewer notes
@@ -504,7 +541,7 @@ function notesPage(db, params) {
     const ex=(n.first_paragraph||'').slice(0,130).replace(/\n/g,' ');
     const s4=s4ids.has(n.id)?'<span class="s4-dot" title="Switch-4"></span>':'';
     const dim=n.quarry_exclude?' style="opacity:.4"':'';
-    return '<tr data-action="open-note" data-id="'+n.id+'"'+dim+'><td><div class="nt">'+s4+escHtml(n.title)+'</div><div class="nx">'+escHtml(ex)+'</div></td><td class="nm">'+n.word_count+'w</td><td class="nm">'+escHtml(n.content_type)+'</td><td class="nm">'+escHtml(n.origin)+'</td><td class="ntag">'+escHtml(n.tag_source||'')+(n.classification_at?'<br><span style="color:#2a5a2a">✓</span>':'')+'</td></tr>';
+    return '<tr data-action="open-note" data-id="'+n.id+'"'+dim+'><td><div class="nt">'+s4+escHtml(n.title)+'</div><div class="nx">'+escHtml(ex)+'</div></td><td class="nm">'+n.word_count+'w</td><td class="nm">'+escHtml(n.content_type)+'</td><td class="nm">'+escHtml(n.origin)+'</td><td class="ntag">'+escHtml(friendlyTagSource(n.tag_source))+(n.classification_at?'<br><span style="color:#2a5a2a">✓</span>':'')+'</td></tr>';
   }).join('');
 
   const fOpts=[['all','All'],['article','Articles'],['note','Notes'],['stub','Stubs'],['video','Video'],['classified','Classified'],['unclassified','Unclassified'],['s4','Switch-4'],['tagged','Tagged'],['untagged','Untagged'],['excluded','Excluded']];
@@ -644,7 +681,7 @@ function reviewPage(db, params) {
     const ex=(n.first_paragraph||'').slice(0,150).replace(/\n/g,' ');
     const ch=n.quarry_exclude?'checked':'';
     const cl=n.quarry_exclude?'tr-excluded':'';
-    return '<tr class="'+cl+'" id="row-'+n.id+'"><td><input type="checkbox" class="cb-exclude" id="cb-'+n.id+'" '+ch+' onchange="markChanged('+n.id+')" data-id="'+n.id+'"></td><td><div class="nt" style="cursor:pointer" data-action="open-note" data-id="'+n.id+'">'+escHtml(n.title)+'</div><div class="nx">'+escHtml(ex)+'</div></td><td class="nm">'+n.word_count+'w</td><td class="nm">'+escHtml(n.origin)+'</td><td class="nm">'+escHtml(n.content_type)+'</td><td class="ntag">'+escHtml(n.tag_source||'')+'</td></tr>';
+    return '<tr class="'+cl+'" id="row-'+n.id+'"><td><input type="checkbox" class="cb-exclude" id="cb-'+n.id+'" '+ch+' onchange="markChanged('+n.id+')" data-id="'+n.id+'"></td><td><div class="nt" style="cursor:pointer" data-action="open-note" data-id="'+n.id+'">'+escHtml(n.title)+'</div><div class="nx">'+escHtml(ex)+'</div></td><td class="nm">'+n.word_count+'w</td><td class="nm">'+escHtml(n.origin)+'</td><td class="nm">'+escHtml(n.content_type)+'</td><td class="ntag">'+escHtml(friendlyTagSource(n.tag_source))+'</td></tr>';
   }).join('');
 
   const fOpts=[['all','All'],['obsidian','Obsidian'],['untagged','Untagged'],['short','Short <300w'],['excluded','Excluded']];
@@ -695,38 +732,60 @@ function helpPage() {
 <div style="max-width:820px">
 
 <h2 style="color:#c8b89a;font-size:1.1rem;margin-bottom:6px">Pipeline order</h2>
-<p style="color:#999;font-size:.85rem;margin-bottom:14px">Run in this sequence after a vault change (new/moved/deleted notes):</p>
-<pre class="log-box" style="color:#ccc">cd ~/dev/md-vaults/knowledge &amp;&amp; git pull
-node --no-warnings ~/dev/quarry/code/indexer.js --diff
-node --no-warnings ~/dev/quarry/code/tagger.js --switch-vocab
-node --no-warnings ~/dev/quarry/code/tagger.js --switch3 --provider grok
+<p style="color:#999;font-size:.85rem;margin-bottom:14px">Run in this sequence after a vault change (new/moved/deleted notes). Plain-language names on the left, the underlying CLI flag on the right:</p>
+<pre class="log-box" style="color:#ccc">cd ~/dev/md-vaults/knowledge &amp;&amp; git pull                                       (or the Vault page's "Sync" button)
+node --no-warnings ~/dev/quarry/code/indexer.js --diff                           Update the index
+node --no-warnings ~/dev/quarry/code/tagger.js --switch3 --provider grok         AI Tag Suggestions + Facts &amp; Trivia (recommended default)
+node --no-warnings ~/dev/quarry/code/tagger.js --switch3-retag --provider grok   AI Tag Correction (run after any ontology rule change)
 </pre>
+<p style="color:#999;font-size:.8rem;margin-bottom:14px"><strong>Quick Tag Match</strong> (<code>--switch-vocab</code>) is no longer part of the default sequence above. It still exists and still works, but it tags from a note's filename/title alone, with no AI reading the actual content - the AI passes produce meaningfully better tags for roughly $2 total across the whole vault. Reach for Quick Tag Match only when no LLM API key is configured or the budget ceiling has been hit and you still want some coverage rather than none.</p>
 
-<h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">Tagging tiers (tag_source)</h2>
+<h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">Plain-language glossary</h2>
+<p style="color:#999;font-size:.85rem;margin-bottom:10px">The "Switch-N" names are Quarry-internal history, not self-explanatory - use this table to translate.</p>
+<table class="report-result" style="margin-top:0"><tbody>
+<tr><td style="color:#c8b89a;white-space:nowrap">Quick Tag Match<br><span style="color:#666;font-family:monospace;font-size:.72rem">switch-vocab</span></td><td>Fallback only - see note above. Free, no AI reading. Matches a note's filename/title/first paragraph against tags already in your vocabulary. Never invents a new tag.</td></tr>
+<tr><td style="color:#c8b89a;white-space:nowrap">AI Tag Suggestions<br>+ Facts &amp; Trivia<br><span style="color:#666;font-family:monospace;font-size:.72rem">switch-3</span></td><td>The recommended default pass. AI reads the whole note, proposes tags (to the Tag Review queue, never auto-applied), extracts verified facts + trivia.</td></tr>
+<tr><td style="color:#c8b89a;white-space:nowrap">AI Tag Correction<br><span style="color:#666;font-family:monospace;font-size:.72rem">switch-3-retag</span></td><td>Re-reviews an already-tagged note (real tags or still-pending proposals) and corrects it against the current ontology rules - drops attribution tags, collapses redundant categories, fixes bad hierarchy, swaps an overly-specific instance tag for the right general category. Old pending proposals for that note are marked <em>superseded</em> and replaced, so the queue never shows both versions at once. Doesn't touch facts/trivia.</td></tr>
+<tr><td style="color:#c8b89a;white-space:nowrap">Full-Document Deep Read<br><span style="color:#666;font-family:monospace;font-size:.72rem">switch-4</span></td><td>Sends the whole note, no truncation. For your longest/richest notes. Restricted to large-context providers (Gemini, Grok) - a free OpenRouter model can silently truncate a long document.</td></tr>
+<tr><td style="color:#c8b89a;white-space:nowrap">Compress Overlong Notes<br><span style="color:#666;font-family:monospace;font-size:.72rem">mindful-wc</span></td><td>For notes over 15,000 words - summarizes them so later passes can afford a full read.</td></tr>
+</tbody></table>
+
+<h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">Tagging tiers (tag_source column on a note)</h2>
 <table class="report-result" style="margin-top:0"><tbody>
 <tr><td style="color:#c8b89a">original</td><td>Pre-existing frontmatter tags, kept as-is by FORM/TAG archaeology.</td></tr>
-<tr><td style="color:#c8b89a">switchvocab</td><td>Zero-cost keyword match against the canonical vocabulary. No API calls.</td></tr>
-<tr><td style="color:#c8b89a">switch3</td><td>LLM-suggested (Grok/Gemini/OpenRouter), sitting in note_tag_proposals awaiting HIL review at /review-tags.</td></tr>
-<tr><td style="color:#c8b89a">switch3-hil</td><td>LLM-suggested AND human-approved (or manually added via the Custom Tag(s) field). Highest-trust tier.</td></tr>
+<tr><td style="color:#c8b89a">switchvocab</td><td>"Quick Tag Match" - zero-cost keyword match. No API calls. Fallback tier, not the recommended default (see Pipeline order above).</td></tr>
+<tr><td style="color:#c8b89a">switch3</td><td>"AI Tag Suggestions" - still sitting in the note_tag_proposals queue awaiting your review at /review-tags. Not yet a real tag on the note.</td></tr>
+<tr><td style="color:#c8b89a">switch3-hil</td><td>AI-suggested AND human-approved (via Tag Review's checkboxes, the Custom Tag(s) field, or an approved AI Tag Correction). Highest-trust tier - "hil" = human in the loop.</td></tr>
+</tbody></table>
+
+<h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">Proposal statuses (note_tag_proposals table)</h2>
+<table class="report-result" style="margin-top:0"><tbody>
+<tr><td style="color:#c8b89a">pending</td><td>Sitting in the Tag Review queue, waiting for your approve/reject decision.</td></tr>
+<tr><td style="color:#6ec86e">approved</td><td>You approved it - now also a real note_tags row and (if new) a canonical tag_vocabulary entry.</td></tr>
+<tr><td style="color:#c86e6e">rejected</td><td>You rejected it. Never resurfaces.</td></tr>
+<tr><td style="color:#888">superseded</td><td>An AI Tag Correction pass replaced this suggestion with a better one before you got to review it. Kept in the database for audit, hidden from the queue.</td></tr>
 </tbody></table>
 
 <h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">tagger.js flags</h2>
-<pre class="log-box" style="color:#ccc">--switch-vocab            zero-cost, matches canonical tag_vocabulary only
---switch3                 LLM tags+verified+trivia -&gt; note_tag_proposals (HIL queue)
---switch4                 richer per-note classification pass (word_count&gt;=threshold)
+<pre class="log-box" style="color:#ccc">--switch-vocab            Quick Tag Match - fallback only, zero-cost, matches canonical tag_vocabulary
+--switch3                 AI Tag Suggestions + Facts &amp; Trivia -&gt; note_tag_proposals (HIL queue)
+--switch3-retag           AI Tag Correction - re-reviews already-tagged notes, supersedes old proposals
+--switch4                 Full-Document Deep Read (word_count&gt;=threshold, no truncation)
 --limit N                 cap notes processed this run
 --provider grok|gemini|openrouter|claude
+--file &lt;path&gt;             target one specific note (any pass) - use exact path, no extra quoting
 --dry-run                 show what would happen, write nothing
 --status                  print current tagging/budget status and exit
 </pre>
 
 <h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">Tag Review workflow (/review-tags)</h2>
 <ul style="color:#ccc;font-size:.85rem;line-height:1.8;padding-left:20px">
-<li>Each card = one note with pending LLM tag suggestions. Checked = approve, unchecked = reject.</li>
+<li>Each card = one note with pending AI tag suggestions. Checked = approve, unchecked = reject.</li>
 <li>Click a note's title to open the read/edit drawer (Tags, Trivia, Facts, Raw, Essay tabs).</li>
 <li>In the drawer's Tags tab, click the &#10005; on any chip to delete that tag from the note immediately (no page reload needed on Submit).</li>
-<li><strong>Custom Tag(s)</strong> field: comma-separated tags you add by hand, independent of what the LLM suggested. Runs through the same sane-shape filter (max 4 hyphen-segments, no stopword joiners, no commas/periods inside a tag).</li>
+<li><strong>Custom Tag(s)</strong> field: comma-separated tags you add by hand, independent of what the AI suggested. Runs through the same sane-shape filter (max 4 hyphen-segments, no stopword joiners, no commas/periods inside a tag).</li>
 <li><strong>Submit Page</strong> applies all decisions on the current page only (40 notes/page) — approved and custom tags become real, queryable note_tags rows plus canonical tag_vocabulary entries; rejected ones are marked and never resurface.</li>
+<li>If the queue looks systematically wrong (e.g. after tightening an ontology rule), don't hand-correct hundreds of cards - run <strong>AI Tag Correction</strong> from the Tagger page instead. It re-reads each note, supersedes the old suggestion, and replaces it with a corrected one, so the queue you actually review is already clean.</li>
 </ul>
 
 <h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">Narrative generation — two independent modes</h2>
@@ -757,17 +816,20 @@ node --no-warnings ~/dev/quarry/code/tagger.js --switch3 --provider grok
 <table class="report-result" style="margin-top:0"><tbody>
 <tr><td style="color:#6ec86e">git pull + indexer.js --diff</td><td><strong>Primary ZeroClaw candidate.</strong> Run as a pair: git pull picks up vault changes from GitHub, --diff picks up only new/moved/deleted files (not a full re-index), including tested orphan-pruning for removed notes. Read-mostly, zero API cost, safe nightly.</td></tr>
 <tr><td style="color:#6ec86e">curator.js --refill</td><td>Safe to automate. Self-limiting, zero API cost.</td></tr>
-<tr><td style="color:#c8b89a">tagger.js --switch-vocab</td><td>Fine to automate after each indexer --diff. Zero API cost.</td></tr>
+<tr><td style="color:#888">tagger.js --switch-vocab</td><td>Fallback only now (see Pipeline order above) - not recommended as a routine cron job when an LLM key is available. Zero API cost if you do still want it.</td></tr>
 <tr><td style="color:#c8b89a">narrator.js --next</td><td>Automate with a cap (e.g. 3-5/run) so the Pending approval queue stays reviewable, not overwhelming.</td></tr>
-<tr><td style="color:#e0a840">tagger.js --switch3</td><td>Real API cost per run - cron with --limit and a budget check in the wrapper, not just QUARRY's internal $10 ceiling.</td></tr>
+<tr><td style="color:#e0a840">tagger.js --switch3 / --switch3-retag</td><td>Real API cost per run - cron with --limit and a budget check in the wrapper, not just QUARRY's internal $10 ceiling.</td></tr>
 <tr><td style="color:#c86e6e">writeback.js (any stage)</td><td>Never automate. Writes directly to vault files + git; keep this a deliberate, reviewed action.</td></tr>
 </tbody></table>
 
 <h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">Ontological principles (tag_vocabulary governance)</h2>
 <ol style="color:#ccc;font-size:.85rem;line-height:1.8;padding-left:20px">
-<li><strong>Geography is a co-tag, never a parent</strong> — write "india" + "culture/food", never "india/food" — unless the concept has no meaningful existence outside that geography and the term itself is unambiguous without it (e.g. "carnatic", "bharatanatyam" need no geography prefix).</li>
+<li><strong>Geography is a co-tag, never a parent</strong> — write "india" + "culture/food", never "india/food" - unless the concept has no meaningful existence outside that geography and the term itself is unambiguous without it (e.g. "carnatic", "bharatanatyam" need no geography prefix).</li>
 <li><strong>Hierarchy resolves ambiguity only</strong> — use parent/leaf (e.g. "science/psychology") only when the bare leaf term is genuinely ambiguous on its own. If a term is self-identifying, keep it flat.</li>
 <li><strong>No parent-path auto-creation</strong> — tagging "humour/nsfw" does not also create a standalone "humour" row. tag_root already supports "everything under X" queries (WHERE tag_root='humour') without a redundant parent tag.</li>
+<li><strong>Drop attribution tags</strong> — a source's author or publisher name (e.g. "wolfram") is not a subject tag; it duplicates the note's own source/author field.</li>
+<li><strong>Drop specific-instance tags in favour of the general category</strong> — a numbered example or named instance of a broader concept (e.g. "rule-30" on a note about elementary cellular automata generally) belongs in trivia, not as a tag.</li>
+<li><strong>Never tag the same discipline twice under two different roots</strong> — don't keep both "computer-science" and "technology/computing" on one note; pick the one that fits the note's actual angle.</li>
 </ol>
 
 <h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">Architecture notes</h2>
@@ -776,6 +838,7 @@ node --no-warnings ~/dev/quarry/code/tagger.js --switch3 --provider grok
 <li>note_classifications now carries only two buckets: <strong>verified</strong> and <strong>trivia</strong>. evergreen/asserted/dubious/essay were tried and deliberately cut - they added token cost without adding narrative value; epistemic status (opinion/conspiracy) is captured as a tag instead, not a classification bucket.</li>
 <li>Client-side code lives in quarry.js, styling in quarry.css, both served as static files next to server.js. All dynamic content uses data-* attributes + fetch()/JSON, never inline onclick with interpolated strings - this was a real bug class (nested escaping across template layers) and is now structurally avoided.</li>
 <li>lib/tags.js is the single shared tag-insertion path for both server.js (HIL approve/custom) and tagger.js (switch-vocab). Edit tag-insertion policy there once, both processes pick it up.</li>
+<li>Anywhere a note's tag_source is displayed (Browse, Queue, Review, Stats), it goes through a single friendlyTagSource() lookup rather than showing the raw DB value - keeps the UI consistent with this glossary even if a pass gets renamed later.</li>
 </ul>
 
 </div>
@@ -796,6 +859,7 @@ function statsPage(db) {
   const byType=db.prepare("SELECT content_type,COUNT(*) as n FROM vault_notes GROUP BY content_type ORDER BY n DESC").all();
   const byOrigin=db.prepare("SELECT origin,COUNT(*) as n FROM vault_notes GROUP BY origin ORDER BY n DESC").all();
   const bySrc=db.prepare("SELECT COALESCE(tag_source,'original') as src,COUNT(*) as n FROM vault_notes WHERE has_tags=1 GROUP BY tag_source ORDER BY n DESC").all();
+  bySrc.forEach(r => { r.src = friendlyTagSource(r.src); });
   const bySize=db.prepare("SELECT CASE WHEN word_count<200 THEN 'stub' WHEN word_count<1000 THEN 'short' WHEN word_count<5000 THEN 'medium' ELSE 'long' END as bucket,COUNT(*) as n FROM vault_notes GROUP BY bucket ORDER BY n DESC").all();
   const topTags=db.prepare("SELECT tag_root,COUNT(*) as n FROM note_tags GROUP BY tag_root ORDER BY n DESC LIMIT 15").all();
 
@@ -839,6 +903,7 @@ const CMD_MAP = {
   'sw-vocab':          { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>[NODE,[...FLAGS,path.join(C,'tagger.js'),'--switch-vocab']] },
   'sw3':               { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>{ const a=[NODE,[...FLAGS,path.join(C,'tagger.js'),'--switch3']]; if(b.limit)a[1].push('--limit',String(b.limit)); if(b.provider)a[1].push('--provider',b.provider); return a; } },
   'sw4':               { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>{ const a=[NODE,[...FLAGS,path.join(C,'tagger.js'),'--switch4']]; if(b.limit)a[1].push('--limit',String(b.limit)); a[1].push('--provider',b.provider||'gemini'); return a; } },
+  'sw3-retag':         { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>{ const a=[NODE,[...FLAGS,path.join(C,'tagger.js'),'--switch3-retag']]; if(b.limit)a[1].push('--limit',String(b.limit)); if(b.provider)a[1].push('--provider',b.provider); return a; } },
   'sw4-dry':           { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>[NODE,[...FLAGS,path.join(C,'tagger.js'),'--switch4','--dry-run','--limit','10']] },
   'mwc':               { session:'quarry-mwc',      log:'tagger.log',   build: (b,C)=>{ const a=[NODE,[...FLAGS,path.join(C,'tagger.js'),'--mindful-wc']]; if(b.limit)a[1].push('--limit',String(b.limit)); return a; } },
   'mwc-dry':           { session:'quarry-mwc',      log:'tagger.log',   build: (b,C)=>[NODE,[...FLAGS,path.join(C,'tagger.js'),'--mindful-wc','--dry-run']] },

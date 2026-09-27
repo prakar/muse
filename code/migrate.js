@@ -267,6 +267,20 @@ const MIGRATIONS = [
       `);
       log('  Created note_tag_proposals table (or already exists)');
     }
+  },
+
+  {
+    id:   'M010',
+    desc: 'Add retagged_at column to vault_notes (tracks the ontology re-review pass)',
+    up: function(db) {
+      var cols = db.prepare("PRAGMA table_info(vault_notes)").all().map(function(c) { return c.name; });
+      if (cols.indexOf('retagged_at') === -1) {
+        db.exec('ALTER TABLE vault_notes ADD COLUMN retagged_at TEXT');
+        log('  Added column vault_notes.retagged_at');
+      } else {
+        log('  vault_notes.retagged_at already exists — skipping');
+      }
+    }
   }
 
 ];
