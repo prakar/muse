@@ -8,6 +8,9 @@
     "migrate": "node --no-warnings code/migrate.js",
     "index": "node --no-warnings code/indexer.js --diff"
   },
+  "dependencies": {
+    "failsafe-llm-model-resolver": "^1.0.2"
+  },
   "license": "ISC",
   "type": "commonjs"
 }

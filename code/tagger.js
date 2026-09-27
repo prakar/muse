@@ -13,6 +13,7 @@ const path  = require('path');
 const https = require('https');
 const { DatabaseSync } = require('node:sqlite');
 const { insertNoteTags } = require('./lib/tags');
+const { resolveModel, fetchFreeModels, getNextFreeModel, resetFreeModelIndex } = require('failsafe-llm-model-resolver');
 
 // ---------------------------------------------------------------------------
 // CONFIG
@@ -39,6 +40,7 @@ const S3_SYSTEM = 'Expert analyst extracting narrative-ready material from perso
 const args        = process.argv.slice(2);
 const SW_VOCAB    = args.includes('--switch-vocab');
 const SW3         = args.includes('--switch3');
+const SW3_RETAG   = args.includes('--switch3-retag');
 const SW4         = args.includes('--switch4');
 const MODE_STATUS = args.includes('--status');
 const MODE_DRY    = args.includes('--dry-run');
@@ -66,7 +68,7 @@ const PROVIDER_ARG = (() => {
   return p;
 })();
 
-if (!SW_VOCAB && !SW3 && !SW4 && !MODE_STATUS && !SYNC_WC && !MINDFUL_WC) {
+if (!SW_VOCAB && !SW3 && !SW3_RETAG && !SW4 && !MODE_STATUS && !SYNC_WC && !MINDFUL_WC) {
   console.error('Usage: node tagger.js [--switch-vocab|3|4|--status|--sync-wc|--mindful-wc] [--dry-run]');
   console.error('       [--provider gemini|openrouter|claude] [--limit N] [--file <path>] [--dry-run]');
   process.exit(1);
@@ -93,6 +95,32 @@ function openDb() {
 }
 
 // ---------------------------------------------------------------------------
+// PROVIDER CONFIGURATION — single source of truth. Every place that needs to
+// know "does this provider have a large context window" or "what does this
+// provider actually cost" reads from here. This replaces three independent,
+// ad-hoc if/else chains that each went stale differently when Grok was added
+// (the useFullContent truncation check, checkBudget's pre-flight estimate,
+// and recordSpend's real pricing) - three separate bugs from one root cause.
+//
+// Pricing verified against docs.x.ai / third-party trackers, Sept 2026.
+// xAI retired the literal "grok-4" model ID in a May 2026 migration; it now
+// silently redirects to grok-4.3 pricing (not the original Grok 4 rate) -
+// the model string in callGrok() is left as-is since the redirect works,
+// but the PRICE below reflects what actually gets billed. Re-verify this
+// table if xAI reprices again - they have done so mid-quarter before.
+// ---------------------------------------------------------------------------
+const PROVIDER_CONFIG = {
+  grok:       { largeContext: true,  costPerMillionIn: 1.25, costPerMillionOut: 2.50,  budgetEstimate: 0.005 },
+  gemini:     { largeContext: true,  costPerMillionIn: 0.075, costPerMillionOut: 0.30, budgetEstimate: 0.001 },
+  claude:     { largeContext: true,  costPerMillionIn: 3.00, costPerMillionOut: 15.00, budgetEstimate: 0.02  },
+  openrouter: { largeContext: false, costPerMillionIn: 0,    costPerMillionOut: 0,     budgetEstimate: 0     },
+};
+function providerHasLargeContext(provider) {
+  const cfg = PROVIDER_CONFIG[provider];
+  return !!(cfg && cfg.largeContext);
+}
+
+// ---------------------------------------------------------------------------
 // BUDGET
 // ---------------------------------------------------------------------------
 function spentToDate(db) {
@@ -100,16 +128,17 @@ function spentToDate(db) {
 }
 function checkBudget(db, provider) {
   const spent = spentToDate(db);
-  const cost  = provider === 'claude' ? 0.02 : provider === 'gemini' ? 0.001 : 0;
+  const cfg   = PROVIDER_CONFIG[provider];
+  const cost  = cfg ? cfg.budgetEstimate : 0.005; // unknown provider: assume non-trivial, don't silently pass
   if (spent + cost > BUDGET_CEILING) {
-    log('error', 'Budget ceiling reached', { spent: spent.toFixed(4), ceiling: BUDGET_CEILING });
+    log('error', 'Budget ceiling reached', { spent: spent.toFixed(4), ceiling: BUDGET_CEILING, provider });
     process.exit(2);
   }
 }
 function recordSpend(db, provider, component, noteId, tokIn, tokOut) {
-  const cost = provider === 'openrouter' ? 0
-    : provider === 'claude' ? (tokIn*3/1e6) + (tokOut*15/1e6)
-    : (tokIn*0.075/1e6) + (tokOut*0.3/1e6);
+  const cfg  = PROVIDER_CONFIG[provider];
+  const cost = cfg ? (tokIn * cfg.costPerMillionIn / 1e6) + (tokOut * cfg.costPerMillionOut / 1e6) : 0;
+  if (!cfg) log('warn', 'recordSpend: unknown provider, cost recorded as $0 - PROVIDER_CONFIG needs an entry', { provider });
   db.prepare('INSERT INTO api_budget (provider,component,note_id,tokens_in,tokens_out,cost_usd,called_at) VALUES (?,?,?,?,?,?,?)').run(provider, component, noteId||null, tokIn||0, tokOut||0, cost, new Date().toISOString());
   return cost;
 }
@@ -225,6 +254,77 @@ function switchVocabTags(filepath, body, firstParagraph, title, vocab) {
 // ---------------------------------------------------------------------------
 // PROMPT BUILDERS
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// RETAG PASS — re-reviews an ALREADY-TAGGED note's existing tags against the
+// refined ontological principles, using two worked examples as few-shot
+// guidance. Produces a corrected TAGS list via the same note_tag_proposals
+// HIL queue as switch3 - never auto-applies. Does not touch verified/trivia.
+// ---------------------------------------------------------------------------
+function buildRetagPrompt(noteContent, sourceUrl, useFullContent, vocabList, existingTags) {
+  const content = sourceUrl ? 'Source URL: '+sourceUrl+'\n\n'+noteContent : noteContent;
+  const body = useFullContent ? content : content.slice(0, S3_MAX_CHARS);
+  const vocabBlock = (vocabList && vocabList.length) ? vocabList.join(', ') : '(none loaded)';
+  const existingBlock = (existingTags && existingTags.length) ? existingTags.join(', ') : '(none)';
+
+  return `You are correcting the tags on a personal knowledge note against a strict ontology. The note already has tags, applied inconsistently over years - your job is to propose a corrected, high-quality replacement set, not to add to what's there.
+
+Content:
+${body}
+
+EXISTING TAGS ON THIS NOTE (to be reviewed and corrected, not simply kept):
+${existingBlock}
+
+EXISTING TAG VOCABULARY (prefer these where they genuinely fit - reuse over inventing a near-duplicate):
+${vocabBlock}
+
+ONTOLOGICAL PRINCIPLES (apply strictly):
+1. Geography is a co-tag, never a parent: "india" + "culture/food", never "india/food" - UNLESS the
+   concept has no meaningful existence outside that geography and the term itself is unambiguous
+   without it (e.g. "carnatic", "bharatanatyam" need no geography prefix at all).
+2. Hierarchy resolves ambiguity only: use parent/leaf (e.g. "science/psychology") only when the bare
+   leaf term is genuinely ambiguous on its own. If a term is self-identifying, keep it flat.
+3. Drop attribution tags: a source's author or publisher name (e.g. "wolfram") is not a subject tag -
+   it duplicates the note's own source/author frontmatter field. Never tag a person or publication
+   as if it were the topic.
+4. Drop specific-instance tags in favour of the general category: a numbered example, edition, or
+   named instance of a broader concept (e.g. "rule-30" when the note is about elementary cellular
+   automata generally) does not deserve its own tag - the specific instance belongs in trivia, not
+   as a tag. Tag the category the note is actually teaching, not its most-cited example.
+5. Never tag the same discipline twice under two different roots (e.g. don't keep both
+   "computer-science" and "technology/computing" on one note - pick the one that fits the note's
+   actual angle and drop the other).
+6. A proper noun or place name is not on its own a tag - tag the CONCEPT it exemplifies, not the
+   entity itself.
+7. 1-3 words per tag, hyphenated if more than one word. No stopword joiners (and, of, in, on, for,
+   with, the, by, at). No commas, no sentence fragments, no numbers as the leading token.
+
+WORKED EXAMPLES (this is the correction quality expected):
+
+Example A - a note on 19th-century boxing/savate "shift punching" techniques.
+  WRONG (existing): boxing-history, combat-techniques, history, savate, sports
+  CORRECT: sports/combat, sports/boxing, sports/savate, sports/history
+  Why: "combat" is a leaf under sports (parallel to the existing "sports/mma"), not its own root.
+  Bare "history" is wrong when the note is specifically about the history of a sport - "sports/history"
+  disambiguates correctly. "combat-techniques" collapses into "sports/combat".
+
+Example B - a MathWorld note on elementary cellular automata (rule 30 used as the running example).
+  WRONG (existing): cellular-automata, computer-science, maths, rule-30, technology/computing, wolfram
+  CORRECT: cellular-automata, maths, computer-science
+  Why: "cellular-automata" is specific and unambiguous - stays flat, no parent needed. "maths" and
+  "computer-science" are both genuinely relevant co-tags (the topic straddles both disciplines) -
+  keep both, they aren't mutually exclusive. "rule-30" is one of 256 numbered instances, not a
+  category - drop it (it belongs in trivia if narratively interesting). "wolfram" is an attribution
+  (the source/author), not a subject - drop it. "technology/computing" duplicates "computer-science"
+  under a different root - drop the redundant one.
+
+Output EXACTLY one section with a ## header. No extra text.
+
+## TAGS
+The corrected tag list for this note. One tag per line. This REPLACES the existing tags entirely -
+do not just echo what's already there unless it's genuinely correct as-is.
+If the existing tags are already fully correct: list them again unchanged.`;
+}
+
 function buildS3Prompt(noteContent, sourceUrl, useFullContent, vocabList) {
   const content = sourceUrl ? 'Source URL: '+sourceUrl+'\n\n'+noteContent : noteContent;
   const body = useFullContent ? content : content.slice(0, S3_MAX_CHARS);
@@ -417,35 +517,10 @@ function httpGet(hostname, pathStr, headers) {
 // ---------------------------------------------------------------------------
 // API CALLERS
 // ---------------------------------------------------------------------------
-var _orFreeModels = null;
-var _orModelIdx   = 0;
-
-async function fetchOrFreeModels() {
-  if (_orFreeModels) return _orFreeModels;
-  try {
-    const res = await httpGet('openrouter.ai', '/api/v1/models', {'Authorization':'Bearer '+OPENROUTER_API_KEY});
-    const ids = new Set((res.data||[]).filter(m=>m.pricing&&m.pricing.prompt==='0'&&m.pricing.completion==='0').map(m=>m.id));
-    _orFreeModels = ids;
-    log('info', 'OpenRouter free models fetched', {count:ids.size});
-    return ids;
-  } catch(e) {
-    log('warn', 'Could not fetch OpenRouter models', {err:e.message});
-    _orFreeModels = new Set(['openrouter/free']);
-    return _orFreeModels;
-  }
-}
-
-async function getNextOrModel() {
-  const available = await fetchOrFreeModels();
-  if (available.size === 0) return 'openrouter/free';
-
-  // Convert set to array and cycle through available free models
-  const models = Array.from(available);
-  const model = models[_orModelIdx % models.length];
-  _orModelIdx = (_orModelIdx + 1) % models.length;   // simple round-robin
-
-  return model;
-}
+// OpenRouter free-model discovery + round-robin now delegated entirely to
+// failsafe-llm-model-resolver (fetchFreeModels/getNextFreeModel) - same
+// contract as the functions this replaces, live-fetched and cached there
+// instead of duplicated here.
 
 // ---------------------------------------------------------------------------
 // OPENROUTER: self-healing using live free models from OpenRouter API
@@ -454,11 +529,11 @@ async function callOpenRouter(prompt) {
   if (!OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY not set');
 
   let lastErr = null;
-  _orModelIdx = 0;   // reset for this call
+  resetFreeModelIndex();   // reset for this call
 
   // Reasonable max attempts using live free models
   for (let attempt = 0; attempt < 10; attempt++) {
-    const model = await getNextOrModel();
+    const model = await getNextFreeModel(OPENROUTER_API_KEY);
 
     try {
       const startTime = Date.now();
@@ -530,8 +605,15 @@ async function callOpenRouter(prompt) {
 
 async function callGemini(prompt) {
   if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not set');
+  // NOTE: as of this integration, failsafe-llm-model-resolver's Gemini path has
+  // a known bug (scoping error in its internal filter) that always falls
+  // through to the pinned fallback below - live Gemini resolution doesn't yet
+  // work end-to-end. Safe either way: resolveModel's own try/catch guarantees
+  // a usable model id regardless, and GEMINI_MODEL is that fallback.
+  const resolved = await resolveModel('gemini', GEMINI_API_KEY, { fallback: GEMINI_MODEL });
+  log('info', 'Gemini model resolved', resolved);
   const res = await httpPost('generativelanguage.googleapis.com',
-    '/v1beta/models/'+GEMINI_MODEL+':generateContent?key='+GEMINI_API_KEY, {},
+    '/v1beta/models/'+resolved.id+':generateContent?key='+GEMINI_API_KEY, {},
     {
       system_instruction: {parts:[{text:S3_SYSTEM}]},
       contents: [{role:'user',parts:[{text:prompt}]}],
@@ -547,8 +629,10 @@ async function callGemini(prompt) {
 async function callGrok(prompt) {
   if (!XAI_API_KEY) throw new Error('XAI_API_KEY not set');
 
+  const resolved = await resolveModel('xai', XAI_API_KEY, { fallback: 'grok-4' });
+
   const startTime = Date.now();
-  log('info', 'Grok request sent', { model: 'grok-4' });
+  log('info', 'Grok request sent', { model: resolved.id, resolvedVia: resolved.source });
 
   const heartbeat = setInterval(function() {
     log('info', 'Grok still waiting...', { elapsedSec: Math.round((Date.now()-startTime)/1000) });
@@ -559,7 +643,7 @@ async function callGrok(prompt) {
     res = await httpPost('api.x.ai', '/v1/chat/completions',
       { 'Authorization': 'Bearer ' + XAI_API_KEY },
       {
-        model: 'grok-4',
+        model: resolved.id,
         messages: [
           { role: 'system', content: S3_SYSTEM },
           { role: 'user',   content: prompt }
@@ -702,9 +786,11 @@ async function compressInChunks(body, listFmt, db, noteId) {
 
 async function callClaude(prompt) {
   if (!ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY not set');
+  const resolved = await resolveModel('anthropic', ANTHROPIC_API_KEY, { fallback: CLAUDE_MODEL });
+  log('info', 'Claude model resolved', resolved);
   const res = await httpPost('api.anthropic.com', '/v1/messages',
     {'x-api-key':ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01'},
-    {model:CLAUDE_MODEL, max_tokens:8192, system:S3_SYSTEM, messages:[{role:'user',content:prompt}]}
+    {model:resolved.id, max_tokens:8192, system:S3_SYSTEM, messages:[{role:'user',content:prompt}]}
   );
   if (res.status!==200) throw new Error('Claude error '+res.status+': '+JSON.stringify(res.body).slice(0,200));
   const text  = (res.body.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('');
@@ -924,6 +1010,55 @@ async function processNote(db, note, switchLevel, provider, useFullContent) {
   log('info', 'Switch-'+switchLevel+' complete', {title:note.title.slice(0,60), provider:result.provider, tagsProposed:parsed.tags.length, verified:parsed.verified.length, trivia:parsed.trivia.length, cost_usd:cost.toFixed(5)});
 }
 
+// Re-review pass: corrects an ALREADY-TAGGED note's tags against the refined
+// ontology (see buildRetagPrompt's worked examples). Does not touch
+// verified/trivia - marks retagged_at, not classification_at.
+async function processNoteRetag(db, note, provider, useFullContent) {
+  const body     = readNoteBody(note.filepath);
+  const vocab    = getVocabList(db);
+  const vocabSet = getVocabSet(db);
+
+  // Existing context = real note_tags UNION any not-yet-approved proposals
+  // already sitting in the HIL queue for this note. A note can have zero
+  // real tags but several pending proposals - both count as "existing" for
+  // the purpose of correction, since the user may be looking at exactly
+  // those pending proposals when deciding this note needs a retag.
+  const realTags = db.prepare('SELECT tag_full FROM note_tags WHERE note_id=?').all(note.id).map(r=>r.tag_full);
+  const pendingTags = db.prepare("SELECT tag_full FROM note_tag_proposals WHERE note_id=? AND status='pending'").all(note.id).map(r=>r.tag_full);
+  const existingTags = Array.from(new Set([...realTags, ...pendingTags])).sort();
+
+  const prompt = buildRetagPrompt(body, note.source_url, useFullContent, vocab, existingTags);
+
+  if (MODE_DRY) {
+    console.log('\n=== DRY RUN Retag ('+provider+') — '+note.title+' ===');
+    console.log('Existing tags (real+pending): '+(existingTags.join(', ')||'(none)'));
+    console.log(prompt.slice(0,600)+'...\n');
+    return;
+  }
+
+  checkBudget(db, provider);
+  log('info', 'Calling Retag API', {title:note.title.slice(0,60), provider, existingTags, words:note.word_count, chars:body.length});
+
+  const result = await callApi(prompt, provider);
+  const parsed = parseS3Response(result.text, vocabSet);
+
+  db.exec('BEGIN');
+  try {
+    // Supersede any old pending proposals for this note first, so the
+    // review queue doesn't end up showing both the pre-correction and
+    // post-correction suggestions side by side.
+    const now = new Date().toISOString();
+    db.prepare("UPDATE note_tag_proposals SET status='superseded', reviewed_at=? WHERE note_id=? AND status='pending'").run(now, note.id);
+
+    if (parsed.tags && parsed.tags.length) writeProposedTags(db, note.id, parsed.tags, vocabSet);
+    db.prepare('UPDATE vault_notes SET retagged_at=? WHERE id=?').run(now, note.id);
+    db.exec('COMMIT');
+  } catch(e) { db.exec('ROLLBACK'); throw e; }
+
+  const cost = recordSpend(db, result.provider, 'retag', note.id, result.tokensIn, result.tokensOut);
+  log('info', 'Retag complete', {title:note.title.slice(0,60), provider:result.provider, existingTags, proposedTags:parsed.tags, cost_usd:cost.toFixed(5)});
+}
+
 // ---------------------------------------------------------------------------
 // STATUS
 // ---------------------------------------------------------------------------
@@ -966,7 +1101,7 @@ function printStatus(db) {
 // MAIN
 // ---------------------------------------------------------------------------
 async function main() {
-  log('info', 'QUARRY tagger v0.8 starting', {swVocab:SW_VOCAB,sw3:SW3,sw4:SW4,syncWc:SYNC_WC,mindfulWc:MINDFUL_WC,dryRun:MODE_DRY,provider:PROVIDER_ARG||'auto'});
+  log('info', 'QUARRY tagger v0.8 starting', {swVocab:SW_VOCAB,sw3:SW3,sw3Retag:SW3_RETAG,sw4:SW4,syncWc:SYNC_WC,mindfulWc:MINDFUL_WC,dryRun:MODE_DRY,provider:PROVIDER_ARG||'auto'});
 
   const db = openDb();
 
@@ -975,7 +1110,7 @@ async function main() {
   if (MINDFUL_WC)  { await runMindfulWc(db); if (!MODE_DRY) printStatus(db); db.close(); return; }
 
   const provider = PROVIDER_ARG || (OPENROUTER_API_KEY ? 'openrouter' : GEMINI_API_KEY ? 'gemini' : 'claude');
-  const useFullContent = SW4 || (SW3 && provider==='gemini');
+  const useFullContent = SW4 || ((SW3 || SW3_RETAG) && providerHasLargeContext(provider));
 
   // Select notes
   let notes = [];
@@ -991,6 +1126,17 @@ async function main() {
   } else if (SW3) {
     notes = db.prepare(
       "SELECT * FROM vault_notes WHERE classification_at IS NULL AND content_type IN ('article','note','video') AND word_count>200 ORDER BY word_count DESC LIMIT ?"
+    ).all(LIMIT===Infinity?999999:LIMIT);
+  } else if (SW3_RETAG) {
+    // Eligible = has real tags OR has at least one pending proposal sitting
+    // in the HIL queue (not yet approved into note_tags). Either counts as
+    // "has tag activity worth reviewing".
+    notes = db.prepare(
+      `SELECT * FROM vault_notes
+       WHERE retagged_at IS NULL
+       AND (quarry_exclude IS NULL OR quarry_exclude=0)
+       AND (has_tags=1 OR id IN (SELECT DISTINCT note_id FROM note_tag_proposals WHERE status='pending'))
+       ORDER BY word_count DESC LIMIT ?`
     ).all(LIMIT===Infinity?999999:LIMIT);
   } else {
     notes = db.prepare('SELECT * FROM vault_notes WHERE has_tags=0 ORDER BY word_count DESC LIMIT ?').all(LIMIT===Infinity?999999:LIMIT);
@@ -1017,6 +1163,9 @@ async function main() {
       }
       if (SW3 || SW4) {
         await processNote(db, note, SW3?3:4, provider, useFullContent);
+      }
+      if (SW3_RETAG) {
+        await processNoteRetag(db, note, provider, useFullContent);
       }
     } catch(e) {
       log('error','Failed to process note',{title:note.title.slice(0,60),err:e.message});
