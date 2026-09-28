@@ -16,6 +16,10 @@
 
 const fs   = require('fs');
 const path = require('path');
+// QUARRY_HOME is the quarry directory itself (default ~/dev/quarry): the DB, logs and chunk caches live
+// directly under it. (These scripts once treated it as a PARENT and appended dev/quarry, which doubles
+// the path when QUARRY_HOME=$HOME/dev/quarry - the convention writeback.js and the docs use.)
+const QUARRY_HOME = process.env.QUARRY_HOME || path.join(process.env.HOME, 'dev', 'quarry');
 const { DatabaseSync } = require('node:sqlite');
 
 // ---------------------------------------------------------------------------
@@ -25,7 +29,7 @@ const VAULT_PATH = process.env.VAULT_PATH
   || path.join(process.env.HOME, 'vault');
 
 const DB_PATH = process.env.QUARRY_DB
-  || path.join(process.env.QUARRY_HOME || process.env.HOME, 'dev', 'quarry', 'vault.db');
+  || path.join(QUARRY_HOME, 'vault.db');
 
 const BATCH_SIZE     = 200;
 const MAX_FIRST_PARA = 400;
@@ -51,7 +55,7 @@ if (!MODE_FULL && !MODE_DIFF && !MODE_DRY && !MODE_STATS && !SINGLE_FILE) {
 // ---------------------------------------------------------------------------
 // LOGGING
 // ---------------------------------------------------------------------------
-const TRACE_PATH = path.join(process.env.QUARRY_HOME || process.env.HOME, 'dev', 'quarry', 'indexer.log');
+const TRACE_PATH = path.join(QUARRY_HOME, 'indexer.log');
 
 function log(level, msg, data) {
   data = data || {};
@@ -59,7 +63,7 @@ function log(level, msg, data) {
   const line  = JSON.stringify(entry);
   console.log(line);
   if (!MODE_DRY) {
-    try { fs.appendFileSync(TRACE_PATH, line + '\n'); } catch (_) {}
+    if (!process.env.QUARRY_LAUNCHED) { try { fs.appendFileSync(TRACE_PATH, line + '\n'); } catch (_) {} }
   }
 }
 

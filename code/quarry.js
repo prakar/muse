@@ -243,7 +243,7 @@ function apiHeaders() {
 function runCmd(cmd, label, extra) {
   var el = document.getElementById('cmd-output');
   if (el) el.innerHTML = '<div class="log-box" id="log-box">Starting ' + escH(label) + '...</div>';
-  var body = Object.assign({ cmd: cmd }, extra || {});
+  var body = withSingleNote(Object.assign({ cmd: cmd }, extra || {}));
   fetch('/api/run', { method: 'POST', headers: apiHeaders(), body: JSON.stringify(body) })
     .then(function (r) { return r.json(); })
     .then(function (d) {
@@ -301,21 +301,25 @@ function runS3() {
   fetch('/api/run', {
     method: 'POST',
     headers: apiHeaders(),
-    body: JSON.stringify({
+    body: JSON.stringify(withSingleNote({
       cmd: 'sw3',
       limit: limit ? limit.value : 500,
       provider: prov ? prov.value : 'openrouter',
-    }),
+    })),
   }).then(showCmdResult);
 }
 
-function runS4() {
-  var limit = document.getElementById('s4-limit');
-  var prov = document.getElementById('s4-prov');
+function runRetag() {
+  var limit = document.getElementById('retag-limit');
+  var prov = document.getElementById('retag-prov');
   fetch('/api/run', {
     method: 'POST',
     headers: apiHeaders(),
-    body: JSON.stringify({ cmd: 'sw4', limit: limit ? limit.value : 20, provider: prov ? prov.value : 'gemini' }),
+    body: JSON.stringify(withSingleNote({
+      cmd: 'sw3-retag',
+      limit: limit ? limit.value : 500,
+      provider: prov ? prov.value : 'grok',
+    })),
   }).then(showCmdResult);
 }
 
@@ -413,6 +417,66 @@ function applyNF() {
 // ---------------------------------------------------------------------------
 // Global click delegation
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Single-note targeting (Tagger page)
+//
+// Lets a run target ONE note instead of the whole vault. The picked note is held in
+// _singleNote and injected into the request by withSingleNote(), in one place, rather
+// than editing every Run button. Only commands that actually understand --file get it;
+// Compress and video extraction ignore the selection, and the panel says so.
+//
+// File paths are kept in _findResults (keyed by note id) and never written into HTML
+// attributes - paths contain commas, parentheses and quotes, and this codebase already
+// paid for putting arbitrary text into attributes once. Rows carry only the numeric id.
+// ---------------------------------------------------------------------------
+var _singleNote = null;       // { id, title, filepath, rel } once a note is picked
+var _findResults = {};        // id -> row from /api/notes/find
+var _findTimer = null;
+var FILE_CMDS = ['sw-vocab', 'sw3', 'sw3-retag'];
+
+function withSingleNote(body) {
+  if (_singleNote && FILE_CMDS.indexOf(body.cmd) !== -1) body.file = _singleNote.filepath;
+  return body;
+}
+
+function renderSingleNote() {
+  var box = document.getElementById('single-note-active');
+  if (!box) return;
+  if (!_singleNote) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  box.style.display = 'block';
+  box.innerHTML =
+    '<strong>Single-note mode is ON.</strong> Quick Tag Match, AI Tag Suggestions and AI Tag Correction ' +
+    'will run on <em>' + escH(_singleNote.title) + '</em> only.' +
+    '<span class="single-note-path">' + escH(_singleNote.rel) + '</span>' +
+    '<button type="button" class="btn btn-grey" data-action="clear-single-note">Clear</button>';
+}
+
+function findNotes(q) {
+  var out = document.getElementById('single-note-results');
+  if (!out) return;
+  if (q.trim().length < 2) { out.innerHTML = ''; return; }
+  fetch('/api/notes/find?q=' + encodeURIComponent(q.trim()))
+    .then(function (r) { return r.json(); })
+    .then(function (rows) {
+      _findResults = {};
+      if (!rows.length) { out.innerHTML = '<div class="single-note-empty">No matching notes.</div>'; return; }
+      out.innerHTML = rows.map(function (n) {
+        _findResults[n.id] = n;
+        return '<div class="single-note-row" data-action="pick-single-note" data-id="' + n.id + '">' +
+          '<span class="nt">' + escH(n.title) + '</span> ' +
+          '<span class="nm">' + n.word_count + 'w &middot; ' + escH(n.rel) + '</span></div>';
+      }).join('');
+    })
+    .catch(function () { out.innerHTML = '<div class="single-note-empty">Search failed.</div>'; });
+}
+
+document.addEventListener('input', function (e) {
+  if (!e.target || e.target.id !== 'single-note-q') return;
+  var q = e.target.value;
+  clearTimeout(_findTimer);
+  _findTimer = setTimeout(function () { findNotes(q); }, 250);
+});
+
 document.addEventListener('click', function (e) {
   var el = e.target.closest('[data-action]');
   if (!el) return;
@@ -424,6 +488,22 @@ document.addEventListener('click', function (e) {
     case 'open-note':
       e.preventDefault();
       if (!isNaN(idNum)) openNote(idNum);
+      break;
+    case 'pick-single-note':
+      e.preventDefault();
+      if (!isNaN(idNum) && _findResults[idNum]) {
+        _singleNote = _findResults[idNum];
+        var pickOut = document.getElementById('single-note-results');
+        if (pickOut) pickOut.innerHTML = '';
+        var pickQ = document.getElementById('single-note-q');
+        if (pickQ) pickQ.value = '';
+        renderSingleNote();
+      }
+      break;
+    case 'clear-single-note':
+      e.preventDefault();
+      _singleNote = null;
+      renderSingleNote();
       break;
     case 'start-edit':
       e.preventDefault();
@@ -465,9 +545,9 @@ document.addEventListener('click', function (e) {
       e.preventDefault();
       runS3();
       break;
-    case 'run-s4':
+    case 'run-retag':
       e.preventDefault();
-      runS4();
+      runRetag();
       break;
     case 'run-mwc':
       e.preventDefault();

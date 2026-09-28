@@ -8,9 +8,9 @@
     "migrate": "node --no-warnings code/migrate.js",
     "index": "node --no-warnings code/indexer.js --diff"
   },
-  "dependencies": {
-    "failsafe-llm-model-resolver": "^1.1.0"
-  },
   "license": "ISC",
-  "type": "commonjs"
+  "type": "commonjs",
+  "dependencies": {
+    "llm-model-resolver": "^1.2.0"
+  }
 }

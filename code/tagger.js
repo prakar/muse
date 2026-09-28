@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // QUARRY tagger.js v0.7
-// Flags: --switch1 --switch2 --switch3 --switch4 --status --sync-wc --mindful-wc
-// Options: --provider <gemini|openrouter|claude> --limit N --file <path> --dry-run
+// Flags: --switch-vocab --switch3 --switch3-retag --status --sync-wc --mindful-wc
+// (--switch4 is RETIRED: kept only as a deprecated alias for --switch3, see SW4_DEPRECATED)
+// Options: --provider <grok|gemini|openrouter|claude> --limit N --file <path> --dry-run
+// --file <path> targets ONE note and works with --switch-vocab, --switch3, --switch3-retag
 // --sync-wc    recount words in all .md files, update vault_notes.word_count
 // --mindful-wc compress notes >3000 words via Gemini, write back to filesystem
 // --mindful-wc respects --limit N and --dry-run (lists candidates without acting)
@@ -10,15 +12,19 @@
 
 const fs    = require('fs');
 const path  = require('path');
+// QUARRY_HOME is the quarry directory itself (default ~/dev/quarry): the DB, logs and chunk caches live
+// directly under it. (These scripts once treated it as a PARENT and appended dev/quarry, which doubles
+// the path when QUARRY_HOME=$HOME/dev/quarry - the convention writeback.js and the docs use.)
+const QUARRY_HOME = process.env.QUARRY_HOME || path.join(process.env.HOME, 'dev', 'quarry');
 const https = require('https');
 const { DatabaseSync } = require('node:sqlite');
 const { insertNoteTags } = require('./lib/tags');
-const { resolveModel, fetchFreeModels, getNextFreeModel, resetFreeModelIndex, markModelBad } = require('failsafe-llm-model-resolver');
+const { resolveModel, fetchFreeModels, getNextFreeModel, resetFreeModelIndex, markModelBad } = require('llm-model-resolver');
 
 // ---------------------------------------------------------------------------
 // CONFIG
 // ---------------------------------------------------------------------------
-const DB_PATH    = process.env.QUARRY_DB || path.join(process.env.QUARRY_HOME || process.env.HOME, 'dev', 'quarry', 'vault.db');
+const DB_PATH    = process.env.QUARRY_DB || path.join(QUARRY_HOME, 'vault.db');
 const GEMINI_API_KEY     = process.env.GEMINI_API_KEY     || '';
 const XAI_API_KEY        = process.env.XAI_API_KEY        || '';
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
@@ -28,7 +34,6 @@ const CLAUDE_MODEL = 'claude-sonnet-4-20250514';
 const GEMINI_MODEL = 'gemini-2.5-flash';
 const BUDGET_CEILING = parseFloat(process.env.BUDGET_CEILING_USD || '10.00');
 const S3_MAX_CHARS = 4000;
-const S4_MIN_WORDS = 1500;
 const MINDFUL_THRESHOLD = 15000; // words above which --mindful-wc acts (below this, notes have legitimate density)
 const CHUNK_WORD_LIMIT  = 5000;  // smaller chunks = shorter output per call, fewer timeouts
 
@@ -39,9 +44,14 @@ const S3_SYSTEM = 'Expert analyst extracting narrative-ready material from perso
 // ---------------------------------------------------------------------------
 const args        = process.argv.slice(2);
 const SW_VOCAB    = args.includes('--switch-vocab');
-const SW3         = args.includes('--switch3');
+// Switch-4 was a separate pass whose only real difference was sending the whole note
+// instead of a truncated excerpt. That distinction now lives in PROVIDER_CONFIG
+// (largeContext), so Switch-3 always sends the full note for capable providers and
+// a separate flag has no remaining job. --switch4 still parses, as a warned alias,
+// so an old command or cron entry degrades gracefully instead of hitting a usage error.
+const SW4_DEPRECATED = args.includes('--switch4');
+const SW3         = args.includes('--switch3') || SW4_DEPRECATED;
 const SW3_RETAG   = args.includes('--switch3-retag');
-const SW4         = args.includes('--switch4');
 const MODE_STATUS = args.includes('--status');
 const MODE_DRY    = args.includes('--dry-run');
 const SYNC_WC     = args.includes('--sync-wc');
@@ -68,22 +78,22 @@ const PROVIDER_ARG = (() => {
   return p;
 })();
 
-if (!SW_VOCAB && !SW3 && !SW3_RETAG && !SW4 && !MODE_STATUS && !SYNC_WC && !MINDFUL_WC) {
-  console.error('Usage: node tagger.js [--switch-vocab|3|4|--status|--sync-wc|--mindful-wc] [--dry-run]');
-  console.error('       [--provider gemini|openrouter|claude] [--limit N] [--file <path>] [--dry-run]');
+if (!SW_VOCAB && !SW3 && !SW3_RETAG && !MODE_STATUS && !SYNC_WC && !MINDFUL_WC) {
+  console.error('Usage: node tagger.js [--switch-vocab|--switch3|--switch3-retag|--status|--sync-wc|--mindful-wc] [--dry-run]');
+  console.error('       [--provider grok|gemini|openrouter|claude] [--limit N] [--file <path>]');
   process.exit(1);
 }
 
 // ---------------------------------------------------------------------------
 // LOGGING
 // ---------------------------------------------------------------------------
-const TRACE_PATH = path.join(process.env.QUARRY_HOME || process.env.HOME, 'dev', 'quarry', 'tagger.log');
+const TRACE_PATH = path.join(QUARRY_HOME, 'tagger.log');
 function log(level, msg, data) {
   data = data || {};
   const entry = Object.assign({ ts: new Date().toISOString(), level, msg }, data);
   const line = JSON.stringify(entry);
   console.log(line);
-  try { fs.appendFileSync(TRACE_PATH, line + '\n'); } catch(_) {}
+  if (!process.env.QUARRY_LAUNCHED) { try { fs.appendFileSync(TRACE_PATH, line + '\n'); } catch (_) {} }
 }
 
 // ---------------------------------------------------------------------------
@@ -518,7 +528,7 @@ function httpGet(hostname, pathStr, headers) {
 // API CALLERS
 // ---------------------------------------------------------------------------
 // OpenRouter free-model discovery + round-robin now delegated entirely to
-// failsafe-llm-model-resolver (fetchFreeModels/getNextFreeModel) - same
+// llm-model-resolver (fetchFreeModels/getNextFreeModel) - same
 // contract as the functions this replaces, live-fetched and cached there
 // instead of duplicated here.
 
@@ -694,7 +704,7 @@ async function callGeminiMindful(prompt, attempt, modelRetried) {
   const TIMEOUT_MS   = 5 * 60 * 1000; // 5 minutes — large outputs take time
 
   // resolveModel checks the process-wide known-bad set internally (see
-  // markModelBad in failsafe-llm-model-resolver), so once a model fails once
+  // markModelBad in llm-model-resolver), so once a model fails once
   // below, this call automatically gets the next-best live candidate on the
   // retry - no need to force a specific id here.
   const resolved = await resolveModel('gemini', GEMINI_API_KEY, { fallback: GEMINI_MODEL });
@@ -774,7 +784,7 @@ async function callGeminiMindful(prompt, attempt, modelRetried) {
 // Written immediately after each successful chunk.
 // On restart, already-written chunks are read from disk, skipping the API call.
 function chunkCacheDir(noteId) {
-  return path.join(process.env.QUARRY_HOME || process.env.HOME, 'dev', 'quarry', 'chunks', String(noteId));
+  return path.join(QUARRY_HOME, 'chunks', String(noteId));
 }
 function chunkCachePath(noteId, i) {
   return path.join(chunkCacheDir(noteId), 'chunk-'+i+'.txt');
@@ -1019,6 +1029,35 @@ function getVocabSet(db) {
   return _vocabSetCache;
 }
 
+// Writes one note's AI output (facts, trivia, tag proposals), REPLACING whatever
+// a previous run left rather than appending to it.
+//
+// Why this exists: batch runs only ever select notes with classification_at IS NULL,
+// so a note is processed once and appending was harmless. Single-note mode (--file,
+// and the "target one note" control in the admin UI) bypasses that filter on purpose -
+// re-reading a note is the whole point - and appending would then leave TWO copies of
+// every fact and trivia row and TWO batches of pending tag cards in the review queue.
+//
+// Each half is replaced only when the new run actually produced something for it.
+// A refusal or an empty parse must never wipe good data from an earlier run; the old
+// rows stay put and the caller still sees the note as processed-with-nothing-new.
+// Must be called inside the caller's transaction.
+function replaceAiOutput(db, noteId, parsed, switchLevel, vocabSet) {
+  const hasFacts = ((parsed.verified||[]).length + (parsed.trivia||[]).length) > 0;
+  if (hasFacts) db.prepare('DELETE FROM note_classifications WHERE note_id=?').run(noteId);
+  writeClassificationsToDb(db, noteId, parsed, switchLevel);
+
+  // Tags never write to note_tags directly - every suggestion, whether already in the
+  // canonical vocabulary or brand new, goes to the HIL review queue. Older pending
+  // suggestions for this note are marked superseded (kept for audit, hidden from the
+  // queue) - the same convention the AI Tag Correction pass uses.
+  if (parsed.tags && parsed.tags.length) {
+    db.prepare("UPDATE note_tag_proposals SET status='superseded', reviewed_at=? WHERE note_id=? AND status='pending'")
+      .run(new Date().toISOString(), noteId);
+    writeProposedTags(db, noteId, parsed.tags, vocabSet);
+  }
+}
+
 async function processNote(db, note, switchLevel, provider, useFullContent) {
   const body     = readNoteBody(note.filepath);
   const vocab    = getVocabList(db);
@@ -1039,16 +1078,11 @@ async function processNote(db, note, switchLevel, provider, useFullContent) {
 
   db.exec('BEGIN');
   try {
-    writeClassificationsToDb(db, note.id, parsed, switchLevel);
-    // Tags no longer write directly to note_tags - every suggestion (whether
-    // already in the canonical vocabulary or brand new) goes to the HIL
-    // review queue. This keeps the vault's real tags human-approved while
-    // still letting the model be as expressive as the note warrants.
-    if (parsed.tags && parsed.tags.length) writeProposedTags(db, note.id, parsed.tags, vocabSet);
+    replaceAiOutput(db, note.id, parsed, switchLevel, vocabSet);
     db.exec('COMMIT');
   } catch(e) { db.exec('ROLLBACK'); throw e; }
 
-  const cost = recordSpend(db, result.provider, switchLevel===4?'classifier-s4':'classifier', note.id, result.tokensIn, result.tokensOut);
+  const cost = recordSpend(db, result.provider, 'classifier', note.id, result.tokensIn, result.tokensOut);
   log('info', 'Switch-'+switchLevel+' complete', {title:note.title.slice(0,60), provider:result.provider, tagsProposed:parsed.tags.length, verified:parsed.verified.length, trivia:parsed.trivia.length, cost_usd:cost.toFixed(5)});
 }
 
@@ -1108,11 +1142,11 @@ function printStatus(db) {
   const total      = db.prepare('SELECT COUNT(*) as n FROM vault_notes').get().n;
   const tagged     = db.prepare('SELECT COUNT(*) as n FROM vault_notes WHERE has_tags=1').get().n;
   const classified = db.prepare('SELECT COUNT(DISTINCT note_id) as n FROM note_classifications').get().n;
-  const s4         = db.prepare('SELECT COUNT(DISTINCT note_id) as n FROM note_classifications WHERE switch_level=4').get().n;
   const budget     = spentToDate(db);
-  const s4cost     = db.prepare("SELECT COALESCE(SUM(cost_usd),0) as t FROM api_budget WHERE component='classifier-s4'").get().t;
   const s3calls    = db.prepare("SELECT COUNT(*) as n FROM api_budget WHERE component='classifier'").get().n;
-  const s4calls    = db.prepare("SELECT COUNT(*) as n FROM api_budget WHERE component='classifier-s4'").get().n;
+  const s3cost     = db.prepare("SELECT COALESCE(SUM(cost_usd),0) as t FROM api_budget WHERE component='classifier'").get().t;
+  const rtcalls    = db.prepare("SELECT COUNT(*) as n FROM api_budget WHERE component='retag'").get().n;
+  const rtcost     = db.prepare("SELECT COALESCE(SUM(cost_usd),0) as t FROM api_budget WHERE component='retag'").get().t;
   const orcalls    = db.prepare("SELECT COUNT(*) as n FROM api_budget WHERE provider='openrouter'").get().n;
   const mwcalls    = db.prepare("SELECT COUNT(*) as n FROM api_budget WHERE component='mindful-wc'").get().n;
   const mwcost     = db.prepare("SELECT COALESCE(SUM(cost_usd),0) as t FROM api_budget WHERE component='mindful-wc'").get().t;
@@ -1124,18 +1158,17 @@ function printStatus(db) {
   console.log('  Total notes:      '+total);
   console.log('  Tagged:           '+tagged+' ('+Math.round(tagged/total*100)+'%)');
   console.log('  Untagged:         '+(total-tagged));
-  console.log('  Classified (S3):  '+classified);
-  console.log('  Switch-4:         '+s4);
+  console.log('  Classified:       '+classified);
   console.log('\n  By tag source:');
   bySrc.forEach(r => console.log('    '+r.src.padEnd(14)+r.n));
   console.log('\n  API Budget:');
   console.log('    Ceiling:   $'+BUDGET_CEILING.toFixed(2));
   console.log('    Spent:     $'+budget.toFixed(4));
   console.log('    Remaining: $'+(BUDGET_CEILING-budget).toFixed(4));
-  console.log('    gemini/classifier:    '+s4calls+' S4 calls, $'+s4cost.toFixed(4));
-  console.log('    gemini/classifier S3: '+s3calls+' calls');
-  console.log('    gemini/mindful-wc:    '+mwcalls+' calls, $'+mwcost.toFixed(4));
-  console.log('    openrouter:           '+orcalls+' calls, $0.0000');
+  console.log('    tag suggestions + facts: '+s3calls+' calls, $'+s3cost.toFixed(4));
+  console.log('    tag correction:          '+rtcalls+' calls, $'+rtcost.toFixed(4));
+  console.log('    compress long notes:     '+mwcalls+' calls, $'+mwcost.toFixed(4));
+  console.log('    openrouter (free tier):  '+orcalls+' calls, $0.0000');
   console.log('═'.repeat(39)+'\n');
 }
 
@@ -1143,7 +1176,9 @@ function printStatus(db) {
 // MAIN
 // ---------------------------------------------------------------------------
 async function main() {
-  log('info', 'QUARRY tagger v0.8 starting', {swVocab:SW_VOCAB,sw3:SW3,sw3Retag:SW3_RETAG,sw4:SW4,syncWc:SYNC_WC,mindfulWc:MINDFUL_WC,dryRun:MODE_DRY,provider:PROVIDER_ARG||'auto'});
+  log('info', 'QUARRY tagger v0.8 starting', {swVocab:SW_VOCAB,sw3:SW3,sw3Retag:SW3_RETAG,syncWc:SYNC_WC,mindfulWc:MINDFUL_WC,dryRun:MODE_DRY,provider:PROVIDER_ARG||'auto'});
+
+  if (SW4_DEPRECATED) log('warn', '--switch4 is retired and now runs --switch3 (full-note read is automatic for capable providers). Use --file <path> to deliberately re-read one note.');
 
   const db = openDb();
 
@@ -1152,7 +1187,7 @@ async function main() {
   if (MINDFUL_WC)  { await runMindfulWc(db); if (!MODE_DRY) printStatus(db); db.close(); return; }
 
   const provider = PROVIDER_ARG || (OPENROUTER_API_KEY ? 'openrouter' : GEMINI_API_KEY ? 'gemini' : 'claude');
-  const useFullContent = SW4 || ((SW3 || SW3_RETAG) && providerHasLargeContext(provider));
+  const useFullContent = (SW3 || SW3_RETAG) && providerHasLargeContext(provider);
 
   // Select notes
   let notes = [];
@@ -1161,10 +1196,6 @@ async function main() {
     const note = db.prepare('SELECT * FROM vault_notes WHERE filepath=?').get(fp);
     if (!note) { log('error','File not in index',{filepath:fp}); db.close(); return; }
     notes = [note];
-  } else if (SW4) {
-    notes = db.prepare(
-      "SELECT * FROM vault_notes WHERE word_count>=? AND content_type IN ('article','note','video') AND id NOT IN (SELECT DISTINCT note_id FROM note_classifications WHERE switch_level=4) ORDER BY word_count DESC LIMIT ?"
-    ).all(S4_MIN_WORDS, LIMIT===Infinity?999999:LIMIT);
   } else if (SW3) {
     notes = db.prepare(
       "SELECT * FROM vault_notes WHERE classification_at IS NULL AND content_type IN ('article','note','video') AND word_count>200 ORDER BY word_count DESC LIMIT ?"
@@ -1203,8 +1234,8 @@ async function main() {
           }
         }
       }
-      if (SW3 || SW4) {
-        await processNote(db, note, SW3?3:4, provider, useFullContent);
+      if (SW3) {
+        await processNote(db, note, 3, provider, useFullContent);
       }
       if (SW3_RETAG) {
         await processNoteRetag(db, note, provider, useFullContent);

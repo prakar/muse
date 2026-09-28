@@ -9,3 +9,4 @@ curator.log
 narrator.log
 tagger.log
 runtime-trace.jsonl
+chunks/

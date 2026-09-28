@@ -12,9 +12,13 @@
 
 const fs   = require('fs');
 const path = require('path');
+// QUARRY_HOME is the quarry directory itself (default ~/dev/quarry): the DB, logs and chunk caches live
+// directly under it. (These scripts once treated it as a PARENT and appended dev/quarry, which doubles
+// the path when QUARRY_HOME=$HOME/dev/quarry - the convention writeback.js and the docs use.)
+const QUARRY_HOME = process.env.QUARRY_HOME || path.join(process.env.HOME, 'dev', 'quarry');
 const { DatabaseSync } = require('node:sqlite');
 
-const DB_PATH = process.env.QUARRY_DB || path.join(process.env.QUARRY_HOME || process.env.HOME, 'dev', 'quarry', 'vault.db');
+const DB_PATH = process.env.QUARRY_DB || path.join(QUARRY_HOME, 'vault.db');
 
 // ---------------------------------------------------------------------------
 // CLI

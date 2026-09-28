@@ -8,14 +8,18 @@
 const http  = require('http');
 const fs    = require('fs');
 const path  = require('path');
+// QUARRY_HOME is the quarry directory itself (default ~/dev/quarry): the DB, logs and chunk caches live
+// directly under it. (These scripts once treated it as a PARENT and appended dev/quarry, which doubles
+// the path when QUARRY_HOME=$HOME/dev/quarry - the convention writeback.js and the docs use.)
+const QUARRY_HOME = process.env.QUARRY_HOME || path.join(process.env.HOME, 'dev', 'quarry');
 const { insertNoteTag } = require('./lib/tags');
 const cp    = require('child_process');
 const { DatabaseSync } = require('node:sqlite');
 
-const DB_PATH   = process.env.QUARRY_DB    || path.join(process.env.QUARRY_HOME || process.env.HOME, 'dev', 'quarry', 'vault.db');
+const DB_PATH   = process.env.QUARRY_DB    || path.join(QUARRY_HOME, 'vault.db');
 const VAULT_DIR = process.env.VAULT_PATH   || path.join(process.env.HOME, 'vault');
-const CODE_DIR  = path.join(process.env.QUARRY_HOME || process.env.HOME, 'dev', 'quarry', 'code');
-const LOG_DIR   = path.join(process.env.QUARRY_HOME || process.env.HOME, 'dev', 'quarry');
+const CODE_DIR  = __dirname;   // server.js sits next to the scripts it launches; no environment guesswork
+const LOG_DIR   = QUARRY_HOME;
 const PORT      = (() => { const i = process.argv.indexOf('--port'); return i !== -1 ? parseInt(process.argv[i+1],10) : 3001; })();
 const HERE      = path.dirname(process.argv[1] || __filename);
 const API_TOKEN = process.env.QUARRY_API_TOKEN || ''; // if set, required on mutating API routes via X-Quarry-Token
@@ -226,6 +230,14 @@ function vaultPage() {
 function taggerPage() {
   return `<p class="page-title">Tagger — classify and tag vault notes</p>
 
+<div class="ctrl-panel" id="single-note-panel">
+  <h3>Target one specific note <span style="color:#666;font-weight:normal;font-size:.75rem">(optional)</span></h3>
+  <p style="color:#666;font-size:.78rem;margin-bottom:10px">Search for a note and pick it, and the Quick Tag Match, AI Tag Suggestions, and AI Tag Correction buttons below will run on that one note instead of working through the whole vault. Re-running a note replaces its earlier facts, trivia, and pending tag suggestions rather than adding duplicates, so this is also how you give an important note a fresh, full read. Compress and video extraction ignore the selection.</p>
+  <input id="single-note-q" type="text" class="single-note-input" placeholder="Type part of a note title (2+ letters)..." autocomplete="off">
+  <div id="single-note-results" class="single-note-results"></div>
+  <div id="single-note-active" class="single-note-active" style="display:none"></div>
+</div>
+
 <div class="ctrl-panel">
   <h3>1. Quick Tag Match <span style="color:#666;font-weight:normal;font-family:monospace;font-size:.75rem">(switch-vocab)</span></h3>
   <p style="color:#666;font-size:.78rem;margin-bottom:10px">Free, no AI call. Matches each untagged note's filename/title/first paragraph against tags you already have in the canonical vocabulary. Fast, zero cost, but only ever reuses existing tags - never invents anything new. Good first pass before spending on the AI passes below.</p>
@@ -236,7 +248,7 @@ function taggerPage() {
 
 <div class="ctrl-panel">
   <h3>2. AI Tag Suggestions + Facts &amp; Trivia <span style="color:#666;font-weight:normal;font-family:monospace;font-size:.75rem">(switch-3)</span></h3>
-  <p style="color:#666;font-size:.78rem;margin-bottom:10px">The main AI pass. Reads each untagged/unclassified note, proposes tags (landing in the Tag Review queue - nothing is applied automatically), and extracts verified facts + trivia for narrative generation. This is what most of your API spend goes to.</p>
+  <p style="color:#666;font-size:.78rem;margin-bottom:10px">The main AI pass. Reads each untagged/unclassified note in full, proposes tags (landing in the Tag Review queue - nothing is applied automatically), and extracts verified facts + trivia for narrative generation. Grok, Gemini, and Claude read the whole note; OpenRouter's free models read only the first ~4,000 characters because their context limits are unpredictable, so pick one of the other three when the back half of a long note matters. This is what most of your API spend goes to.</p>
   <div class="ctrl-row">
     <div class="field"><label>Limit:</label><input id="s3-limit" type="number" value="500" min="1" max="5000"></div>
     <div class="field"><label>Provider:</label><select id="s3-prov"><option value="grok">grok</option><option value="openrouter">openrouter</option><option value="gemini">gemini</option><option value="claude">claude</option></select></div>
@@ -255,18 +267,7 @@ function taggerPage() {
 </div>
 
 <div class="ctrl-panel">
-  <h3>4. Full-Document Deep Read <span style="color:#666;font-weight:normal;font-family:monospace;font-size:.75rem">(switch-4)</span></h3>
-  <p style="color:#666;font-size:.78rem;margin-bottom:10px">Sends the ENTIRE note body, no truncation - for your longest/richest notes where a partial read would miss the point. Restricted to large-context-window providers only; a free OpenRouter model can silently truncate a long document and give a shallow read without telling you.</p>
-  <div class="ctrl-row">
-    <div class="field"><label>Limit:</label><input id="s4-limit" type="number" value="20" min="1" max="500"></div>
-    <div class="field"><label>Provider:</label><select id="s4-prov"><option value="gemini">gemini</option><option value="grok">grok</option></select></div>
-    <button class="btn btn-primary" type="button" data-action="run-s4">Run Full-Document Deep Read</button>
-    <button class="btn btn-grey" type="button" data-action="run-cmd" data-cmd="sw4-dry" data-label="Full-Document dry run">Dry run</button>
-  </div>
-</div>
-
-<div class="ctrl-panel">
-  <h3>5. Compress Overlong Notes <span style="color:#666;font-weight:normal;font-family:monospace;font-size:.75rem">(mindful-wc)</span></h3>
+  <h3>4. Compress Overlong Notes <span style="color:#666;font-weight:normal;font-family:monospace;font-size:.75rem">(mindful-wc)</span></h3>
   <p style="color:#666;font-size:.78rem;margin-bottom:10px">For notes over 15,000 words - summarizes them down to a manageable size so later AI passes can afford to read the whole thing.</p>
   <div class="ctrl-row">
     <div class="field"><label>Limit:</label><input id="mwc-limit" type="number" value="5" min="1" max="50"></div>
@@ -276,7 +277,7 @@ function taggerPage() {
 </div>
 
 <div class="ctrl-panel">
-  <h3>6. Extract Video Links</h3>
+  <h3>5. Extract Video Links</h3>
   <p style="color:#666;font-size:.78rem;margin-bottom:10px">Scans every note for embedded video URLs (YouTube, Vimeo, etc) and stores them for the Video Links report. No AI, just pattern matching.</p>
   <div class="ctrl-row">
     <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="extract-video" data-label="Extract video links">Extract video links from all notes</button>
@@ -340,7 +341,6 @@ function queuePage(db, params) {
   const offset   = (page-1)*PAGE_SIZE;
   const total    = db.prepare("SELECT COUNT(*) as n FROM narrative_queue WHERE status='queued'").get().n;
   const items    = db.prepare("SELECT id,note_ids,seed_theme,priority_score,created_at FROM narrative_queue WHERE status='queued' ORDER BY priority_score DESC,id LIMIT ? OFFSET ?").all(PAGE_SIZE,offset);
-  const s4ids    = new Set(db.prepare('SELECT DISTINCT note_id FROM note_classifications WHERE switch_level=4').all().map(r=>r.note_id));
 
   const rows = items.map(item => {
     let noteIds=[];try{noteIds=JSON.parse(item.note_ids);}catch(_){}
@@ -348,7 +348,7 @@ function queuePage(db, params) {
 
     const noteCells = notes.map(n=>`
       <div class="q-note" data-action="open-note" data-id="${n.id}">
-        <div class="qt">${n.s4?'<span class="s4-dot"></span>':''}`+escHtml(n.title.slice(0,60))+`</div>
+        <div class="qt">`+escHtml(n.title.slice(0,60))+`</div>
         <div class="qm">${n.word_count}w · ${escHtml(friendlyTagSource(n.tag_source))}</div>
       </div>`).join('');
 
@@ -388,8 +388,7 @@ const REPORTS = [
     desc: 'Total notes, tagged %, classified counts, unclassified by size bucket',
     sql: `SELECT 'Total notes' as metric, COUNT(*) as value FROM vault_notes
           UNION ALL SELECT 'Tagged', COUNT(*) FROM vault_notes WHERE has_tags=1
-          UNION ALL SELECT 'Classified S3/S4', COUNT(DISTINCT note_id) FROM note_classifications
-          UNION ALL SELECT 'Switch-4 specifically', COUNT(DISTINCT note_id) FROM note_classifications WHERE switch_level=4
+          UNION ALL SELECT 'Classified (facts + trivia)', COUNT(DISTINCT note_id) FROM note_classifications
           UNION ALL SELECT 'quarry_exclude', COUNT(*) FROM vault_notes WHERE quarry_exclude=1
           UNION ALL SELECT 'Stubs unclassified', COUNT(*) FROM vault_notes WHERE word_count<200 AND classification_at IS NULL
           UNION ALL SELECT 'Short unclassified (200-1k)', COUNT(*) FROM vault_notes WHERE word_count BETWEEN 200 AND 999 AND classification_at IS NULL AND content_type IN ('article','note','video')
@@ -437,18 +436,6 @@ const REPORTS = [
     sql: `SELECT id, title, word_count, content_type,
           CASE WHEN quarry_exclude=1 THEN 'excluded' ELSE '' END as excluded
           FROM vault_notes WHERE word_count>15000
-          ORDER BY word_count DESC LIMIT 30`
-  },
-  {
-    id: 'sw4-candidates',
-    title: 'Switch-4 Candidates',
-    desc: 'Unclassified notes >1500 words ordered by richness potential',
-    sql: `SELECT id, title, word_count, content_type
-          FROM vault_notes
-          WHERE word_count>=1500
-          AND classification_at IS NULL
-          AND content_type IN ('article','note','video')
-          AND (quarry_exclude IS NULL OR quarry_exclude=0)
           ORDER BY word_count DESC LIMIT 30`
   },
   {
@@ -515,7 +502,6 @@ function notesPage(db, params) {
   let where="WHERE content_type!='attachment'";
   if(filter==='classified')   where+=' AND classification_at IS NOT NULL';
   if(filter==='unclassified') where+=' AND classification_at IS NULL';
-  if(filter==='s4')           where+=' AND id IN (SELECT DISTINCT note_id FROM note_classifications WHERE switch_level=4)';
   if(filter==='tagged')       where+=' AND has_tags=1';
   if(filter==='untagged')     where+=' AND has_tags=0';
   if(filter==='excluded')     where+=' AND quarry_exclude=1';
@@ -532,19 +518,17 @@ function notesPage(db, params) {
   const orderBy=sort==='title'?'title ASC':sort==='date'?'file_mtime DESC':'word_count DESC';
   const total=db.prepare('SELECT COUNT(*) as n FROM vault_notes '+where).get(...bind).n;
   const notes=db.prepare('SELECT id,title,word_count,content_type,origin,first_paragraph,tag_source,classification_at,quarry_exclude FROM vault_notes '+where+' ORDER BY '+orderBy+' LIMIT ? OFFSET ?').all(...bind, PS, offset);
-  const s4ids=new Set(db.prepare('SELECT DISTINCT note_id FROM note_classifications WHERE switch_level=4').all().map(r=>r.note_id));
   const totalPages=Math.ceil(total/PS);
 
   function pl(p){return '/notes?page='+p+'&filter='+encodeURIComponent(filter)+'&sort='+sort+'&q='+encodeURIComponent(search);}
 
   const rows=notes.map(n=>{
     const ex=(n.first_paragraph||'').slice(0,130).replace(/\n/g,' ');
-    const s4=s4ids.has(n.id)?'<span class="s4-dot" title="Switch-4"></span>':'';
     const dim=n.quarry_exclude?' style="opacity:.4"':'';
-    return '<tr data-action="open-note" data-id="'+n.id+'"'+dim+'><td><div class="nt">'+s4+escHtml(n.title)+'</div><div class="nx">'+escHtml(ex)+'</div></td><td class="nm">'+n.word_count+'w</td><td class="nm">'+escHtml(n.content_type)+'</td><td class="nm">'+escHtml(n.origin)+'</td><td class="ntag">'+escHtml(friendlyTagSource(n.tag_source))+(n.classification_at?'<br><span style="color:#2a5a2a">✓</span>':'')+'</td></tr>';
+    return '<tr data-action="open-note" data-id="'+n.id+'"'+dim+'><td><div class="nt">'+escHtml(n.title)+'</div><div class="nx">'+escHtml(ex)+'</div></td><td class="nm">'+n.word_count+'w</td><td class="nm">'+escHtml(n.content_type)+'</td><td class="nm">'+escHtml(n.origin)+'</td><td class="ntag">'+escHtml(friendlyTagSource(n.tag_source))+(n.classification_at?'<br><span style="color:#2a5a2a">✓</span>':'')+'</td></tr>';
   }).join('');
 
-  const fOpts=[['all','All'],['article','Articles'],['note','Notes'],['stub','Stubs'],['video','Video'],['classified','Classified'],['unclassified','Unclassified'],['s4','Switch-4'],['tagged','Tagged'],['untagged','Untagged'],['excluded','Excluded']];
+  const fOpts=[['all','All'],['article','Articles'],['note','Notes'],['stub','Stubs'],['video','Video'],['classified','Classified'],['unclassified','Unclassified'],['tagged','Tagged'],['untagged','Untagged'],['excluded','Excluded']];
   const sOpts=[['words','Words'],['title','Title'],['date','Date']];
   const toolbar='<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px;background:#141414;border:1px solid #2a2a2a;border-radius:6px;padding:12px 16px">'+
     '<label style="font-size:.8rem;color:#888">Filter: <select onchange="applyNF()" id="nf-sel" style="background:#0f0f0f;border:1px solid #333;color:#aaa;padding:4px 8px;border-radius:4px;font-size:.8rem">'+fOpts.map(([v,l])=>'<option value="'+v+'"'+(filter===v?' selected':'')+'>'+l+'</option>').join('')+'</select></label>'+
@@ -744,9 +728,8 @@ node --no-warnings ~/dev/quarry/code/tagger.js --switch3-retag --provider grok  
 <p style="color:#999;font-size:.85rem;margin-bottom:10px">The "Switch-N" names are Quarry-internal history, not self-explanatory - use this table to translate.</p>
 <table class="report-result" style="margin-top:0"><tbody>
 <tr><td style="color:#c8b89a;white-space:nowrap">Quick Tag Match<br><span style="color:#666;font-family:monospace;font-size:.72rem">switch-vocab</span></td><td>Fallback only - see note above. Free, no AI reading. Matches a note's filename/title/first paragraph against tags already in your vocabulary. Never invents a new tag.</td></tr>
-<tr><td style="color:#c8b89a;white-space:nowrap">AI Tag Suggestions<br>+ Facts &amp; Trivia<br><span style="color:#666;font-family:monospace;font-size:.72rem">switch-3</span></td><td>The recommended default pass. AI reads the whole note, proposes tags (to the Tag Review queue, never auto-applied), extracts verified facts + trivia.</td></tr>
+<tr><td style="color:#c8b89a;white-space:nowrap">AI Tag Suggestions<br>+ Facts &amp; Trivia<br><span style="color:#666;font-family:monospace;font-size:.72rem">switch-3</span></td><td>The recommended default pass. AI reads the whole note, proposes tags (to the Tag Review queue, never auto-applied), extracts verified facts + trivia. Grok, Gemini, and Claude read the entire note; OpenRouter's free models read only the first ~4,000 characters.</td></tr>
 <tr><td style="color:#c8b89a;white-space:nowrap">AI Tag Correction<br><span style="color:#666;font-family:monospace;font-size:.72rem">switch-3-retag</span></td><td>Re-reviews an already-tagged note (real tags or still-pending proposals) and corrects it against the current ontology rules - drops attribution tags, collapses redundant categories, fixes bad hierarchy, swaps an overly-specific instance tag for the right general category. Old pending proposals for that note are marked <em>superseded</em> and replaced, so the queue never shows both versions at once. Doesn't touch facts/trivia.</td></tr>
-<tr><td style="color:#c8b89a;white-space:nowrap">Full-Document Deep Read<br><span style="color:#666;font-family:monospace;font-size:.72rem">switch-4</span></td><td>Sends the whole note, no truncation. For your longest/richest notes. Restricted to large-context providers (Gemini, Grok) - a free OpenRouter model can silently truncate a long document.</td></tr>
 <tr><td style="color:#c8b89a;white-space:nowrap">Compress Overlong Notes<br><span style="color:#666;font-family:monospace;font-size:.72rem">mindful-wc</span></td><td>For notes over 15,000 words - summarizes them so later passes can afford a full read.</td></tr>
 </tbody></table>
 
@@ -770,13 +753,22 @@ node --no-warnings ~/dev/quarry/code/tagger.js --switch3-retag --provider grok  
 <pre class="log-box" style="color:#ccc">--switch-vocab            Quick Tag Match - fallback only, zero-cost, matches canonical tag_vocabulary
 --switch3                 AI Tag Suggestions + Facts &amp; Trivia -&gt; note_tag_proposals (HIL queue)
 --switch3-retag           AI Tag Correction - re-reviews already-tagged notes, supersedes old proposals
---switch4                 Full-Document Deep Read (word_count&gt;=threshold, no truncation)
+--switch4                 RETIRED - now just runs --switch3. Use --file to re-read one note.
 --limit N                 cap notes processed this run
 --provider grok|gemini|openrouter|claude
---file &lt;path&gt;             target one specific note (any pass) - use exact path, no extra quoting
+--file &lt;path&gt;             target one specific note - works with --switch-vocab, --switch3, --switch3-retag
+                          (the Tagger page has a search box for this, so you never type a path)
 --dry-run                 show what would happen, write nothing
 --status                  print current tagging/budget status and exit
 </pre>
+
+<h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">Re-reading a single note</h2>
+<ul style="color:#ccc;font-size:.85rem;line-height:1.8;padding-left:20px">
+<li>On the Tagger page, use <strong>Target one specific note</strong>: search by title, pick the note, and Quick Tag Match, AI Tag Suggestions and AI Tag Correction run on that note only. An amber banner stays visible while a note is selected, so a whole-vault run can't be started by accident.</li>
+<li>Re-running replaces the note's earlier facts, trivia and pending tag suggestions instead of adding a second copy. Suggestions you already approved or rejected are never touched, and if the model returns nothing usable (a refusal, an empty answer) the earlier results are kept.</li>
+<li>Compress and video extraction ignore the selected note.</li>
+<li>This replaces the old separate full-document pass: a normal AI Tag Suggestions run already reads the whole note for Grok, Gemini and Claude, so the only thing left to do deliberately is re-read one note.</li>
+</ul>
 
 <h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">Tag Review workflow (/review-tags)</h2>
 <ul style="color:#ccc;font-size:.85rem;line-height:1.8;padding-left:20px">
@@ -849,12 +841,11 @@ function statsPage(db) {
   const total      = db.prepare('SELECT COUNT(*) as n FROM vault_notes').get().n;
   const tagged     = db.prepare('SELECT COUNT(*) as n FROM vault_notes WHERE has_tags=1').get().n;
   const classified = db.prepare('SELECT COUNT(DISTINCT note_id) as n FROM note_classifications').get().n;
-  const s4         = db.prepare('SELECT COUNT(DISTINCT note_id) as n FROM note_classifications WHERE switch_level=4').get().n;
   const excluded   = db.prepare('SELECT COUNT(*) as n FROM vault_notes WHERE quarry_exclude=1').get().n;
   const narratives = db.prepare('SELECT COUNT(*) as n FROM narratives').get().n;
   const approved   = db.prepare("SELECT COUNT(*) as n FROM narratives WHERE approval_status='approved'").get().n;
   const budget     = db.prepare('SELECT COALESCE(SUM(cost_usd),0) as t FROM api_budget').get().t;
-  const s4cost     = db.prepare("SELECT COALESCE(SUM(cost_usd),0) as t FROM api_budget WHERE component='classifier-s4'").get().t;
+  const apiCalls   = db.prepare('SELECT COUNT(*) as n FROM api_budget').get().n;
   const tagPct=Math.round(tagged/total*100), clsPct=Math.round(classified/total*100);
   const byType=db.prepare("SELECT content_type,COUNT(*) as n FROM vault_notes GROUP BY content_type ORDER BY n DESC").all();
   const byOrigin=db.prepare("SELECT origin,COUNT(*) as n FROM vault_notes GROUP BY origin ORDER BY n DESC").all();
@@ -871,9 +862,9 @@ function statsPage(db) {
 <div class="stat-grid">
   <div class="stat-card"><div class="num">${total.toLocaleString()}</div><div class="lbl">Total Notes</div></div>
   <div class="stat-card"><div class="num">${tagged.toLocaleString()}</div><div class="lbl">Tagged</div><div class="progress-bar"><div class="progress-fill" style="width:${tagPct}%"></div></div><div class="sub">${tagPct}%</div></div>
-  <div class="stat-card"><div class="num">${classified.toLocaleString()}</div><div class="lbl">Classified</div><div class="progress-bar"><div class="progress-fill" style="width:${clsPct}%;background:#1a4a2a"></div></div><div class="sub">${clsPct}% · ${s4} S4</div></div>
+  <div class="stat-card"><div class="num">${classified.toLocaleString()}</div><div class="lbl">Classified</div><div class="progress-bar"><div class="progress-fill" style="width:${clsPct}%;background:#1a4a2a"></div></div><div class="sub">${clsPct}% of vault</div></div>
   <div class="stat-card"><div class="num">${narratives}</div><div class="lbl">Narratives</div><div class="sub">${approved} approved</div></div>
-  <div class="stat-card"><div class="num">$${budget.toFixed(3)}</div><div class="lbl">API Spend</div><div class="sub">S4: $${s4cost.toFixed(3)}</div></div>
+  <div class="stat-card"><div class="num">$${budget.toFixed(3)}</div><div class="lbl">API Spend</div><div class="sub">${apiCalls.toLocaleString()} API calls</div></div>
   <div class="stat-card"><div class="num">${excluded}</div><div class="lbl">Excluded</div></div>
 </div>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
@@ -894,17 +885,26 @@ const FLAGS = ['--no-warnings'];
 
 // Map from cmd → {session, logFile, args(body)=>string[]}
 // logFile is relative to LOG_DIR. git-pull and index use their own logs.
+// Optional single-note targeting for the tagger passes that accept --file.
+// Anything outside the vault is rejected here, so a hand-crafted request can't point
+// the tagger at an arbitrary path (tagger.js also refuses files that aren't indexed).
+function fileArgs(b) {
+  if (!b.file) return [];
+  const fp   = path.resolve(String(b.file));
+  const root = path.resolve(VAULT_DIR) + path.sep;
+  if (!fp.startsWith(root)) throw new Error('file must be inside the vault');
+  return ['--file', fp];
+}
+
 const CMD_MAP = {
   'git-pull':          { session:'quarry-git',      log:'git.log',      build: ()=>['git',['-C',VAULT_DIR,'pull','origin','master']] },
   'git-pull-diff':     { session:'quarry-git',      log:'git.log',      build: (b,C)=>['bash',['-c', 'git -C '+VAULT_DIR+' pull origin master && '+NODE+' '+FLAGS.join(' ')+' '+path.join(C,'indexer.js')+' --diff']] },
   'index-diff':        { session:'quarry-index',    log:'indexer.log',  build: (b,C)=>[NODE,[...FLAGS,path.join(C,'indexer.js'),'--diff']] },
   'index-full':        { session:'quarry-index',    log:'indexer.log',  build: (b,C)=>[NODE,[...FLAGS,path.join(C,'indexer.js')]] },
   'sync-wc':           { session:'quarry-syncwc',   log:'sync-wc.log',  build: (b,C)=>[NODE,[...FLAGS,path.join(C,'tagger.js'),'--sync-wc']] },
-  'sw-vocab':          { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>[NODE,[...FLAGS,path.join(C,'tagger.js'),'--switch-vocab']] },
-  'sw3':               { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>{ const a=[NODE,[...FLAGS,path.join(C,'tagger.js'),'--switch3']]; if(b.limit)a[1].push('--limit',String(b.limit)); if(b.provider)a[1].push('--provider',b.provider); return a; } },
-  'sw4':               { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>{ const a=[NODE,[...FLAGS,path.join(C,'tagger.js'),'--switch4']]; if(b.limit)a[1].push('--limit',String(b.limit)); a[1].push('--provider',b.provider||'gemini'); return a; } },
-  'sw3-retag':         { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>{ const a=[NODE,[...FLAGS,path.join(C,'tagger.js'),'--switch3-retag']]; if(b.limit)a[1].push('--limit',String(b.limit)); if(b.provider)a[1].push('--provider',b.provider); return a; } },
-  'sw4-dry':           { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>[NODE,[...FLAGS,path.join(C,'tagger.js'),'--switch4','--dry-run','--limit','10']] },
+  'sw-vocab':          { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>[NODE,[...FLAGS,path.join(C,'tagger.js'),'--switch-vocab',...fileArgs(b)]] },
+  'sw3':               { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>{ const a=[NODE,[...FLAGS,path.join(C,'tagger.js'),'--switch3',...fileArgs(b)]]; if(b.limit)a[1].push('--limit',String(b.limit)); if(b.provider)a[1].push('--provider',b.provider); return a; } },
+  'sw3-retag':         { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>{ const a=[NODE,[...FLAGS,path.join(C,'tagger.js'),'--switch3-retag',...fileArgs(b)]]; if(b.limit)a[1].push('--limit',String(b.limit)); if(b.provider)a[1].push('--provider',b.provider); return a; } },
   'mwc':               { session:'quarry-mwc',      log:'tagger.log',   build: (b,C)=>{ const a=[NODE,[...FLAGS,path.join(C,'tagger.js'),'--mindful-wc']]; if(b.limit)a[1].push('--limit',String(b.limit)); return a; } },
   'mwc-dry':           { session:'quarry-mwc',      log:'tagger.log',   build: (b,C)=>[NODE,[...FLAGS,path.join(C,'tagger.js'),'--mindful-wc','--dry-run']] },
   'extract-video':     { session:'quarry-video',    log:'video.log',    build: (b,C)=>[NODE,[...FLAGS,path.join(C,'extract_video_links.js')]] },
@@ -920,10 +920,22 @@ const CMD_MAP = {
 
 function launchInTmux(session, logFile, executable, args) {
   const logPath = path.join(LOG_DIR, logFile);
+  // Fail loudly. A missing log directory or script used to surface only as a shell error on the server's
+  // stderr, while the UI reported "started" - so a dead command looked like a healthy one.
+  fs.mkdirSync(LOG_DIR, { recursive: true });
+  if (executable === NODE) {
+    const script = args.find(a => String(a).endsWith('.js'));
+    if (script && !fs.existsSync(script)) throw new Error('script not found: ' + script + ' - check QUARRY_HOME (it must be the quarry directory itself, e.g. ~/dev/quarry)');
+  }
   // Build the shell command that runs inside tmux
   // Redirect both stdout and stderr to the log file (append), then also to console
   const quotedArgs = [executable].concat(args).map(a=>"'"+String(a).replace(/'/g,"'\\''")+"'").join(' ');
-  const shellCmd = quotedArgs + ' >> '+logPath+' 2>&1';
+  // QUARRY_LAUNCHED tells the script its stdout is already being captured into this log file, so it must
+  // not also append every line to that same file itself (that would write each line twice). It is set IN
+  // THE COMMAND rather than through the spawn environment: tmux starts a new session's processes from the
+  // tmux SERVER's environment, so a variable given to the tmux client is silently dropped whenever a tmux
+  // server is already running (the quarry-server session guarantees one is).
+  const shellCmd = 'QUARRY_LAUNCHED=1 ' + quotedArgs + ' >> '+logPath+' 2>&1';
 
   // Kill existing session — ignore error if session doesn't exist yet
   try { cp.execFileSync('tmux',['kill-session','-t',session],{stdio:'ignore'}); } catch(_){}
@@ -1137,6 +1149,19 @@ function router(req, res) {
   }
 
   // --- API: get note ---
+  // --- API: find notes by title (powers the Tagger page's single-note picker) ---
+  if (method==='GET' && url==='/api/notes/find') {
+    const q = (params.get('q')||'').trim();
+    if (q.length < 2) { json([]); return; }
+    const db = openDb(); ensureSchema(db);
+    // Escape LIKE wildcards in the user's text so "50%" or "a_b" match literally.
+    const like = '%' + q.replace(/[\\%_]/g, function(m){ return '\\' + m; }) + '%';
+    const rows = db.prepare("SELECT id,title,word_count,filepath FROM vault_notes WHERE title LIKE ? ESCAPE '\\' AND content_type!='attachment' ORDER BY word_count DESC LIMIT 10").all(like);
+    db.close();
+    json(rows.map(function(r){ return { id:r.id, title:r.title, word_count:r.word_count, filepath:r.filepath, rel:path.relative(VAULT_DIR, r.filepath) }; }));
+    return;
+  }
+
   const noteMatch = url.match(/^\/api\/notes\/(\d+)$/);
   if (method==='GET' && noteMatch) {
     const id=parseInt(noteMatch[1],10);

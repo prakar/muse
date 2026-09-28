@@ -63,7 +63,17 @@ nav a:hover,nav a.active{color:#c8b89a;border-color:#555;text-decoration:none}
 .nx{color:#555;font-size:.75rem;margin-top:2px;max-width:440px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nm{color:#444;font-size:.72rem;white-space:nowrap}
 .ntag{font-size:.68rem;color:#5a4a3a;font-family:monospace}
-.s4-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#5a3e1a;margin-right:3px}
+/* Single-note targeting (Tagger page) */
+.single-note-input{width:100%;background:#0f0f0f;border:1px solid #333;color:#ccc;padding:8px 12px;border-radius:4px;font-size:.88rem;font-family:Georgia,serif}
+.single-note-input:focus{outline:none;border-color:#5a3e1a}
+.single-note-results{margin-top:6px}
+.single-note-row{padding:7px 10px;border:1px solid #2a2a2a;border-top:none;background:#141414;cursor:pointer;line-height:1.4}
+.single-note-row:first-child{border-top:1px solid #2a2a2a;border-radius:4px 4px 0 0}
+.single-note-row:last-child{border-radius:0 0 4px 4px}
+.single-note-row:hover{background:#1c1c1c;border-color:#444}
+.single-note-empty{color:#666;font-size:.8rem;padding:6px 2px}
+.single-note-active{margin-top:10px;padding:10px 14px;border:1px solid #8a6a2a;background:#1f1a0e;border-radius:6px;color:#e0c890;font-size:.85rem;line-height:1.9}
+.single-note-path{color:#8a7a5a;font-family:monospace;font-size:.72rem;margin:0 10px}
 /* Review */
 .cb-exclude{width:15px;height:15px;accent-color:#c86e6e;cursor:pointer}
 .btn-save{background:#1a3a1a;color:#6ec86e;border:1px solid #2a5a2a;padding:7px 20px;border-radius:4px;font-size:.85rem;cursor:pointer;font-family:Georgia,serif}
