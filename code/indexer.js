@@ -21,6 +21,7 @@ const path = require('path');
 // the path when QUARRY_HOME=$HOME/dev/quarry - the convention writeback.js and the docs use.)
 const QUARRY_HOME = process.env.QUARRY_HOME || path.join(process.env.HOME, 'dev', 'quarry');
 const { DatabaseSync } = require('node:sqlite');
+const { openDatabase } = require('./lib/db');   // sets a busy timeout - see lib/db.js
 
 // ---------------------------------------------------------------------------
 // CONFIG
@@ -42,13 +43,15 @@ const MODE_FULL  = args.includes('--full');
 const MODE_DIFF  = args.includes('--diff');
 const MODE_DRY   = args.includes('--dry-run');
 const MODE_STATS = args.includes('--stats');
+// --force-prune: allow removing more notes than the safety limit in one run (see pruneOrphans)
+const FORCE_PRUNE = args.includes('--force-prune');
 const SINGLE_FILE = (() => {
   const i = args.indexOf('--file');
   return i !== -1 ? args[i + 1] : null;
 })();
 
 if (!MODE_FULL && !MODE_DIFF && !MODE_DRY && !MODE_STATS && !SINGLE_FILE) {
-  console.error('Usage: node indexer.js [--full|--diff|--dry-run|--stats|--file <path>]');
+  console.error('Usage: node indexer.js [--full|--diff|--dry-run|--stats|--file <path>] [--force-prune]');
   process.exit(1);
 }
 
@@ -73,11 +76,11 @@ function log(level, msg, data) {
 function openDb() {
   if (MODE_DRY) return new DatabaseSync(':memory:');
   if (MODE_STATS) {
-    if (fs.existsSync(DB_PATH)) return new DatabaseSync(DB_PATH);
+    if (fs.existsSync(DB_PATH)) return openDatabase(DB_PATH);
     return new DatabaseSync(':memory:');
   }
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
-  return new DatabaseSync(DB_PATH);
+  return openDatabase(DB_PATH);
 }
 
 function initSchema(db) {
@@ -449,14 +452,120 @@ function upsertNote(db, r) {
   return db.prepare('SELECT id FROM vault_notes WHERE filepath = ?').get(r.filepath).id;
 }
 
-function replaceTags(db, noteId, tags) {
-  db.prepare('DELETE FROM note_tags WHERE note_id = ?').run(noteId);
+// A note's tags come from two places: its frontmatter (the file on disk), and Quarry itself -
+// Quick Tag Match, AI suggestions a human approved, custom tags typed in Tag Review. Quarry's own
+// tags exist ONLY in this database; they have never been written back to the files.
+//
+// This used to DELETE every tag and re-insert the frontmatter ones, so any edit to a note
+// (in Obsidian, by git pull, by writeback.js) followed by Vault Sync silently erased every tag
+// Quarry had added to it - and "Full re-index" erased them vault-wide.
+//
+// Now: notes whose tag_source says Quarry tagged them keep all their tags and get the
+// frontmatter ones merged in. Only notes still tagged purely from frontmatter ('original' or
+// never tagged) are replaced wholesale, so removing a tag in Obsidian still works for those.
+// Trade-off, deliberately accepted: removing a frontmatter tag from a Quarry-tagged note does
+// not remove it here - untag it in Quarry instead. A lost tag is worse than a stale one.
+function isQuarryTagged(tagSource) {
+  return !!tagSource && tagSource !== 'original';
+}
+
+function writeNoteTags(db, noteId, tags) {
+  var row = db.prepare('SELECT tag_source FROM vault_notes WHERE id = ?').get(noteId);
+  var keepExisting = isQuarryTagged(row && row.tag_source);
+  if (!keepExisting) db.prepare('DELETE FROM note_tags WHERE note_id = ?').run(noteId);
+  // INSERT OR IGNORE relies on the unique (note_id, tag_full) index added by migration M011.
   var insertTag = db.prepare(
-    'INSERT INTO note_tags (note_id, tag_full, tag_root, tag_leaf, is_hierarchical) VALUES (@note_id, @tag_full, @tag_root, @tag_leaf, @is_hierarchical)'
+    'INSERT OR IGNORE INTO note_tags (note_id, tag_full, tag_root, tag_leaf, is_hierarchical) VALUES (@note_id, @tag_full, @tag_root, @tag_leaf, @is_hierarchical)'
   );
   for (var i = 0; i < tags.length; i++) {
     var t = tags[i];
     insertTag.run({ note_id: noteId, tag_full: t.tag_full, tag_root: t.tag_root, tag_leaf: t.tag_leaf, is_hierarchical: t.is_hierarchical });
+  }
+  // upsertNote set has_tags from the frontmatter alone; correct it from what the note really has,
+  // or a Quarry-tagged note with no frontmatter tags would look untagged and be re-queued.
+  var has = db.prepare('SELECT 1 FROM note_tags WHERE note_id = ? LIMIT 1').get(noteId) ? 1 : 0;
+  db.prepare('UPDATE vault_notes SET has_tags = ? WHERE id = ?').run(has, noteId);
+  return keepExisting;
+}
+
+// ---------------------------------------------------------------------------
+// SAFETY: vault must be readable, and a snapshot is taken before any write
+// ---------------------------------------------------------------------------
+// An unreadable vault (unmounted, VAULT_PATH unset in the tmux server's environment, a typo)
+// used to walk as ZERO files - and --diff then treated every note in the database as deleted.
+function assertVaultReadable() {
+  var st;
+  try { st = fs.statSync(VAULT_PATH); } catch (e) { st = null; }
+  if (!st || !st.isDirectory()) {
+    log('error', 'Vault path is not a readable directory - refusing to index (nothing was changed)', { vaultPath: VAULT_PATH });
+    process.exit(3);
+  }
+}
+
+// Copy of vault.db taken before the first write of a run (VACUUM INTO makes a consistent copy
+// even while other Quarry processes are using the database). Keeps the newest SNAPSHOT_KEEP.
+var SNAPSHOT_DIR  = path.join(QUARRY_HOME, 'backups');
+var SNAPSHOT_KEEP = 3;
+var snapshotTaken = false;
+function snapshotOnce(db, reason) {
+  if (snapshotTaken || MODE_DRY || DB_PATH === ':memory:') return;
+  snapshotTaken = true;
+  try {
+    fs.mkdirSync(SNAPSHOT_DIR, { recursive: true });
+    var stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    var dest = path.join(SNAPSHOT_DIR, 'vault-before-index-' + stamp + '.db');
+    db.exec("VACUUM INTO '" + dest.replace(/'/g, "''") + "'");
+    var old = fs.readdirSync(SNAPSHOT_DIR).filter(function(n) { return /^vault-before-index-.*\.db$/.test(n); }).sort();
+    old.slice(0, Math.max(0, old.length - SNAPSHOT_KEEP)).forEach(function(n) { fs.unlinkSync(path.join(SNAPSHOT_DIR, n)); });
+    log('info', 'Database snapshot taken', { file: dest, reason: reason, kept: Math.min(old.length, SNAPSHOT_KEEP) });
+  } catch (e) {
+    log('error', 'Could not snapshot the database - refusing to write without one', { err: e.message });
+    process.exit(3);
+  }
+}
+
+// Removes notes whose files are gone from the vault. Refuses mass deletions: a real clean-up
+// rarely removes more than a few notes at once, while a broken walk or a half-finished git
+// operation looks like "thousands of notes deleted".
+function pruneOrphans(db, currentPaths) {
+  var allDbNotes = db.prepare('SELECT id, filepath, title FROM vault_notes').all();
+  var orphans = allDbNotes.filter(function(n) { return !currentPaths[n.filepath]; });
+  if (orphans.length === 0) { log('info', 'No orphaned notes found'); return; }
+
+  var limit = Math.max(10, Math.ceil(allDbNotes.length * 0.02));
+  if (orphans.length > limit && !FORCE_PRUNE) {
+    log('error', 'Refusing to prune: far more notes missing than a normal clean-up (nothing was removed)', {
+      missing: orphans.length, ofTotal: allDbNotes.length, limit: limit,
+      examples: orphans.slice(0, 5).map(function(o) { return o.filepath; }),
+      fix: 'check VAULT_PATH and the vault checkout; if the deletions are real, run indexer.js --diff --force-prune'
+    });
+    return;
+  }
+
+  snapshotOnce(db, 'prune ' + orphans.length + ' note(s)');
+  log('info', 'Pruning orphaned notes (removed from vault)', { count: orphans.length });
+  var q = {
+    facts:    db.prepare('SELECT COUNT(*) AS n FROM note_classifications WHERE note_id = ?'),
+    approved: db.prepare("SELECT COUNT(*) AS n FROM note_tag_proposals WHERE note_id = ? AND status = 'approved'"),
+  };
+  var del = ['note_tags', 'note_classifications', 'writeback_log', 'note_tag_proposals'].map(function(t) {
+    return db.prepare('DELETE FROM ' + t + ' WHERE note_id = ?');
+  });
+  var delNote = db.prepare('DELETE FROM vault_notes WHERE id = ?');
+  db.exec('BEGIN');
+  try {
+    orphans.forEach(function(o) {
+      // A renamed or moved note looks like delete + add, so its facts and approved tags go too.
+      // Logged per note so the loss is visible and can be restored from the snapshot.
+      var lost = { facts: q.facts.get(o.id).n, approvedTags: q.approved.get(o.id).n };
+      del.forEach(function(s) { s.run(o.id); });
+      delNote.run(o.id);
+      log('info', 'Pruned', { title: o.title, filepath: o.filepath, discarded: lost });
+    });
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    log('error', 'Orphan prune failed, rolled back', { err: e.message });
   }
 }
 
@@ -533,12 +642,17 @@ async function main() {
   if (MODE_STATS) { printStats(db); db.close(); return; }
 
   var files = [];
+  if (!SINGLE_FILE) assertVaultReadable();
   if (SINGLE_FILE) {
     files = [path.resolve(SINGLE_FILE)];
   } else {
     log('info', 'Walking vault', { vaultPath: VAULT_PATH });
     files = walkVault(VAULT_PATH);
     log('info', 'Vault walk complete', { totalFiles: files.length });
+    if (files.length === 0) {
+      log('error', 'Vault contains no .md files - refusing to index (nothing was changed)', { vaultPath: VAULT_PATH });
+      db.close(); process.exit(3);
+    }
     if (MODE_DIFF && !MODE_DRY) {
       var before = files.length;
       files = getModifiedFiles(db, files);
@@ -548,33 +662,7 @@ async function main() {
       // exist on disk (removed/moved out of the vault on GitHub).
       var currentPaths = {};
       walkVault(VAULT_PATH).forEach(function(p) { currentPaths[p] = true; });
-
-      var allDbNotes = db.prepare('SELECT id, filepath, title FROM vault_notes').all();
-      var orphans = allDbNotes.filter(function(n) { return !currentPaths[n.filepath]; });
-
-      if (orphans.length > 0) {
-        log('info', 'Pruning orphaned notes (removed from vault)', { count: orphans.length });
-        db.exec('BEGIN');
-        try {
-          var delTags = db.prepare('DELETE FROM note_tags WHERE note_id = ?');
-          var delClass = db.prepare('DELETE FROM note_classifications WHERE note_id = ?');
-          var delWriteback = db.prepare('DELETE FROM writeback_log WHERE note_id = ?');
-          var delNote = db.prepare('DELETE FROM vault_notes WHERE id = ?');
-          orphans.forEach(function(o) {
-            try { delTags.run(o.id); } catch(e) {}
-            try { delClass.run(o.id); } catch(e) {}
-            try { delWriteback.run(o.id); } catch(e) {}
-            delNote.run(o.id);
-            log('info', 'Pruned', { title: o.title, filepath: o.filepath });
-          });
-          db.exec('COMMIT');
-        } catch (e) {
-          db.exec('ROLLBACK');
-          log('error', 'Orphan prune failed, rolled back', { err: e.message });
-        }
-      } else {
-        log('info', 'No orphaned notes found');
-      }
+      pruneOrphans(db, currentPaths);
     }
   }
 
@@ -584,15 +672,17 @@ async function main() {
   var processed = 0;
   var errors    = 0;
   var skipped   = 0;
+  var keptQuarryTags = 0;   // notes whose Quarry-added tags were kept (frontmatter merged in)
   var batch     = [];
 
   function flushBatch(b) {
+    snapshotOnce(db, 'index ' + files.length + ' file(s)');
     db.exec('BEGIN');
     try {
       for (var k = 0; k < b.length; k++) {
         try {
           var noteId = upsertNote(db, b[k]);
-          replaceTags(db, noteId, b[k].tags);
+          if (writeNoteTags(db, noteId, b[k].tags)) keptQuarryTags++;
           processed++;
         } catch (e) {
           log('error', 'Failed to write record', { filepath: b[k].filepath, err: e.message });
@@ -639,7 +729,7 @@ async function main() {
     rebuildFts(db);
   }
 
-  log('info', 'Indexing complete', { total: files.length, processed: processed, errors: errors, skipped: skipped });
+  log('info', 'Indexing complete', { total: files.length, processed: processed, errors: errors, skipped: skipped, keptQuarryTags: keptQuarryTags });
   if (!MODE_DRY) printStats(db);
   db.close();
 }

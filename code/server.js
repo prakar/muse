@@ -15,6 +15,7 @@ const QUARRY_HOME = process.env.QUARRY_HOME || path.join(process.env.HOME, 'dev'
 const { insertNoteTag } = require('./lib/tags');
 const cp    = require('child_process');
 const { DatabaseSync } = require('node:sqlite');
+const { openDatabase } = require('./lib/db');   // sets a busy timeout - see lib/db.js
 
 const DB_PATH   = process.env.QUARRY_DB    || path.join(QUARRY_HOME, 'vault.db');
 const VAULT_DIR = process.env.VAULT_PATH   || path.join(process.env.HOME, 'vault');
@@ -29,7 +30,7 @@ const API_TOKEN = process.env.QUARRY_API_TOKEN || ''; // if set, required on mut
 // ---------------------------------------------------------------------------
 function openDb() {
   if (!fs.existsSync(DB_PATH)) { console.error('vault.db not found'); process.exit(1); }
-  return new DatabaseSync(DB_PATH);
+  return openDatabase(DB_PATH);
 }
 function ensureSchema(db) {
   const nc = db.prepare('PRAGMA table_info(narratives)').all().map(c=>c.name);
@@ -97,6 +98,23 @@ function paginationHtml(total, page, totalPages, hrefForPage) {
   }
   return pag + '</div>';
 }
+// Refuses POSTs that a browser made on behalf of ANOTHER website. Without this, any page open in
+// your browser could submit a hidden form to http://homelab.local:3001/api/run and start a paid AI
+// run, or approve every pending tag - no token is set by default, and even with one the browser
+// would not need to read it. Browsers label cross-site requests (Sec-Fetch-Site, Origin), and a
+// JSON content type cannot be sent cross-site without a CORS preflight, which this server never
+// grants. curl and scripts send none of these headers and are unaffected.
+function sameOriginRequest(req) {
+  const site = req.headers['sec-fetch-site'];
+  if (site && site !== 'same-origin' && site !== 'none') return false;
+  const origin = req.headers.origin;
+  if (origin && origin !== 'null') {
+    try { if (new URL(origin).host !== req.headers.host) return false; } catch (_) { return false; }
+  } else if (origin === 'null') return false;
+  const ct = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+  return ct === 'application/json';
+}
+
 function requireToken(req, res) {
   if (!API_TOKEN) return true;
   var got = req.headers['x-quarry-token'] || '';
@@ -196,8 +214,8 @@ function approvedCard(n) {
 function vaultPage() {
   return `<p class="page-title">Vault — git sync and indexing</p>
 <div class="ctrl-panel">
-  <h3>Sync (recommended - ZeroClaw candidate)</h3>
-  <p style="color:#666;font-size:.78rem;margin-bottom:10px">git pull, then index only new/moved/deleted files. Read-mostly, orphan-pruning tested, zero API cost - the pair to cron nightly.</p>
+  <h3>Sync (recommended)</h3>
+  <p style="color:#666;font-size:.78rem;margin-bottom:10px">git pull, then index only new/changed/deleted files. Zero API cost. Tags Quarry added are kept when a note changes; the run refuses to start if the vault is unreadable, refuses to remove more than a handful of notes at once, and snapshots vault.db to backups/ before writing.</p>
   <div class="ctrl-row">
     <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="git-pull-diff" data-label="Sync: pull + diff">&#8595; Sync (pull + index --diff)</button>
   </div>
@@ -214,6 +232,14 @@ function vaultPage() {
   <div class="ctrl-row">
     <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="index-diff" data-label="Indexer --diff">Index changed files</button>
     <button class="btn btn-grey" type="button" data-action="run-cmd" data-cmd="index-full" data-label="Indexer full">Full re-index</button>
+  </div>
+</div>
+<div class="ctrl-panel">
+  <h3>Restore approved tags</h3>
+  <p style="color:#666;font-size:.78rem;margin-bottom:10px">Puts back tags you approved in Tag Review that an indexer run erased before Release 3. See the report "Approved Tags Missing From Notes" first.</p>
+  <div class="ctrl-row">
+    <button class="btn btn-grey" type="button" data-action="run-cmd" data-cmd="restore-approved" data-dry="1" data-label="Restore approved tags (dry run)">Dry run (count only)</button>
+    <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="restore-approved" data-label="Restore approved tags">Restore</button>
   </div>
 </div>
 <div class="ctrl-panel">
@@ -242,7 +268,9 @@ function taggerPage() {
   <h3>1. Quick Tag Match <span style="color:#666;font-weight:normal;font-family:monospace;font-size:.75rem">(switch-vocab)</span></h3>
   <p style="color:#666;font-size:.78rem;margin-bottom:10px">Free, no AI call. Matches each untagged note's filename/title/first paragraph against tags you already have in the canonical vocabulary. Fast, zero cost, but only ever reuses existing tags - never invents anything new. Good first pass before spending on the AI passes below.</p>
   <div class="ctrl-row">
-    <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="sw-vocab" data-label="Quick Tag Match">Run Quick Tag Match</button>
+    <div class="field"><label>Limit:</label><input id="vocab-limit" type="number" value="" min="1" placeholder="all"></div>
+    <button class="btn btn-primary" type="button" data-action="run-vocab">Run Quick Tag Match</button>
+    <button class="btn btn-grey" type="button" data-action="run-vocab" data-dry="1">Dry run</button>
   </div>
 </div>
 
@@ -253,6 +281,7 @@ function taggerPage() {
     <div class="field"><label>Limit:</label><input id="s3-limit" type="number" value="500" min="1" max="5000"></div>
     <div class="field"><label>Provider:</label><select id="s3-prov"><option value="grok">grok</option><option value="openrouter">openrouter</option><option value="gemini">gemini</option><option value="claude">claude</option></select></div>
     <button class="btn btn-primary" type="button" data-action="run-s3">Run AI Tag Suggestions</button>
+    <button class="btn btn-grey" type="button" data-action="run-s3" data-dry="1">Dry run (no API call)</button>
   </div>
 </div>
 
@@ -263,6 +292,7 @@ function taggerPage() {
     <div class="field"><label>Limit:</label><input id="retag-limit" type="number" value="500" min="1" max="5000"></div>
     <div class="field"><label>Provider:</label><select id="retag-prov"><option value="grok">grok</option><option value="openrouter">openrouter</option><option value="gemini">gemini</option><option value="claude">claude</option></select></div>
     <button class="btn btn-primary" type="button" data-action="run-retag">Run AI Tag Correction</button>
+    <button class="btn btn-grey" type="button" data-action="run-retag" data-dry="1">Dry run (no API call)</button>
   </div>
 </div>
 
@@ -328,6 +358,13 @@ function narratorPage() {
     <button class="btn btn-grey" type="button" data-action="run-cmd" data-cmd="narrator-dry" data-label="Narrator --dry-run">Dry run (show payload)</button>
   </div>
 </div>
+<div class="ctrl-panel">
+  <h3>Reset</h3>
+  <p style="color:#666;font-size:.78rem;margin-bottom:10px">Deletes every narrative and the whole queue. You'll see the counts and confirm first; a JSON copy is saved to backups/ before anything is deleted.</p>
+  <div class="ctrl-row">
+    <button class="btn btn-grey" type="button" data-action="narrator-reset">Reset narratives + queue…</button>
+  </div>
+</div>
 <div id="cmd-output"></div>
 `;
 }
@@ -382,6 +419,16 @@ ${pag}`;
 // REPORTS PAGE
 // ---------------------------------------------------------------------------
 const REPORTS = [
+  {
+    id: 'approved-missing',
+    title: 'Approved Tags Missing From Notes',
+    desc: 'Tags you approved in Tag Review that are no longer on their note (erased by an indexer run before Release 3). Fix with Vault → Restore approved tags.',
+    sql: `SELECT v.title, p.tag_full AS tag, MAX(p.reviewed_at) AS approved_at
+          FROM note_tag_proposals p JOIN vault_notes v ON v.id = p.note_id
+          WHERE p.status = 'approved'
+            AND NOT EXISTS (SELECT 1 FROM note_tags t WHERE t.note_id = p.note_id AND t.tag_full = p.tag_full)
+          GROUP BY p.note_id, p.tag_full ORDER BY v.title LIMIT 500`
+  },
   {
     id: 'vault-coverage',
     title: 'Vault Coverage',
@@ -625,7 +672,7 @@ function submitTagReview(){
     if(tags.length) custom[noteId]=tags;
   });
   document.getElementById('save-status').textContent='Saving...';
-  fetch('/api/tags/review',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({approve:approve,reject:reject,custom:custom})})
+  fetch('/api/tags/review',{method:'POST',headers:apiHeaders(),body:JSON.stringify({approve:approve,reject:reject,custom:custom})})
   .then(r=>r.json()).then(d=>{
     document.getElementById('save-status').textContent='Approved '+d.approved+', rejected '+d.rejected+', custom '+d.custom+' \u2713';
     setTimeout(function(){ window.location.reload(); }, 700);
@@ -691,13 +738,13 @@ function applyRF(val){var f=val||document.getElementById('rf-sel').value,q=docum
 function saveAndGo(url){
   if(!Object.keys(_ch).length){window.location=url;return;}
   document.getElementById('save-status').textContent='Saving...';
-  fetch('/api/notes/exclude',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(_ch)})
+  fetch('/api/notes/exclude',{method:'POST',headers:apiHeaders(),body:JSON.stringify(_ch)})
   .then(r=>r.json()).then(()=>{_ch={};window.location=url;})
   .catch(()=>{document.getElementById('save-status').textContent='Save failed';});}
 function saveExclusions(){
   var ids=Object.keys(_ch);if(!ids.length){document.getElementById('save-status').textContent='Nothing changed.';return;}
   document.getElementById('save-status').textContent='Saving...';
-  fetch('/api/notes/exclude',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(_ch)})
+  fetch('/api/notes/exclude',{method:'POST',headers:apiHeaders(),body:JSON.stringify(_ch)})
   .then(r=>r.json()).then(d=>{document.getElementById('save-status').textContent='Saved '+d.updated+' ✓';_ch={};})
   .catch(()=>{document.getElementById('save-status').textContent='Save failed';});}
 </script>`;
@@ -896,16 +943,31 @@ function fileArgs(b) {
   return ['--file', fp];
 }
 
+// Optional numeric/flag inputs from the UI. A limit must be a positive whole number; anything
+// else is rejected rather than passed through (tagger.js would read "abc" as no limit at all).
+function limitArgs(b) {
+  if (b.limit === undefined || b.limit === null || b.limit === '') return [];
+  const n = Number(b.limit);
+  if (!Number.isInteger(n) || n < 1) throw new Error('limit must be a whole number of 1 or more');
+  return ['--limit', String(n)];
+}
+function providerArgs(b) { return b.provider ? ['--provider', String(b.provider)] : []; }
+function dryArgs(b)      { return b.dryRun ? ['--dry-run'] : []; }
+function tagger(C, flag, b, extra) {
+  return [NODE, [...FLAGS, path.join(C,'tagger.js'), flag, ...fileArgs(b), ...(extra||[])]];
+}
+
 const CMD_MAP = {
   'git-pull':          { session:'quarry-git',      log:'git.log',      build: ()=>['git',['-C',VAULT_DIR,'pull','origin','master']] },
   'git-pull-diff':     { session:'quarry-git',      log:'git.log',      build: (b,C)=>['bash',['-c', 'git -C '+VAULT_DIR+' pull origin master && '+NODE+' '+FLAGS.join(' ')+' '+path.join(C,'indexer.js')+' --diff']] },
   'index-diff':        { session:'quarry-index',    log:'indexer.log',  build: (b,C)=>[NODE,[...FLAGS,path.join(C,'indexer.js'),'--diff']] },
-  'index-full':        { session:'quarry-index',    log:'indexer.log',  build: (b,C)=>[NODE,[...FLAGS,path.join(C,'indexer.js')]] },
+  'index-full':        { session:'quarry-index',    log:'indexer.log',  build: (b,C)=>[NODE,[...FLAGS,path.join(C,'indexer.js'),'--full']] },   // --full was missing: the button printed usage and did nothing
   'sync-wc':           { session:'quarry-syncwc',   log:'sync-wc.log',  build: (b,C)=>[NODE,[...FLAGS,path.join(C,'tagger.js'),'--sync-wc']] },
-  'sw-vocab':          { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>[NODE,[...FLAGS,path.join(C,'tagger.js'),'--switch-vocab',...fileArgs(b)]] },
-  'sw3':               { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>{ const a=[NODE,[...FLAGS,path.join(C,'tagger.js'),'--switch3',...fileArgs(b)]]; if(b.limit)a[1].push('--limit',String(b.limit)); if(b.provider)a[1].push('--provider',b.provider); return a; } },
-  'sw3-retag':         { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>{ const a=[NODE,[...FLAGS,path.join(C,'tagger.js'),'--switch3-retag',...fileArgs(b)]]; if(b.limit)a[1].push('--limit',String(b.limit)); if(b.provider)a[1].push('--provider',b.provider); return a; } },
-  'mwc':               { session:'quarry-mwc',      log:'tagger.log',   build: (b,C)=>{ const a=[NODE,[...FLAGS,path.join(C,'tagger.js'),'--mindful-wc']]; if(b.limit)a[1].push('--limit',String(b.limit)); return a; } },
+  'sw-vocab':          { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>tagger(C,'--switch-vocab',b,[...limitArgs(b),...dryArgs(b)]) },
+  'sw3':               { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>tagger(C,'--switch3',b,[...limitArgs(b),...providerArgs(b),...dryArgs(b)]) },
+  'sw3-retag':         { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>tagger(C,'--switch3-retag',b,[...limitArgs(b),...providerArgs(b),...dryArgs(b)]) },
+  'restore-approved':  { session:'quarry-tagger',   log:'tagger.log',   build: (b,C)=>[NODE,[...FLAGS,path.join(C,'tagger.js'),'--restore-approved',...dryArgs(b)]] },
+  'mwc':               { session:'quarry-mwc',      log:'tagger.log',   build: (b,C)=>[NODE,[...FLAGS,path.join(C,'tagger.js'),'--mindful-wc',...limitArgs(b)]] },
   'mwc-dry':           { session:'quarry-mwc',      log:'tagger.log',   build: (b,C)=>[NODE,[...FLAGS,path.join(C,'tagger.js'),'--mindful-wc','--dry-run']] },
   'extract-video':     { session:'quarry-video',    log:'video.log',    build: (b,C)=>[NODE,[...FLAGS,path.join(C,'extract_video_links.js')]] },
   'extract-video-dry': { session:'quarry-video',    log:'video.log',    build: (b,C)=>[NODE,[...FLAGS,path.join(C,'extract_video_links.js'),'--dry-run']] },
@@ -916,7 +978,31 @@ const CMD_MAP = {
   'narrator-dry':      { session:'quarry-narrator', log:'narrator.log', build: (b,C)=>[NODE,[...FLAGS,path.join(C,'narrator.js'),'--dry-run']] },
   'narrator-live':     { session:'quarry-narrator', log:'narrator.log', build: (b,C)=>[NODE,[...FLAGS,path.join(C,'narrator.js'),'--live','--numSources',String(b.numSources||3)]] },
   'narrator-id':       { session:'quarry-narrator', log:'narrator.log', build: (b,C)=>{ if(!b.id)throw new Error('id required'); return [NODE,[...FLAGS,path.join(C,'narrator.js'),'--id',String(b.id)]]; } },
+  // Deletes every narrative and the queue (after a JSON backup). expectApproved is the approved
+  // count the person saw in the confirm dialog; narrator.js refuses if it no longer matches.
+  'narrator-reset':    { session:'quarry-narrator', log:'narrator.log', build: (b,C)=>{
+    const n = Number(b.expectApproved);
+    if (!Number.isInteger(n) || n < 0) throw new Error('expectApproved (a count) is required');
+    return [NODE,[...FLAGS,path.join(C,'narrator.js'),'--reset','--yes','--expect-approved',String(n)]]; } },
 };
+
+// Commands in the same group must never run at the same time: they drive the same script
+// against the same data, and the tagger group also shares tagger.log. Starting one used to
+// silently KILL whatever was running in that session - a paid AI run could be cut off
+// mid-request by the next button click, with the call billed but never recorded.
+const SESSION_GROUPS = [
+  ['quarry-tagger', 'quarry-mwc', 'quarry-syncwc'],   // tagger.js
+  ['quarry-git', 'quarry-index'],                      // indexer.js (Sync runs it too)
+];
+function sessionRunning(session) {
+  try { cp.execFileSync('tmux', ['has-session', '-t', '=' + session], { stdio: 'ignore' }); return true; }
+  catch (_) { return false; }
+}
+function busySessionFor(session) {
+  const group = SESSION_GROUPS.find(g => g.includes(session)) || [session];
+  return group.find(sessionRunning) || null;
+}
+const KNOWN_SESSIONS = Array.from(new Set(Object.values(CMD_MAP).map(d => d.session)));
 
 function launchInTmux(session, logFile, executable, args) {
   const logPath = path.join(LOG_DIR, logFile);
@@ -935,10 +1021,15 @@ function launchInTmux(session, logFile, executable, args) {
   // THE COMMAND rather than through the spawn environment: tmux starts a new session's processes from the
   // tmux SERVER's environment, so a variable given to the tmux client is silently dropped whenever a tmux
   // server is already running (the quarry-server session guarantees one is).
-  const shellCmd = 'QUARRY_LAUNCHED=1 ' + quotedArgs + ' >> '+logPath+' 2>&1';
+  const shellCmd = 'QUARRY_LAUNCHED=1 ' + quotedArgs + " >> '" + logPath.replace(/'/g,"'\\''") + "' 2>&1";
 
-  // Kill existing session — ignore error if session doesn't exist yet
-  try { cp.execFileSync('tmux',['kill-session','-t',session],{stdio:'ignore'}); } catch(_){}
+  // A tmux session ends when its command exits, so a session that still exists is still working.
+  const busy = busySessionFor(session);
+  if (busy) {
+    const e = new Error('Already running in tmux session ' + busy + ' - wait for it to finish, or press Stop first');
+    e.busySession = busy;
+    throw e;
+  }
 
   // Start new tmux session running the command
   cp.execFileSync('tmux',['new-session','-d','-s',session,shellCmd],{env:process.env});
@@ -952,7 +1043,7 @@ function resolveCmd(body) {
 
   const [executable, args] = def.build(body, CODE_DIR);
   const logPath = launchInTmux(def.session, def.log, executable, args);
-  return { msg: cmd+' started in tmux session '+def.session, log: def.log };
+  return { msg: cmd+' started in tmux session '+def.session, log: def.log, session: def.session };
 }
 
 // ---------------------------------------------------------------------------
@@ -962,6 +1053,12 @@ function router(req, res) {
   const url    = req.url.split('?')[0];
   const method = req.method;
   const params = new URLSearchParams(req.url.split('?')[1]||'');
+
+  if (method === 'POST' && !sameOriginRequest(req)) {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'cross-site or non-JSON request refused' }));
+    return;
+  }
 
   // Static assets (next to server.js)
   if (method === 'GET' && (url === '/quarry.css' || url === '/quarry.js')) {
@@ -1102,25 +1199,60 @@ function router(req, res) {
       var body={};try{body=JSON.parse(b);}catch(_){}
       try {
         const result = resolveCmd(body);
-        json({ok:true, msg:result.msg, log:result.log});
+        json({ok:true, msg:result.msg, log:result.log, session:result.session});
       } catch(e) {
-        json({ok:false, error:e.message}, 400);
+        json({ok:false, error:e.message, busySession:e.busySession||null}, e.busySession ? 409 : 400);
       }
     }); return;
   }
 
-  // --- API: tail log — serves correct log based on ?file= param ---
+  // --- API: stop a running job (tmux session) ---
+  if (method==='POST' && url==='/api/stop') {
+    if (!requireToken(req, res)) return;
+    readBody(req, function(b) {
+      var body={}; try{ body=JSON.parse(b); }catch(_){}
+      const s = String(body.session||'');
+      if (!KNOWN_SESSIONS.includes(s)) { json({ok:false, error:'unknown session'}, 400); return; }
+      if (!sessionRunning(s)) { json({ok:true, msg:s+' was not running'}); return; }
+      try { cp.execFileSync('tmux',['kill-session','-t','='+s],{stdio:'ignore'}); json({ok:true, msg:'stopped '+s}); }
+      catch(e) { json({ok:false, error:e.message}, 500); }
+    }); return;
+  }
+
+  // --- API: what a narrator reset would delete (shown in the confirm dialog) ---
+  if (method==='GET' && url==='/api/narrator/reset-preview') {
+    const db=openDb(); ensureSchema(db);
+    try {
+      json({
+        narratives: db.prepare('SELECT COUNT(*) n FROM narratives').get().n,
+        approved:   db.prepare("SELECT COUNT(*) n FROM narratives WHERE approval_status='approved'").get().n,
+        queue:      db.prepare('SELECT COUNT(*) n FROM narrative_queue').get().n,
+      });
+    } finally { db.close(); }
+    return;
+  }
+
+  // --- API: log — last 60 lines for the live panel, or ?full=1 for the whole file in its own tab ---
   if (method==='GET' && url.startsWith('/api/log')) {
     const logFile = params.get('file') || 'tagger.log';
     // Sanitise: only allow simple filenames, no path traversal
     const safe = path.basename(logFile).replace(/[^a-z0-9._-]/gi,'');
     const fp = path.join(LOG_DIR, safe.endsWith('.log') ? safe : safe+'.log');
+    const MAX_FULL = 5 * 1024 * 1024;   // the whole log, capped to its last 5 MB
     try {
-      const lines = fs.readFileSync(fp,'utf8').split('\n').filter(Boolean);
-      res.writeHead(200,{'Content-Type':'text/plain'});
-      res.end(lines.slice(-60).join('\n'));
+      let text;
+      if (params.get('full') === '1') {
+        const size = fs.statSync(fp).size;
+        const fd = fs.openSync(fp, 'r'); const len = Math.min(size, MAX_FULL); const buf = Buffer.alloc(len);
+        fs.readSync(fd, buf, 0, len, size - len); fs.closeSync(fd);
+        text = (size > MAX_FULL ? '(showing the last 5 MB of ' + (size/1048576).toFixed(1) + ' MB)\n' : '') + buf.toString('utf8');
+      } else {
+        text = fs.readFileSync(fp,'utf8').split('\n').filter(Boolean).slice(-60).join('\n');
+      }
+      res.writeHead(200,{'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-cache'});
+      res.end(text);
     } catch(_) {
-      res.writeHead(200,{'Content-Type':'text/plain'});
+      res.writeHead(200,{'Content-Type':'text/plain; charset=utf-8'});
       res.end('(log not yet created — command may still be starting)');
     }
     return;

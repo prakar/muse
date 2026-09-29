@@ -18,7 +18,8 @@ const path  = require('path');
 const QUARRY_HOME = process.env.QUARRY_HOME || path.join(process.env.HOME, 'dev', 'quarry');
 const https = require('https');
 const { DatabaseSync } = require('node:sqlite');
-const { insertNoteTags } = require('./lib/tags');
+const { openDatabase } = require('./lib/db');   // sets a busy timeout - see lib/db.js
+const { insertNoteTags, insertNoteTag } = require('./lib/tags');
 const { resolveModel, fetchFreeModels, getNextFreeModel, resetFreeModelIndex, markModelBad } = require('llm-model-resolver');
 
 // ---------------------------------------------------------------------------
@@ -53,6 +54,9 @@ const SW4_DEPRECATED = args.includes('--switch4');
 const SW3         = args.includes('--switch3') || SW4_DEPRECATED;
 const SW3_RETAG   = args.includes('--switch3-retag');
 const MODE_STATUS = args.includes('--status');
+// Puts back tags that were approved in Tag Review but are missing from the note (e.g. erased by an
+// indexer run before Release 3). Approved proposals are kept forever, so they are the record.
+const RESTORE_APPROVED = args.includes('--restore-approved');
 const MODE_DRY    = args.includes('--dry-run');
 const SYNC_WC     = args.includes('--sync-wc');
 const MINDFUL_WC  = args.includes('--mindful-wc');
@@ -78,8 +82,8 @@ const PROVIDER_ARG = (() => {
   return p;
 })();
 
-if (!SW_VOCAB && !SW3 && !SW3_RETAG && !MODE_STATUS && !SYNC_WC && !MINDFUL_WC) {
-  console.error('Usage: node tagger.js [--switch-vocab|--switch3|--switch3-retag|--status|--sync-wc|--mindful-wc] [--dry-run]');
+if (!SW_VOCAB && !SW3 && !SW3_RETAG && !MODE_STATUS && !SYNC_WC && !MINDFUL_WC && !RESTORE_APPROVED) {
+  console.error('Usage: node tagger.js [--switch-vocab|--switch3|--switch3-retag|--status|--sync-wc|--mindful-wc|--restore-approved] [--dry-run]');
   console.error('       [--provider grok|gemini|openrouter|claude] [--limit N] [--file <path>]');
   process.exit(1);
 }
@@ -101,7 +105,7 @@ function log(level, msg, data) {
 // ---------------------------------------------------------------------------
 function openDb() {
   if (!fs.existsSync(DB_PATH)) { console.error('vault.db not found'); process.exit(1); }
-  return new DatabaseSync(DB_PATH);
+  return openDatabase(DB_PATH);
 }
 
 // ---------------------------------------------------------------------------
@@ -120,11 +124,38 @@ function openDb() {
 // table if xAI reprices again - they have done so mid-quarter before.
 // ---------------------------------------------------------------------------
 const PROVIDER_CONFIG = {
-  grok:       { largeContext: true,  costPerMillionIn: 1.25, costPerMillionOut: 2.50,  budgetEstimate: 0.005 },
+  grok:       { largeContext: true,  costPerMillionIn: 2.00, costPerMillionOut: 6.00,  budgetEstimate: 0.02  },   // per-model rates: MODEL_PRICES
   gemini:     { largeContext: true,  costPerMillionIn: 0.075, costPerMillionOut: 0.30, budgetEstimate: 0.001 },
   claude:     { largeContext: true,  costPerMillionIn: 3.00, costPerMillionOut: 15.00, budgetEstimate: 0.02  },
   openrouter: { largeContext: false, costPerMillionIn: 0,    costPerMillionOut: 0,     budgetEstimate: 0     },
 };
+// The resolver picks the newest model it can see, and newer models can cost more: on
+// 2026-09-28 it moved Grok from grok-4.3 ($1.25/$2.50 per M) to grok-4.7 ($2/$6), which the
+// flat per-provider rate above silently under-recorded - and a budget ceiling cannot guard
+// spend it undercounts. So a provider's rate is only the fallback; known models are priced
+// individually, and an unrecognised model is charged the provider's HIGHEST known rate (with a
+// warning) so the budget errs toward stopping early, never late. Rates from xAI's pricing page,
+// checked 2026-09-28. xAI bills the whole request at double rate once the prompt reaches 200k
+// tokens. Re-check this table whenever the log shows a model you haven't seen before.
+const MODEL_PRICES = {
+  grok: [
+    { match: /^grok-4\.(6|7)\b/,              in: 2.00, out: 6.00 },
+    { match: /^grok-4\.3\b|^grok-4\.20|^grok-4$/, in: 1.25, out: 2.50 },
+  ],
+};
+const LONG_CONTEXT_TOKENS = { grok: 200000 };
+function priceFor(provider, model, tokIn) {
+  const cfg = PROVIDER_CONFIG[provider];
+  if (!cfg) return null;
+  let rate = { in: cfg.costPerMillionIn, out: cfg.costPerMillionOut, known: !MODEL_PRICES[provider] };
+  const table = MODEL_PRICES[provider];
+  if (table && model) {
+    const hit = table.find(r => r.match.test(model));
+    if (hit) rate = { in: hit.in, out: hit.out, known: true };
+  }
+  if (LONG_CONTEXT_TOKENS[provider] && tokIn >= LONG_CONTEXT_TOKENS[provider]) rate = { in: rate.in * 2, out: rate.out * 2, known: rate.known };
+  return rate;
+}
 function providerHasLargeContext(provider) {
   const cfg = PROVIDER_CONFIG[provider];
   return !!(cfg && cfg.largeContext);
@@ -145,10 +176,11 @@ function checkBudget(db, provider) {
     process.exit(2);
   }
 }
-function recordSpend(db, provider, component, noteId, tokIn, tokOut) {
-  const cfg  = PROVIDER_CONFIG[provider];
-  const cost = cfg ? (tokIn * cfg.costPerMillionIn / 1e6) + (tokOut * cfg.costPerMillionOut / 1e6) : 0;
-  if (!cfg) log('warn', 'recordSpend: unknown provider, cost recorded as $0 - PROVIDER_CONFIG needs an entry', { provider });
+function recordSpend(db, provider, component, noteId, tokIn, tokOut, model) {
+  const rate = priceFor(provider, model, tokIn || 0);
+  const cost = rate ? ((tokIn||0) * rate.in / 1e6) + ((tokOut||0) * rate.out / 1e6) : 0;
+  if (!rate) log('warn', 'recordSpend: unknown provider, cost recorded as $0 - PROVIDER_CONFIG needs an entry', { provider });
+  else if (!rate.known) log('warn', 'recordSpend: no price for this model - charged at the highest known rate; add it to MODEL_PRICES', { provider, model });
   db.prepare('INSERT INTO api_budget (provider,component,note_id,tokens_in,tokens_out,cost_usd,called_at) VALUES (?,?,?,?,?,?,?)').run(provider, component, noteId||null, tokIn||0, tokOut||0, cost, new Date().toISOString());
   return cost;
 }
@@ -498,6 +530,7 @@ function parseTagLines(text) {
 // ---------------------------------------------------------------------------
 // HTTP HELPERS
 // ---------------------------------------------------------------------------
+const HTTP_TIMEOUT_MS = 10 * 60 * 1000;
 function httpPost(hostname, pathStr, headers, body) {
   return new Promise((resolve, reject) => {
     const bodyStr = JSON.stringify(body);
@@ -509,6 +542,9 @@ function httpPost(hostname, pathStr, headers, body) {
       res.on('data', c => data += c);
       res.on('end', () => { try { resolve({status:res.statusCode,body:JSON.parse(data)}); } catch(e) { resolve({status:res.statusCode,body:data}); } });
     });
+    // Without a timeout a stalled connection hangs the whole run forever (an overnight batch
+    // just stops). Generous, because reasoning models legitimately take minutes on long notes.
+    req.setTimeout(HTTP_TIMEOUT_MS, () => req.destroy(new Error('API request timed out after ' + (HTTP_TIMEOUT_MS/1000) + 's (' + hostname + ')')));
     req.on('error', reject);
     req.write(bodyStr); req.end();
   });
@@ -627,7 +663,7 @@ async function callGemini(prompt) {
         generationConfig: {maxOutputTokens:8192, temperature:0.1}
       }
     );
-    if (res.status!==200) throw new Error('Gemini error '+res.status+': '+JSON.stringify(res.body).slice(0,200));
+    if (res.status!==200) { const err = new Error('Gemini error '+res.status+': '+JSON.stringify(res.body).slice(0,200)); err.status = res.status; throw err; }
     return res;
   }
 
@@ -644,6 +680,10 @@ async function callGemini(prompt) {
   try {
     res = await sendWith(resolved.id);
   } catch (e) {
+    // Only a failure ABOUT THE MODEL (404 not available to this account, 403 no access) is a
+    // reason to stop using it. A 429, a 5xx or a network error says nothing about the model;
+    // marking it bad would sideline a good model for the rest of the run.
+    if (e.status !== 404 && e.status !== 403) throw e;
     log('warn', 'Gemini resolved model failed, marking bad and re-resolving', { failedModel: resolved.id, err: e.message });
     markModelBad('gemini', resolved.id);
     resolved = await resolveModel('gemini', GEMINI_API_KEY, { fallback: GEMINI_MODEL });
@@ -653,7 +693,7 @@ async function callGemini(prompt) {
 
   const text  = ((((res.body.candidates||[])[0]||{}).content||{}).parts||[]).map(p=>p.text||'').join('');
   const usage = res.body.usageMetadata||{};
-  return {text, tokensIn:usage.promptTokenCount||0, tokensOut:usage.candidatesTokenCount||0, provider:'gemini'};
+  return {text, tokensIn:usage.promptTokenCount||0, tokensOut:usage.candidatesTokenCount||0, provider:'gemini', model:resolved.id};
 }
 
 async function callGrok(prompt) {
@@ -687,13 +727,14 @@ async function callGrok(prompt) {
   }
 
   const elapsedSec = Math.round((Date.now()-startTime)/1000);
-  log('info', 'Grok responded', { status: res.status, elapsedSec });
+  const u0 = (res.body && res.body.usage) || {};
+  log('info', 'Grok responded', { status: res.status, elapsedSec, tokensIn: u0.prompt_tokens, tokensOut: u0.completion_tokens, reasoningTokens: (u0.completion_tokens_details||{}).reasoning_tokens });
 
   if (res.status !== 200) throw new Error('Grok error '+res.status+': '+JSON.stringify(res.body).slice(0,200));
   const choice = (res.body.choices||[])[0];
   if (!choice || !choice.message || !choice.message.content) throw new Error('Grok empty response');
   const usage = res.body.usage || {};
-  return { text: choice.message.content, tokensIn: usage.prompt_tokens||0, tokensOut: usage.completion_tokens||0, provider: 'grok' };
+  return { text: choice.message.content, tokensIn: usage.prompt_tokens||0, tokensOut: usage.completion_tokens||0, provider: 'grok', model: resolved.id };
 }
 
 // Mindful-wc uses higher output limit, warmer temperature, longer timeout, and retry
@@ -737,7 +778,7 @@ async function callGeminiMindful(prompt, attempt, modelRetried) {
             // too. Bounded to a single retry (modelRetried) - if the SECOND
             // pick also fails, fail loudly rather than keep chaining through
             // every live model in the list.
-            if (!modelRetried) {
+            if (!modelRetried && (res.statusCode === 404 || res.statusCode === 403)) {   // model errors only - see callGemini
               log('warn', 'Gemini mindful resolved model failed, marking bad and re-resolving', { failedModel: resolved.id, status: res.statusCode });
               markModelBad('gemini', resolved.id);
               callGeminiMindful(prompt, attempt, true).then(resolve).catch(reject);
@@ -847,7 +888,7 @@ async function callClaude(prompt) {
   if (res.status!==200) throw new Error('Claude error '+res.status+': '+JSON.stringify(res.body).slice(0,200));
   const text  = (res.body.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('');
   const usage = res.body.usage||{};
-  return {text, tokensIn:usage.input_tokens||0, tokensOut:usage.output_tokens||0, provider:'claude'};
+  return {text, tokensIn:usage.input_tokens||0, tokensOut:usage.output_tokens||0, provider:'claude', model:resolved.id};
 }
 
 async function callApi(prompt, provider) {
@@ -1082,7 +1123,7 @@ async function processNote(db, note, switchLevel, provider, useFullContent) {
     db.exec('COMMIT');
   } catch(e) { db.exec('ROLLBACK'); throw e; }
 
-  const cost = recordSpend(db, result.provider, 'classifier', note.id, result.tokensIn, result.tokensOut);
+  const cost = recordSpend(db, result.provider, 'classifier', note.id, result.tokensIn, result.tokensOut, result.model);
   log('info', 'Switch-'+switchLevel+' complete', {title:note.title.slice(0,60), provider:result.provider, tagsProposed:parsed.tags.length, verified:parsed.verified.length, trivia:parsed.trivia.length, cost_usd:cost.toFixed(5)});
 }
 
@@ -1131,8 +1172,8 @@ async function processNoteRetag(db, note, provider, useFullContent) {
     db.exec('COMMIT');
   } catch(e) { db.exec('ROLLBACK'); throw e; }
 
-  const cost = recordSpend(db, result.provider, 'retag', note.id, result.tokensIn, result.tokensOut);
-  log('info', 'Retag complete', {title:note.title.slice(0,60), provider:result.provider, existingTags, proposedTags:parsed.tags, cost_usd:cost.toFixed(5)});
+  const cost = recordSpend(db, result.provider, 'retag', note.id, result.tokensIn, result.tokensOut, result.model);
+  log('info', 'Retag complete', {title:note.title.slice(0,60), provider:result.provider, model:result.model, tokensIn:result.tokensIn, tokensOut:result.tokensOut, existingTags, proposedTags:parsed.tags, cost_usd:cost.toFixed(5)});
 }
 
 // ---------------------------------------------------------------------------
@@ -1172,17 +1213,38 @@ function printStatus(db) {
   console.log('═'.repeat(39)+'\n');
 }
 
+function restoreApproved(db) {
+  const missing = db.prepare(`
+    SELECT p.note_id, p.tag_full, v.title FROM note_tag_proposals p JOIN vault_notes v ON v.id = p.note_id
+    WHERE p.status = 'approved'
+      AND NOT EXISTS (SELECT 1 FROM note_tags t WHERE t.note_id = p.note_id AND t.tag_full = p.tag_full)
+    GROUP BY p.note_id, p.tag_full ORDER BY p.note_id`).all();
+  const notes = new Set(missing.map(m => m.note_id));
+  log('info', 'Approved tags missing from their notes', { tags: missing.length, notes: notes.size, dryRun: MODE_DRY,
+    examples: missing.slice(0, 5).map(m => m.title.slice(0, 50) + ' -> ' + m.tag_full) });
+  if (MODE_DRY || !missing.length) return;
+  db.exec('BEGIN');
+  try {
+    for (const m of missing) insertNoteTag(db, m.note_id, m.tag_full, {});
+    const mark = db.prepare("UPDATE vault_notes SET has_tags=1, tag_source='switch3-hil' WHERE id=?");
+    for (const id of notes) mark.run(id);
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+  log('info', 'Restored approved tags', { tags: missing.length, notes: notes.size });
+}
+
 // ---------------------------------------------------------------------------
 // MAIN
 // ---------------------------------------------------------------------------
 async function main() {
-  log('info', 'QUARRY tagger v0.8 starting', {swVocab:SW_VOCAB,sw3:SW3,sw3Retag:SW3_RETAG,syncWc:SYNC_WC,mindfulWc:MINDFUL_WC,dryRun:MODE_DRY,provider:PROVIDER_ARG||'auto'});
+  log('info', 'QUARRY tagger v0.9 starting', {swVocab:SW_VOCAB,sw3:SW3,sw3Retag:SW3_RETAG,syncWc:SYNC_WC,mindfulWc:MINDFUL_WC,restoreApproved:RESTORE_APPROVED,dryRun:MODE_DRY,limit:LIMIT===Infinity?null:LIMIT,provider:PROVIDER_ARG||'auto'});
 
   if (SW4_DEPRECATED) log('warn', '--switch4 is retired and now runs --switch3 (full-note read is automatic for capable providers). Use --file <path> to deliberately re-read one note.');
 
   const db = openDb();
 
   if (MODE_STATUS) { printStatus(db); db.close(); return; }
+  if (RESTORE_APPROVED) { restoreApproved(db); printStatus(db); db.close(); return; }
   if (SYNC_WC)     { await runSyncWc(db); printStatus(db); db.close(); return; }
   if (MINDFUL_WC)  { await runMindfulWc(db); if (!MODE_DRY) printStatus(db); db.close(); return; }
 

@@ -29,6 +29,7 @@ const path  = require('path');
 const QUARRY_HOME = process.env.QUARRY_HOME || path.join(process.env.HOME, 'dev', 'quarry');
 const https = require('https');
 const { DatabaseSync } = require('node:sqlite');
+const { openDatabase } = require('./lib/db');   // sets a busy timeout - see lib/db.js
 
 // ---------------------------------------------------------------------------
 // CONFIG
@@ -54,7 +55,12 @@ const args        = process.argv.slice(2);
 const MODE_NEXT   = args.includes('--next');
 const MODE_DRY    = args.includes('--dry-run');
 const MODE_LIVE   = args.includes('--live');
-const MODE_RESET  = args.includes('--reset');                    // NEW: reset flag
+const MODE_RESET  = args.includes('--reset');
+// Non-interactive reset (the admin UI): --yes skips the typed confirmation, but only if the number
+// of APPROVED narratives still equals --expect-approved N - the count the person was shown when
+// they confirmed. If one was approved in between, the reset refuses instead of deleting it unseen.
+const RESET_YES   = args.includes('--yes');
+const EXPECT_APPROVED = (() => { const i = args.indexOf('--expect-approved'); return i !== -1 ? parseInt(args[i + 1], 10) : null; })();
 
 const SPECIFIC_ID = (() => {
   const i = args.indexOf('--id');
@@ -97,7 +103,7 @@ function openDb() {
     console.error('vault.db not found — run indexer first');
     process.exit(1);
   }
-  return new DatabaseSync(DB_PATH);
+  return openDatabase(DB_PATH);
 }
 
 // ---------------------------------------------------------------------------
@@ -114,7 +120,16 @@ async function handleReset(db) {
     ORDER BY produced_at DESC
   `).all();
 
-  if (approved.length > 0) {
+  if (RESET_YES) {
+    if (EXPECT_APPROVED === null || EXPECT_APPROVED !== approved.length) {
+      log('error', 'Reset refused: the number of approved narratives changed since you confirmed (nothing was deleted)', { confirmedFor: EXPECT_APPROVED, nowApproved: approved.length });
+      return false;
+    }
+  } else if (approved.length > 0 && !process.stdin.isTTY) {
+    // Launched without a terminal (tmux from the UI, cron): a prompt here would wait forever.
+    log('error', 'Reset refused: approved narratives exist and there is no terminal to confirm on. Use the Narrator page button, or run from a terminal.', { approved: approved.length });
+    return false;
+  } else if (approved.length > 0) {
     console.log(`\n⚠️  Found ${approved.length} APPROVED narrative(s):`);
     approved.forEach(n => {
       console.log(`   • ${n.seed_theme || '(no theme)'}  [${n.register || 'unknown'}]  ${n.produced_at?.slice(0,10) || ''}`);
@@ -128,6 +143,22 @@ async function handleReset(db) {
       console.log('Reset cancelled by user.');
       return false;
     }
+  }
+
+  // Belt and braces: everything about to be deleted is written to a JSON file first, so a reset is
+  // recoverable even without a database snapshot.
+  try {
+    const dir = path.join(QUARRY_HOME, 'backups');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, 'narratives-before-reset-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json');
+    fs.writeFileSync(file, JSON.stringify({
+      narratives: db.prepare('SELECT * FROM narratives').all(),
+      narrative_queue: db.prepare('SELECT * FROM narrative_queue').all(),
+    }, null, 1));
+    log('info', 'Backed up narratives and queue before reset', { file });
+  } catch (err) {
+    log('error', 'Reset refused: could not write the backup file (nothing was deleted)', { err: err.message });
+    return false;
   }
 
   // Perform reset - narratives first, then queue (to satisfy FK constraint)

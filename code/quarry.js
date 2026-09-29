@@ -106,7 +106,7 @@ function saveNote(id) {
   if (!ta) return;
   fetch('/api/notes/' + id + '/save', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: apiHeaders(),
     body: JSON.stringify({ content: ta.value }),
   })
     .then(function (r) { return r.json(); })
@@ -165,7 +165,7 @@ function deleteTag(id, tag) {
   if (!confirm('Remove tag "' + tag + '"?')) return;
   fetch('/api/notes/' + id + '/tags/delete', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: apiHeaders(),
     body: JSON.stringify({ tag: tag }),
   })
     .then(function (r) { return r.json(); })
@@ -188,7 +188,7 @@ function closeDrawer(e) {
 // Narratives
 // ---------------------------------------------------------------------------
 function approve(id) {
-  fetch('/api/narratives/' + id + '/approve', { method: 'POST' }).then(function (r) {
+  fetch('/api/narratives/' + id + '/approve', { method: 'POST', headers: apiHeaders(), body: '{}' }).then(function (r) {
     if (r.ok) {
       var el = document.getElementById('card-' + id);
       if (el) el.remove();
@@ -202,7 +202,7 @@ function reject(id) {
   var reason = input ? input.value.trim() : '';
   fetch('/api/narratives/' + id + '/reject', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: apiHeaders(),
     body: JSON.stringify({ reason: reason }),
   }).then(function (r) {
     if (r.ok) {
@@ -250,12 +250,12 @@ function runCmd(cmd, label, extra) {
       if (!el) return;
       if (d.ok) {
         el.innerHTML +=
-          '<div style="color:#6ec86e;font-size:.78rem;margin-top:6px">✓ ' + escH(d.msg) + '</div>';
+          '<div style="color:#6ec86e;font-size:.78rem;margin-top:6px">✓ ' + escH(d.msg) + jobLinks(d.log, d.session) + '</div>';
         startLogPoll(d.log || 'tagger.log');
       } else {
         el.innerHTML +=
           '<div style="color:#c86e6e;font-size:.78rem;margin-top:6px">✗ ' +
-          escH(d.error || 'unknown error') +
+          escH(d.error || 'unknown error') + (d.busySession ? jobLinks(null, d.busySession) : '') +
           '</div>';
       }
     });
@@ -267,35 +267,79 @@ function showCmdResult(r) {
     if (!el) return;
     if (d.ok) {
       el.innerHTML +=
-        '<div style="color:#6ec86e;font-size:.78rem;margin-top:6px">✓ ' + escH(d.msg) + '</div>';
+        '<div style="color:#6ec86e;font-size:.78rem;margin-top:6px">✓ ' + escH(d.msg) + jobLinks(d.log, d.session) + '</div>';
       startLogPoll(d.log || 'tagger.log');
     } else {
       el.innerHTML +=
         '<div style="color:#c86e6e;font-size:.78rem;margin-top:6px">✗ ' +
-        escH(d.error || 'unknown error') +
+        escH(d.error || 'unknown error') + (d.busySession ? jobLinks(null, d.busySession) : '') +
         '</div>';
     }
   });
 }
 
+// Links shown next to a started (or blocked) job: the whole log in its own tab - a plain browser
+// page you can scroll, search and copy, which never refreshes under you - and a Stop button.
+function jobLinks(logFile, session) {
+  var out = '';
+  if (logFile) out += ' &nbsp;<a class="job-link" target="_blank" rel="noopener" href="/api/log?full=1&file=' +
+    encodeURIComponent(logFile) + '">open full log ↗</a>';
+  if (session) out += ' &nbsp;<a class="job-link" href="#" data-action="stop-job" data-session="' + escH(session) + '">■ Stop</a>';
+  return out;
+}
+
 function startLogPoll(logFile) {
   if (_logInterval) clearInterval(_logInterval);
   var lf = logFile || 'tagger.log';
+  var started = Date.now();
   _logInterval = setInterval(function () {
+    // Keeps following long runs (the old 10-minute cut-off froze the panel mid-run); pauses while
+    // the tab is hidden and gives up after 12 hours.
+    if (Date.now() - started > 12 * 3600 * 1000) { clearInterval(_logInterval); return; }
+    if (document.hidden) return;
     fetch('/api/log?file=' + encodeURIComponent(lf))
       .then(function (r) { return r.text(); })
       .then(function (t) {
         var b = document.getElementById('log-box');
-        if (b) {
-          b.textContent = t;
-          b.scrollTop = b.scrollHeight;
-        }
+        if (!b || b.textContent === t) return;
+        // Only follow the bottom if you were already there: scrolled up to read or select
+        // something, the view stays put while new lines arrive.
+        var atBottom = b.scrollHeight - b.scrollTop - b.clientHeight < 30;
+        var keep = b.scrollTop;
+        b.textContent = t;
+        b.scrollTop = atBottom ? b.scrollHeight : keep;
       });
   }, 3000);
-  setTimeout(function () { clearInterval(_logInterval); }, 10 * 60 * 1000);
 }
 
-function runS3() {
+function stopJob(session) {
+  if (!confirm('Stop the job running in ' + session + '? An AI call in progress may still be billed.')) return;
+  fetch('/api/stop', { method: 'POST', headers: apiHeaders(), body: JSON.stringify({ session: session }) })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      var el = document.getElementById('cmd-output');
+      if (el) el.innerHTML += '<div style="color:' + (d.ok ? '#c8b89a' : '#c86e6e') + ';font-size:.78rem;margin-top:6px">' +
+        escH(d.ok ? d.msg : (d.error || 'stop failed')) + '</div>';
+    });
+}
+
+function runVocab(dry) {
+  var limit = document.getElementById('vocab-limit');
+  runCmd('sw-vocab', dry ? 'Quick Tag Match (dry run)' : 'Quick Tag Match',
+    { limit: limit && limit.value ? limit.value : undefined, dryRun: !!dry });
+}
+
+function narratorReset() {
+  fetch('/api/narrator/reset-preview').then(function (r) { return r.json(); }).then(function (p) {
+    var msg = 'Delete ' + p.narratives + ' narrative(s) and ' + p.queue + ' queue item(s)?';
+    if (p.approved) msg += '\n\n' + p.approved + ' of them are APPROVED.';
+    msg += '\n\nA JSON backup is saved to backups/ first.';
+    if (!confirm(msg)) return;
+    runCmd('narrator-reset', 'Narrator reset', { expectApproved: p.approved });
+  });
+}
+
+function runS3(dry) {
   var limit = document.getElementById('s3-limit');
   var prov = document.getElementById('s3-prov');
   fetch('/api/run', {
@@ -303,13 +347,14 @@ function runS3() {
     headers: apiHeaders(),
     body: JSON.stringify(withSingleNote({
       cmd: 'sw3',
+      dryRun: !!dry,
       limit: limit ? limit.value : 500,
       provider: prov ? prov.value : 'openrouter',
     })),
   }).then(showCmdResult);
 }
 
-function runRetag() {
+function runRetag(dry) {
   var limit = document.getElementById('retag-limit');
   var prov = document.getElementById('retag-prov');
   fetch('/api/run', {
@@ -317,6 +362,7 @@ function runRetag() {
     headers: apiHeaders(),
     body: JSON.stringify(withSingleNote({
       cmd: 'sw3-retag',
+      dryRun: !!dry,
       limit: limit ? limit.value : 500,
       provider: prov ? prov.value : 'grok',
     })),
@@ -539,15 +585,28 @@ document.addEventListener('click', function (e) {
       break;
     case 'run-cmd':
       e.preventDefault();
-      runCmd(el.getAttribute('data-cmd'), el.getAttribute('data-label') || el.getAttribute('data-cmd'));
+      runCmd(el.getAttribute('data-cmd'), el.getAttribute('data-label') || el.getAttribute('data-cmd'),
+        el.getAttribute('data-dry') === '1' ? { dryRun: true } : undefined);
+      break;
+    case 'run-vocab':
+      e.preventDefault();
+      runVocab(el.getAttribute('data-dry') === '1');
       break;
     case 'run-s3':
       e.preventDefault();
-      runS3();
+      runS3(el.getAttribute('data-dry') === '1');
       break;
     case 'run-retag':
       e.preventDefault();
-      runRetag();
+      runRetag(el.getAttribute('data-dry') === '1');
+      break;
+    case 'stop-job':
+      e.preventDefault();
+      stopJob(el.getAttribute('data-session'));
+      break;
+    case 'narrator-reset':
+      e.preventDefault();
+      narratorReset();
       break;
     case 'run-mwc':
       e.preventDefault();

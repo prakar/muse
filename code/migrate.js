@@ -18,6 +18,7 @@ const path = require('path');
 // the path when QUARRY_HOME=$HOME/dev/quarry - the convention writeback.js and the docs use.)
 const QUARRY_HOME = process.env.QUARRY_HOME || path.join(process.env.HOME, 'dev', 'quarry');
 const { DatabaseSync } = require('node:sqlite');
+const { openDatabase } = require('./lib/db');   // sets a busy timeout - see lib/db.js
 
 const DB_PATH = process.env.QUARRY_DB
   || path.join(QUARRY_HOME, 'vault.db');
@@ -41,7 +42,7 @@ function openDb() {
     console.error('vault.db not found at', DB_PATH, '— run indexer first');
     process.exit(1);
   }
-  return new DatabaseSync(DB_PATH);
+  return openDatabase(DB_PATH);
 }
 
 // ---------------------------------------------------------------------------
@@ -284,6 +285,26 @@ const MIGRATIONS = [
       } else {
         log('  vault_notes.retagged_at already exists — skipping');
       }
+    }
+  },
+
+  {
+    id:   'M011',
+    desc: 'Remove duplicate note_tags rows and make (note_id, tag_full) unique',
+    // note_tags had no uniqueness constraint, so every "INSERT OR IGNORE" into it (Quick Tag
+    // Match, approving a tag in Tag Review) silently added a second copy whenever the note
+    // already had that tag. This keeps the oldest row of each duplicate set, then adds the
+    // constraint so INSERT OR IGNORE really ignores from now on. The indexer relies on this
+    // too: it now MERGES frontmatter tags into notes whose tags came from Quarry instead of
+    // deleting them, and a merge without a unique key would re-add every tag on every sync.
+    up: function(db) {
+      var dupes = db.prepare(
+        'SELECT COUNT(*) AS n FROM note_tags WHERE id NOT IN (SELECT MIN(id) FROM note_tags GROUP BY note_id, tag_full)'
+      ).get().n;
+      db.exec('DELETE FROM note_tags WHERE id NOT IN (SELECT MIN(id) FROM note_tags GROUP BY note_id, tag_full)');
+      log('  Removed ' + dupes + ' duplicate note_tags row(s)');
+      db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_note_tags_unique ON note_tags(note_id, tag_full)');
+      log('  Added unique index note_tags(note_id, tag_full)');
     }
   }
 

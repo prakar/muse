@@ -34,6 +34,7 @@ const fs   = require('fs');
 const path = require('path');
 const cp   = require('child_process');
 const { DatabaseSync } = require('node:sqlite');
+const { openDatabase } = require('./lib/db');   // sets a busy timeout - see lib/db.js
 
 const QUARRY_HOME = process.env.QUARRY_HOME || path.join(process.env.HOME, 'dev', 'quarry');
 const DB_PATH      = process.env.QUARRY_DB   || path.join(QUARRY_HOME, 'vault.db');
@@ -79,7 +80,7 @@ function log(level, msg, data) {
 // ---------------------------------------------------------------------------
 function openDb() {
   if (!fs.existsSync(DB_PATH)) { console.error('vault.db not found at', DB_PATH); process.exit(1); }
-  return new DatabaseSync(DB_PATH);
+  return openDatabase(DB_PATH);
 }
 
 // ---------------------------------------------------------------------------

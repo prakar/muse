@@ -17,6 +17,7 @@ const path = require('path');
 // the path when QUARRY_HOME=$HOME/dev/quarry - the convention writeback.js and the docs use.)
 const QUARRY_HOME = process.env.QUARRY_HOME || path.join(process.env.HOME, 'dev', 'quarry');
 const { DatabaseSync } = require('node:sqlite');
+const { openDatabase } = require('./lib/db');   // sets a busy timeout - see lib/db.js
 
 const DB_PATH = process.env.QUARRY_DB || path.join(QUARRY_HOME, 'vault.db');
 
@@ -96,7 +97,7 @@ function ensureColumns(db) {
 // ---------------------------------------------------------------------------
 function main() {
   if (!fs.existsSync(DB_PATH)) { console.error('vault.db not found'); process.exit(1); }
-  const db = new DatabaseSync(DB_PATH);
+  const db = openDatabase(DB_PATH);
   ensureColumns(db);
 
   let query, params;

@@ -10,3 +10,5 @@ narrator.log
 tagger.log
 runtime-trace.jsonl
 chunks/
+backups/
+quarry-release3.zip
