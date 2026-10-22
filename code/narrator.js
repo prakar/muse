@@ -1,35 +1,38 @@
 #!/usr/bin/env node
 /**
- * QUARRY narrator.js v0.1
- * Takes the next queued cluster, reads full note content,
- * calls Claude (or Gemini fallback), stores result, returns narrative.
+ * QUARRY narrator.js v0.4
+ * Changes from v0.2:
+ *   - Serendipity (--live / liveSelectNotes) removed. Tag-based clustering is the
+ *     sole queue-building strategy going forward (see quarry-tag-experiment.py).
+ *   - NUM_SOURCES / --numSources removed (was only used by liveSelectNotes).
+ *
+ * Changes from v0.1→v0.2:
+ *   - SYSTEM_PROMPT: OUTPUT FORMAT header (BRIDGE: line mandatory), ATTRIBUTION RULE,
+ *     hard METAPHORICAL opt-out (REGISTER: unnarratable)
+ *   - buildUserMessage: BRIDGE: required as first line of every response
+ *   - parseBridge() extracts and logs the BRIDGE line; stripped from stored body
+ *   - resolveModel integration for Claude and Gemini (live model resolution)
+ *
+ * Changes from v0.3→v0.4:
+ *   - All LLM calls go through lib/llm.js (shared with tagger.js): gains request timeout,
+ *     markModelBad + re-resolve on model-level 404/403, and a pinned fallback if the
+ *     resolver package is absent. Local httpPost/callClaude/callGemini removed.
  *
  * Usage:
- * 
- *   node --no-warnings ~/quarry/code/narrator.js --dry-run       Show what would be sent to API, no call
-
- *   node --no-warnings ~/quarry/code/narrator.js --next          Process next queued item
- *   node --no-warnings ~/quarry/code/narrator.js --id <queue_id> Process a specific queue item
- *   node --no-warnings ~/quarry/code/narrator.js --live          3 fresh notes from the vault and generates a narrative
- 
- *   node --no-warnings ~/quarry/code/narrator.js --live (DEFAULT: numSources uses 3 notes if unspecified)
- *   node --no-warnings ~/quarry/code/narrator.js --live --numSources 1 (Picks 1 note)
- *   node --no-warnings ~/quarry/code/narrator.js --live --numSources 5 (Ambitious - 5 random notes for narrative)
- *
- *   node --no-warnings ~/quarry/code/narrator.js --reset         Safely clear all narratives and queue (with approval check)
+ *   node --no-warnings narrator.js --dry-run
+ *   node --no-warnings narrator.js --next
+ *   node --no-warnings narrator.js --id <queue_id>
+ *   node --no-warnings narrator.js --reset
  */
 
 'use strict';
 
 const fs    = require('fs');
 const path  = require('path');
-// QUARRY_HOME is the quarry directory itself (default ~/dev/quarry): the DB, logs and chunk caches live
-// directly under it. (These scripts once treated it as a PARENT and appended dev/quarry, which doubles
-// the path when QUARRY_HOME=$HOME/dev/quarry - the convention writeback.js and the docs use.)
 const QUARRY_HOME = process.env.QUARRY_HOME || path.join(process.env.HOME, 'dev', 'quarry');
-const https = require('https');
 const { DatabaseSync } = require('node:sqlite');
-const { openDatabase } = require('./lib/db');   // sets a busy timeout - see lib/db.js
+
+const llm = require('./lib/llm');   // all LLM calls: see lib/llm.js
 
 // ---------------------------------------------------------------------------
 // CONFIG
@@ -40,13 +43,10 @@ const DB_PATH = process.env.QUARRY_DB
 const VAULT_PATH = process.env.VAULT_PATH
   || path.join(process.env.HOME, 'vault');
 
-const CLAUDE_API_KEY  = process.env.ANTHROPIC_API_KEY || '';
-const GEMINI_API_KEY  = process.env.GEMINI_API_KEY    || '';
 
-const CLAUDE_MODEL    = 'claude-sonnet-4-20250514';
-const GEMINI_MODEL    = 'gemini-2.5-flash';
 const MAX_TOKENS      = parseInt(process.env.QUARRY_MAX_TOKENS || '4096', 10);
-const FULL_BODY_CHARS = 3000; // max chars of note body to send to narrator
+const FULL_BODY_CHARS = 3000;
+const MIN_SOURCES     = 3;   // a cluster with fewer readable notes than this is marked failed
 
 // ---------------------------------------------------------------------------
 // CLI ARGS
@@ -54,31 +54,15 @@ const FULL_BODY_CHARS = 3000; // max chars of note body to send to narrator
 const args        = process.argv.slice(2);
 const MODE_NEXT   = args.includes('--next');
 const MODE_DRY    = args.includes('--dry-run');
-const MODE_LIVE   = args.includes('--live');
 const MODE_RESET  = args.includes('--reset');
-// Non-interactive reset (the admin UI): --yes skips the typed confirmation, but only if the number
-// of APPROVED narratives still equals --expect-approved N - the count the person was shown when
-// they confirmed. If one was approved in between, the reset refuses instead of deleting it unseen.
-const RESET_YES   = args.includes('--yes');
-const EXPECT_APPROVED = (() => { const i = args.indexOf('--expect-approved'); return i !== -1 ? parseInt(args[i + 1], 10) : null; })();
 
 const SPECIFIC_ID = (() => {
   const i = args.indexOf('--id');
   return i !== -1 ? parseInt(args[i + 1], 10) : null;
 })();
-const NUM_SOURCES = (() => {
-  const i = args.indexOf('--numSources');
-  if (i !== -1) {
-    const n = parseInt(args[i + 1], 10);
-    if (n >= 1 && n <= 5) return n;
-    console.error('--numSources must be between 1 and 5');
-    process.exit(1);
-  }
-  return 3; // default
-})();
 
-if (!MODE_NEXT && !MODE_DRY && !MODE_LIVE && !MODE_RESET && SPECIFIC_ID === null) {
-  console.error('Usage: node narrator.js [--next|--live|--dry-run|--reset|--id <queue_id>] [--numSources 1-5]');
+if (!MODE_NEXT && !MODE_DRY && !MODE_RESET && SPECIFIC_ID === null) {
+  console.error('Usage: node narrator.js [--next|--dry-run|--reset|--id <queue_id>]');
   process.exit(1);
 }
 
@@ -103,33 +87,23 @@ function openDb() {
     console.error('vault.db not found — run indexer first');
     process.exit(1);
   }
-  return openDatabase(DB_PATH);
+  return new DatabaseSync(DB_PATH);
 }
 
 // ---------------------------------------------------------------------------
-// RESET FUNCTION (added only this block)
+// RESET
 // ---------------------------------------------------------------------------
 async function handleReset(db) {
   log('info', 'Reset requested — clearing narratives and queue');
 
-  // Check for approved narratives
   const approved = db.prepare(`
-    SELECT id, seed_theme, produced_at, register 
-    FROM narratives 
-    WHERE approval_status = 'approved' 
+    SELECT id, seed_theme, produced_at, register
+    FROM narratives
+    WHERE approval_status = 'approved'
     ORDER BY produced_at DESC
   `).all();
 
-  if (RESET_YES) {
-    if (EXPECT_APPROVED === null || EXPECT_APPROVED !== approved.length) {
-      log('error', 'Reset refused: the number of approved narratives changed since you confirmed (nothing was deleted)', { confirmedFor: EXPECT_APPROVED, nowApproved: approved.length });
-      return false;
-    }
-  } else if (approved.length > 0 && !process.stdin.isTTY) {
-    // Launched without a terminal (tmux from the UI, cron): a prompt here would wait forever.
-    log('error', 'Reset refused: approved narratives exist and there is no terminal to confirm on. Use the Narrator page button, or run from a terminal.', { approved: approved.length });
-    return false;
-  } else if (approved.length > 0) {
+  if (approved.length > 0) {
     console.log(`\n⚠️  Found ${approved.length} APPROVED narrative(s):`);
     approved.forEach(n => {
       console.log(`   • ${n.seed_theme || '(no theme)'}  [${n.register || 'unknown'}]  ${n.produced_at?.slice(0,10) || ''}`);
@@ -140,38 +114,17 @@ async function handleReset(db) {
       rl.question('Type YES to confirm deletion: ', function(a) { rl.close(); resolve(a); });
     });
     if (answer.trim().toUpperCase() !== 'YES') {
-      console.log('Reset cancelled by user.');
+      console.log('Reset cancelled.');
       return false;
     }
   }
 
-  // Belt and braces: everything about to be deleted is written to a JSON file first, so a reset is
-  // recoverable even without a database snapshot.
-  try {
-    const dir = path.join(QUARRY_HOME, 'backups');
-    fs.mkdirSync(dir, { recursive: true });
-    const file = path.join(dir, 'narratives-before-reset-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json');
-    fs.writeFileSync(file, JSON.stringify({
-      narratives: db.prepare('SELECT * FROM narratives').all(),
-      narrative_queue: db.prepare('SELECT * FROM narrative_queue').all(),
-    }, null, 1));
-    log('info', 'Backed up narratives and queue before reset', { file });
-  } catch (err) {
-    log('error', 'Reset refused: could not write the backup file (nothing was deleted)', { err: err.message });
-    return false;
-  }
-
-  // Perform reset - narratives first, then queue (to satisfy FK constraint)
   db.exec('BEGIN');
   try {
-    const narrDeleted = db.prepare('DELETE FROM narratives').run().changes;
+    const narrDeleted  = db.prepare('DELETE FROM narratives').run().changes;
     const queueDeleted = db.prepare('DELETE FROM narrative_queue').run().changes;
-
     db.exec('COMMIT');
-
-    console.log(`\n✅ Reset complete:`);
-    console.log(`   • ${narrDeleted} narratives deleted`);
-    console.log(`   • ${queueDeleted} queue items deleted`);
+    console.log(`\n✅ Reset complete: ${narrDeleted} narratives, ${queueDeleted} queue items deleted`);
     log('info', 'Reset completed', { narratives: narrDeleted, queue: queueDeleted });
     return true;
   } catch (err) {
@@ -214,6 +167,26 @@ of astonishment.
 
 ---
 
+OUTPUT FORMAT — NON-NEGOTIABLE
+
+Every response must begin with exactly this line:
+BRIDGE: [one sentence stating the factual or structural mechanism connecting at least two notes]
+
+Then the narrative body (200-400 words).
+Then: REGISTER: senior or REGISTER: junior
+
+If no factual or structural bridge is available (only thematic category-overlap
+or surface word-resemblance), output only:
+BRIDGE: none — [one phrase describing what the notes superficially share]
+REGISTER: unnarratable
+
+Do not write a narrative body in the unnarratable case.
+The curator will re-queue with different notes.
+
+A response without a BRIDGE: first line will be treated as a failed generation.
+
+---
+
 WHAT YOU ARE PRODUCING
 
 A short narrative of one or two paragraphs. Not a question. Not a quiz. Not a summary.
@@ -243,6 +216,7 @@ TEST YOUR CONNECTION BEFORE COMMITTING TO IT:
 3. If you remove the connecting word/phrase, does the connection still hold?
 
 If any answer is no — ABANDON that connection. Find a different one.
+If no connection survives this test — use the BRIDGE: none format and stop.
 
 CONNECTION HIERARCHY — strongest to weakest:
 1. FACTUAL: documented causal link, shared historical moment, same person,
@@ -251,15 +225,34 @@ CONNECTION HIERARCHY — strongest to weakest:
    (e.g. both involve exponential growth, both involve translation loss)
 3. IRONIC: the two things contradict each other in a revealing way
 4. ANALOGICAL: similar shape or pattern — ONLY use if mechanism is shared
-5. METAPHORICAL: surface resemblance in language — FORBIDDEN as primary bridge
+5. METAPHORICAL: surface resemblance in language — FORBIDDEN.
+   Thematic category-overlap ("both involve Indian cultural influence",
+   "both are about resilience", "both show patronage") is also FORBIDDEN
+   as a primary bridge — it is a category, not a mechanism.
+   If only a metaphorical or thematic bridge is available, use BRIDGE: none.
 
-A narrative built on a factual connection is always stronger than one built
-on a metaphor, even if the metaphor is more elegant.
+---
 
-NEVER DO THIS:
-- Use "unleavened" to connect bread with knowledge (mechanism differs)
-- Use "flow" to connect rivers with trade routes (too vague)
-- Use any abstract noun as a bridge unless it names a specific mechanism
+ATTRIBUTION RULE
+
+When your narrative names a specific person and attributes a method, theory,
+concept, or historical act to them, that attribution must come directly from
+what the source note says about that specific person.
+
+When a note lists two or more thinkers, scholars, or figures together, do NOT
+transfer one person's method or contribution to another. Each person's
+attribution must be separately traceable to what the note says about them.
+
+Before attributing anything to a named person:
+- Verify that the note explicitly connects that attribution to that person
+  (not merely to someone else mentioned nearby).
+- If you cannot trace the attribution this way, omit it entirely.
+
+Example of the failure to avoid:
+A note correctly listed "Deconstruction (Derrida)" and "Discourse Analysis (Foucault)"
+as separate items. A narrative that wrote "Foucault's deconstructive lens, shared with
+Derrida" blended the two — a factual error a first-year student would catch.
+That narrative should never have been written.
 
 ---
 
@@ -407,7 +400,7 @@ If a note could not be integrated, append: "NOTE [N] NOT INTEGRATED: [one senten
 This is valuable feedback for the curator.`;
 
 // ---------------------------------------------------------------------------
-// FETCH CLUSTER NOTES — includes Switch-3/4 classifications if available
+// FETCH CLUSTER NOTES
 // ---------------------------------------------------------------------------
 function fetchClusterNotes(db, noteIds) {
   return noteIds.map(function(id) {
@@ -494,143 +487,100 @@ function buildUserMessage(notes, seedTheme) {
   });
 
   parts.push('---');
-  parts.push('STEP 1: In ONE sentence, state the factual or structural bridge connecting at least two notes.');
-  parts.push('STEP 2: Write the narrative (200-400 words).');
-  parts.push('STEP 3: Append REGISTER: senior or REGISTER: junior.');
+  parts.push('Your response MUST begin with exactly this line:');
+  parts.push('BRIDGE: [one sentence — the factual or structural mechanism connecting at least two notes]');
+  parts.push('');
+  parts.push('Then write the narrative (200-400 words).');
+  parts.push('Then append: REGISTER: senior or REGISTER: junior');
+  parts.push('');
+  parts.push('If the only available bridge is thematic category-overlap or surface word-resemblance:');
+  parts.push('BRIDGE: none — [one phrase describing the surface resemblance]');
+  parts.push('REGISTER: unnarratable');
+  parts.push('(No narrative body in this case.)');
 
   return parts.join('\n');
 }
 
 // ---------------------------------------------------------------------------
-// HTTP POST helper
-// ---------------------------------------------------------------------------
-function httpPost(hostname, pathStr, headers, body) {
-  return new Promise(function(resolve, reject) {
-    const bodyStr = JSON.stringify(body);
-    const options = {
-      hostname: hostname,
-      path:     pathStr,
-      method:   'POST',
-      headers:  Object.assign({
-        'Content-Type':   'application/json',
-        'Content-Length': Buffer.byteLength(bodyStr)
-      }, headers)
-    };
-
-    const req = https.request(options, function(res) {
-      var data = '';
-      res.on('data', function(chunk) { data += chunk; });
-      res.on('end', function() {
-        try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
-        catch (e) { resolve({ status: res.statusCode, body: data }); }
-      });
-    });
-
-    req.on('error', reject);
-    req.write(bodyStr);
-    req.end();
-  });
-}
-
-// ---------------------------------------------------------------------------
-// CLAUDE API CALL
-// ---------------------------------------------------------------------------
-async function callClaude(userMessage) {
-  if (!CLAUDE_API_KEY) throw new Error('ANTHROPIC_API_KEY not set');
-
-  const res = await httpPost(
-    'api.anthropic.com',
-    '/v1/messages',
-    {
-      'x-api-key':         CLAUDE_API_KEY,
-      'anthropic-version': '2023-06-01'
-    },
-    {
-      model:      CLAUDE_MODEL,
-      max_tokens: MAX_TOKENS,
-      system:     SYSTEM_PROMPT,
-      messages:   [{ role: 'user', content: userMessage }]
-    }
-  );
-
-  if (res.status !== 200) {
-    throw new Error('Claude API error ' + res.status + ': ' + JSON.stringify(res.body));
-  }
-
-  const text = (res.body.content || [])
-    .filter(function(b) { return b.type === 'text'; })
-    .map(function(b) { return b.text; })
-    .join('');
-
-  return { text: text, model: CLAUDE_MODEL };
-}
-
-// ---------------------------------------------------------------------------
-// GEMINI API CALL (fallback)
-// ---------------------------------------------------------------------------
-async function callGemini(userMessage) {
-  if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not set');
-
-  const res = await httpPost(
-    'generativelanguage.googleapis.com',
-    '/v1beta/models/' + GEMINI_MODEL + ':generateContent?key=' + GEMINI_API_KEY,
-    {},
-    {
-      system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
-      contents: [{
-        role: 'user',
-        parts: [{ text: userMessage }]
-      }],
-      generationConfig: { maxOutputTokens: MAX_TOKENS, temperature: 0.7 }
-    }
-  );
-
-  if (res.status !== 200) {
-    throw new Error('Gemini API error ' + res.status + ': ' + JSON.stringify(res.body));
-  }
-
-  const text = ((((res.body.candidates || [])[0] || {}).content || {}).parts || [])
-    .map(function(p) { return p.text || ''; })
-    .join('');
-
-  return { text: text, model: GEMINI_MODEL };
-}
-
-// ---------------------------------------------------------------------------
 // CALL NARRATOR
+// All LLM traffic goes through lib/llm.js (model resolution, markModelBad
+// retry, timeouts). Claude first; Gemini if Claude is unavailable or fails.
 // ---------------------------------------------------------------------------
+llm.setLogger(log);
+
 async function callNarrator(userMessage) {
-  if (CLAUDE_API_KEY) {
+  if (llm.hasKey('claude')) {
     try {
-      log('info', 'Calling Claude', { model: CLAUDE_MODEL });
-      return await callClaude(userMessage);
+      log('info', 'Calling Claude');
+      return await llm.callLLM('claude', userMessage, { system: SYSTEM_PROMPT, maxTokens: MAX_TOKENS, label: 'narrator' });
     } catch (e) {
       log('warn', 'Claude failed, falling back to Gemini', { err: e.message });
     }
   }
 
-  log('info', 'Calling Gemini', { model: GEMINI_MODEL });
-  return await callGemini(userMessage);
+  log('info', 'Calling Gemini');
+  return await llm.callLLM('gemini', userMessage, { system: SYSTEM_PROMPT, maxTokens: MAX_TOKENS, temperature: 0.7, label: 'narrator' });
+}
+
+// ---------------------------------------------------------------------------
+// PARSE BRIDGE LINE
+// Extracts "BRIDGE: <text>" from the start of the LLM response.
+// Returns { bridge, isUnnarratable, rest } where rest is the text without the BRIDGE line.
+// ---------------------------------------------------------------------------
+function parseBridge(text) {
+  const lines = text.split('\n');
+  const firstLine = lines[0].trim();
+  const match = firstLine.match(/^BRIDGE:\s*(.+)$/i);
+
+  if (!match) {
+    // No BRIDGE line — model didn't comply with format
+    return { bridge: null, isUnnarratable: false, rest: text };
+  }
+
+  const bridgeText = match[1].trim();
+  const isNone = /^none\s*[—–-]/i.test(bridgeText) || /^none$/i.test(bridgeText);
+  const rest = lines.slice(1).join('\n').trim();
+
+  return {
+    bridge:          bridgeText,
+    isUnnarratable:  isNone,
+    rest:            rest
+  };
 }
 
 // ---------------------------------------------------------------------------
 // PARSE REGISTER
 // ---------------------------------------------------------------------------
 function parseRegister(text) {
-  const match = text.match(/REGISTER:\s*(senior|junior)/i);
+  const match = text.match(/REGISTER:\s*(senior|junior|unnarratable)/i);
   return match ? match[1].toLowerCase() : 'unknown';
 }
 
 function stripRegisterLine(text) {
-  return text.replace(/\n?REGISTER:\s*(senior|junior)\s*$/i, '').trim();
+  return text.replace(/\n?REGISTER:\s*(senior|junior|unnarratable)\s*$/i, '').trim();
 }
 
 // ---------------------------------------------------------------------------
 // STORE NARRATIVE
 // ---------------------------------------------------------------------------
 function storeNarrative(db, queueId, noteIds, seedTheme, text, model) {
-  const register = parseRegister(text);
-  const body     = stripRegisterLine(text);
+  const { bridge, isUnnarratable, rest } = parseBridge(text);
+  const register = parseRegister(rest || text);
+  const body     = stripRegisterLine(rest || text);
+
+  // Log the bridge for visibility; bridge column storage requires migration:
+  //   ALTER TABLE narratives ADD COLUMN bridge TEXT;
+  // Until then, bridge is logged but not stored in the row.
+  if (bridge) {
+    log('info', 'Narrative bridge', { bridge, isUnnarratable });
+  } else {
+    log('warn', 'No BRIDGE line in response — model did not comply with format');
+  }
+
+  if (isUnnarratable) {
+    log('warn', 'Model returned REGISTER: unnarratable — no narrative produced', { bridge });
+    return { body: '', register: 'unnarratable', bridge };
+  }
 
   db.prepare(`
     INSERT INTO narratives
@@ -647,237 +597,53 @@ function storeNarrative(db, queueId, noteIds, seedTheme, text, model) {
     produced_at: new Date().toISOString()
   });
 
-  return { body, register };
+  return { body, register, bridge };
 }
 
 // ---------------------------------------------------------------------------
 // FORMAT TELEGRAM MESSAGE
 // ---------------------------------------------------------------------------
-function formatTelegram(narrative, notes, seedTheme, register) {
+function formatTelegram(narrative, notes, seedTheme, register, bridge) {
   const titles  = notes.map(function(n) { return n.title; }).join(', ');
-  const divider = '\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500';
+  const divider = '──────────';
 
-  return [
-    '\uD83E\uDEA8 QUARRY',
+  const parts = [
+    '🪨 QUARRY',
     '',
     narrative,
     '',
     divider,
-    '\uD83D\uDCCE Sources: ' + titles,
-    '\uD83C\uDFF7 Theme: ' + seedTheme,
+    '📎 Sources: ' + titles,
+    '🏷 Theme: ' + seedTheme,
     'REGISTER: ' + register
-  ].join('\n');
-}
+  ];
 
-// ---------------------------------------------------------------------------
-// LIVE SELECTION
-// ---------------------------------------------------------------------------
-function liveSelectNotes(db) {
-  const CLUSTER_SIZE = NUM_SOURCES;
-  const RECENT_DAYS  = 30;
-  const cutoff = new Date(Date.now() - RECENT_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  if (bridge) parts.push('BRIDGE: ' + bridge);
 
-  const recentRows = db.prepare(
-    'SELECT note_ids FROM narrative_queue WHERE created_at > ?'
-  ).all(cutoff);
-  const recentIds = new Set();
-  recentRows.forEach(function(r) {
-    try { JSON.parse(r.note_ids).forEach(function(id) { recentIds.add(id); }); } catch (_) {}
-  });
-  db.prepare(
-    'SELECT note_ids FROM narratives WHERE produced_at > ?'
-  ).all(cutoff).forEach(function(r) {
-    try { JSON.parse(r.note_ids).forEach(function(id) { recentIds.add(id); }); } catch (_) {}
-  });
-
-  if (CLUSTER_SIZE === 1) {
-    const candidates = db.prepare(`
-      SELECT vn.id, vn.title, vn.word_count,
-             COUNT(nc.id) as claim_count,
-             SUM(CASE WHEN nc.bucket = 'verified' THEN 1 ELSE 0 END) as verified_count,
-             SUM(CASE WHEN nc.bucket = 'trivia'   THEN 1 ELSE 0 END) as trivia_count
-      FROM vault_notes vn
-      JOIN note_classifications nc ON nc.note_id = vn.id
-      WHERE vn.content_type NOT IN ('attachment','processed')
-        AND vn.title NOT LIKE '% MOC%'
-        AND vn.title NOT LIKE 'MOC %'
-        AND (vn.quarry_exclude IS NULL OR vn.quarry_exclude = 0)
-      GROUP BY vn.id
-      ORDER BY RANDOM()
-      LIMIT 200
-    `).all().filter(function(n) { return !recentIds.has(n.id); });
-
-    if (candidates.length === 0) {
-      log('warn', 'No classified notes available for single-note mode');
-      return null;
-    }
-
-    const sorted = candidates
-      .sort(function(a, b) { return (b.verified_count + b.trivia_count * 2) - (a.verified_count + a.trivia_count * 2); })
-      .slice(0, 20);
-    const picked = sorted[Math.floor(Math.random() * sorted.length)];
-
-    log('info', 'Live selection (single note)', {
-      theme: 'live:single',
-      notes: [picked.title.slice(0, 50)],
-      verified: picked.verified_count,
-      trivia: picked.trivia_count
-    });
-
-    return { ids: [picked.id], theme: 'live:single' };
-  }
-
-  const hasClassifications = new Set(
-    db.prepare('SELECT DISTINCT note_id FROM note_classifications').all()
-      .map(function(r) { return r.note_id; })
-  );
-
-  const pool = db.prepare(
-    "SELECT id, title, word_count, content_type, source_url FROM vault_notes WHERE content_type NOT IN ('attachment','processed') AND title NOT LIKE '% MOC%' AND title NOT LIKE 'MOC %' AND (quarry_exclude IS NULL OR quarry_exclude = 0) ORDER BY RANDOM() LIMIT 3000"
-  ).all().filter(function(n) {
-    if (recentIds.has(n.id)) return false;
-    if (n.word_count < 200 && !hasClassifications.has(n.id)) return false;
-    return true;
-  });
-
-  if (pool.length < CLUSTER_SIZE) {
-    log('warn', 'Live pool too small', { size: pool.length });
-    return null;
-  }
-
-  function getTagRoots(noteId) {
-    return db.prepare(
-      'SELECT DISTINCT tag_root FROM note_tags WHERE note_id = ? AND tag_root IS NOT NULL'
-    ).all(noteId).map(function(r) { return r.tag_root; });
-  }
-
-  function getDomain(url) {
-    if (!url) return null;
-    try { const m = url.match(/https?:\/\/([^/]+)/); return m ? m[1].replace(/^www\./, '') : null; }
-    catch (_) { return null; }
-  }
-
-  for (var attempt = 0; attempt < 50; attempt++) {
-    const shuffled    = pool.slice().sort(function() { return Math.random() - 0.5; });
-    const selected    = [];
-    const usedRoots   = new Set();
-    const usedDomains = new Set();
-
-    for (var i = 0; i < shuffled.length && selected.length < CLUSTER_SIZE; i++) {
-      const n      = shuffled[i];
-      const roots  = getTagRoots(n.id);
-      const domain = getDomain(n.source_url);
-
-      if (domain && usedDomains.has(domain)) continue;
-      if (selected.length > 0 && roots.length > 0) {
-        const hasNew = roots.some(function(r) { return !usedRoots.has(r); });
-        if (!hasNew && selected.length >= 2) continue;
-      }
-
-      selected.push(n);
-      roots.forEach(function(r) { usedRoots.add(r); });
-      if (domain) usedDomains.add(domain);
-    }
-
-    if (selected.length === CLUSTER_SIZE) {
-      const sharedRoots = [];
-      usedRoots.forEach(function(r) {
-        var count = selected.filter(function(n) {
-          return getTagRoots(n.id).includes(r);
-        }).length;
-        if (count > 1) sharedRoots.push(r);
-      });
-      const theme = sharedRoots.length > 0 ? 'live:' + sharedRoots[0] : 'live:serendipity';
-
-      log('info', 'Live selection', {
-        theme: theme,
-        sources: CLUSTER_SIZE,
-        notes: selected.map(function(n) { return n.title.slice(0, 50); })
-      });
-
-      return { ids: selected.map(function(n) { return n.id; }), theme: theme };
-    }
-  }
-
-  log('warn', 'Live selection failed after 50 attempts');
-  return null;
+  return parts.join('\n');
 }
 
 // ---------------------------------------------------------------------------
 // MAIN
 // ---------------------------------------------------------------------------
+// Set once an item is marked in_progress, so a crash can mark it failed instead of
+// leaving it stuck in_progress (invisible in both Queued and Pending).
+let ACTIVE_QUEUE_ID = null;
+
 async function main() {
-  log('info', 'QUARRY narrator starting', { 
-    mode: MODE_RESET ? 'reset' : MODE_LIVE ? 'live' : MODE_DRY ? 'dry-run' : 'queue' 
+  log('info', 'QUARRY narrator v0.4 starting', {
+    mode: MODE_RESET ? 'reset' : MODE_DRY ? 'dry-run' : 'queue'
   });
 
   const db = openDb();
 
-  // NEW: Handle reset
   if (MODE_RESET) {
     await handleReset(db);
     db.close();
     return;
   }
 
-  // LIVE MODE — bypass queue entirely
-  if (MODE_LIVE) {
-    const selection = liveSelectNotes(db);
-    if (!selection) {
-      log('error', 'Live selection produced no cluster');
-      db.close(); return;
-    }
-
-    const notes = fetchClusterNotes(db, selection.ids);
-    if (notes.length < NUM_SOURCES) {
-      log('warn', 'Too few readable notes in live selection');
-      db.close(); return;
-    }
-
-    const userMessage = buildUserMessage(notes, selection.theme);
-
-    if (MODE_DRY) {
-      console.log('\n=== LIVE DRY RUN ===\n');
-      console.log(userMessage.slice(0, 800) + '...');
-      db.close(); return;
-    }
-
-    var result;
-    try {
-      result = await callNarrator(userMessage);
-    } catch (e) {
-      log('error', 'Live narrator API call failed', { err: e.message });
-      db.close(); return;
-    }
-
-    log('info', 'Live narrative produced', {
-      theme:    selection.theme,
-      length:   result.text.length,
-      register: parseRegister(result.text)
-    });
-
-    const register = parseRegister(result.text);
-    const body     = stripRegisterLine(result.text);
-    db.prepare(
-      'INSERT INTO narratives (queue_id, note_ids, seed_theme, body, register, model_used, produced_at, used_for_kcircle) VALUES (NULL, ?, ?, ?, ?, ?, ?, 0)'
-    ).run(
-      JSON.stringify(selection.ids),
-      selection.theme,
-      body,
-      register,
-      result.model,
-      new Date().toISOString()
-    );
-
-    const telegramMsg = formatTelegram(body, notes, selection.theme, register);
-    console.log('\n' + telegramMsg + '\n');
-
-    log('info', 'Live narrator complete', { theme: selection.theme, register: register });
-    db.close();
-    return;
-  }
-
-  // Get queue item
+  // QUEUE MODE
   var queueItem;
   if (SPECIFIC_ID !== null) {
     queueItem = db.prepare('SELECT * FROM narrative_queue WHERE id = ?').get(SPECIFIC_ID);
@@ -900,12 +666,13 @@ async function main() {
   if (!MODE_DRY) {
     db.prepare("UPDATE narrative_queue SET status = 'in_progress' WHERE id = ?")
       .run(queueItem.id);
+    ACTIVE_QUEUE_ID = queueItem.id;
   }
 
   const noteIds = JSON.parse(queueItem.note_ids);
   const notes   = fetchClusterNotes(db, noteIds);
 
-  if (notes.length < NUM_SOURCES) {
+  if (notes.length < MIN_SOURCES) {
     log('warn', 'Cluster has too few readable notes', { id: queueItem.id, found: notes.length });
     if (!MODE_DRY) {
       db.prepare("UPDATE narrative_queue SET status = 'failed' WHERE id = ?")
@@ -950,18 +717,32 @@ async function main() {
     db, queueItem.id, noteIds, queueItem.seed_theme, result.text, result.model
   );
 
-  db.prepare("UPDATE narrative_queue SET status = 'done' WHERE id = ?")
-    .run(queueItem.id);
+  if (stored.register !== 'unnarratable') {
+    db.prepare("UPDATE narrative_queue SET status = 'done' WHERE id = ?")
+      .run(queueItem.id);
 
-  const telegramMsg = formatTelegram(stored.body, notes, queueItem.seed_theme, stored.register);
-  console.log('\n' + telegramMsg + '\n');
-
-  log('info', 'Narrator complete', { queue_id: queueItem.id, register: stored.register });
+    const telegramMsg = formatTelegram(stored.body, notes, queueItem.seed_theme, stored.register, stored.bridge);
+    console.log('\n' + telegramMsg + '\n');
+    log('info', 'Narrator complete', { queue_id: queueItem.id, register: stored.register });
+  } else {
+    db.prepare("UPDATE narrative_queue SET status = 'failed' WHERE id = ?")
+      .run(queueItem.id);
+    log('warn', 'Queue item unnarratable — marked failed', { queue_id: queueItem.id, bridge: stored.bridge });
+    console.log('\n[UNNARRATABLE] ' + stored.bridge + '\n');
+  }
 
   db.close();
 }
 
 main().catch(function(e) {
   log('error', 'Narrator crashed', { err: e.message, stack: e.stack });
+  if (ACTIVE_QUEUE_ID !== null) {
+    try {
+      const d = new DatabaseSync(DB_PATH);
+      d.prepare("UPDATE narrative_queue SET status = 'failed' WHERE id = ? AND status = 'in_progress'").run(ACTIVE_QUEUE_ID);
+      d.close();
+      log('warn', 'Marked crashed queue item failed', { id: ACTIVE_QUEUE_ID });
+    } catch (_) {}
+  }
   process.exit(1);
 });

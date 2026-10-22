@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// QUARRY tagger.js v0.7
+// QUARRY tagger.js v0.7  (LLM calls delegated to lib/llm.js)
 // Flags: --switch-vocab --switch3 --switch3-retag --status --sync-wc --mindful-wc
 // (--switch4 is RETIRED: kept only as a deprecated alias for --switch3, see SW4_DEPRECATED)
 // Options: --provider <grok|gemini|openrouter|claude> --limit N --file <path> --dry-run
@@ -16,23 +16,16 @@ const path  = require('path');
 // directly under it. (These scripts once treated it as a PARENT and appended dev/quarry, which doubles
 // the path when QUARRY_HOME=$HOME/dev/quarry - the convention writeback.js and the docs use.)
 const QUARRY_HOME = process.env.QUARRY_HOME || path.join(process.env.HOME, 'dev', 'quarry');
-const https = require('https');
 const { DatabaseSync } = require('node:sqlite');
 const { openDatabase } = require('./lib/db');   // sets a busy timeout - see lib/db.js
 const { insertNoteTags, insertNoteTag } = require('./lib/tags');
-const { resolveModel, fetchFreeModels, getNextFreeModel, resetFreeModelIndex, markModelBad } = require('llm-model-resolver');
+const llm = require('./lib/llm');   // all LLM calls: see lib/llm.js
 
 // ---------------------------------------------------------------------------
 // CONFIG
 // ---------------------------------------------------------------------------
 const DB_PATH    = process.env.QUARRY_DB || path.join(QUARRY_HOME, 'vault.db');
-const GEMINI_API_KEY     = process.env.GEMINI_API_KEY     || '';
-const XAI_API_KEY        = process.env.XAI_API_KEY        || '';
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
-const ANTHROPIC_API_KEY  = process.env.ANTHROPIC_API_KEY  || '';
 
-const CLAUDE_MODEL = 'claude-sonnet-4-20250514';
-const GEMINI_MODEL = 'gemini-2.5-flash';
 const BUDGET_CEILING = parseFloat(process.env.BUDGET_CEILING_USD || '10.00');
 const S3_MAX_CHARS = 4000;
 const MINDFUL_THRESHOLD = 15000; // words above which --mindful-wc acts (below this, notes have legitimate density)
@@ -119,7 +112,7 @@ function openDb() {
 // Pricing verified against docs.x.ai / third-party trackers, Sept 2026.
 // xAI retired the literal "grok-4" model ID in a May 2026 migration; it now
 // silently redirects to grok-4.3 pricing (not the original Grok 4 rate) -
-// the model string in callGrok() is left as-is since the redirect works,
+// the model string in lib/llm.js (PROVIDERS.grok.fallback) is left as-is since the redirect works,
 // but the PRICE below reflects what actually gets billed. Re-verify this
 // table if xAI reprices again - they have done so mid-quarter before.
 // ---------------------------------------------------------------------------
@@ -528,296 +521,26 @@ function parseTagLines(text) {
 }
 
 // ---------------------------------------------------------------------------
-// HTTP HELPERS
+// LLM CALLS - every provider goes through lib/llm.js (one HTTP helper, one
+// llm-model-resolver integration, one model-failure/retry policy). Model
+// pinning, the Grok model string and the OpenRouter free-model rotation all
+// live there now.
 // ---------------------------------------------------------------------------
-const HTTP_TIMEOUT_MS = 10 * 60 * 1000;
-function httpPost(hostname, pathStr, headers, body) {
-  return new Promise((resolve, reject) => {
-    const bodyStr = JSON.stringify(body);
-    const req = https.request({
-      hostname, path:pathStr, method:'POST',
-      headers: Object.assign({'Content-Type':'application/json','Content-Length':Buffer.byteLength(bodyStr)}, headers)
-    }, res => {
-      let data = '';
-      res.on('data', c => data += c);
-      res.on('end', () => { try { resolve({status:res.statusCode,body:JSON.parse(data)}); } catch(e) { resolve({status:res.statusCode,body:data}); } });
-    });
-    // Without a timeout a stalled connection hangs the whole run forever (an overnight batch
-    // just stops). Generous, because reasoning models legitimately take minutes on long notes.
-    req.setTimeout(HTTP_TIMEOUT_MS, () => req.destroy(new Error('API request timed out after ' + (HTTP_TIMEOUT_MS/1000) + 's (' + hostname + ')')));
-    req.on('error', reject);
-    req.write(bodyStr); req.end();
-  });
-}
-function httpGet(hostname, pathStr, headers) {
-  return new Promise((resolve, reject) => {
-    const req = https.request({hostname, path:pathStr, method:'GET', headers:headers||{}}, res => {
-      let data = '';
-      res.on('data', c => data+=c);
-      res.on('end', () => { try { resolve(JSON.parse(data)); } catch(e) { reject(e); } });
-    });
-    req.on('error', reject); req.end();
-  });
+llm.setLogger(log);
+
+// Switch-3 / retag sampling, as before: Gemini and Grok at 0.1, Claude and
+// OpenRouter at the provider default.
+const S3_TEMPERATURE = { gemini: 0.1, grok: 0.1 };
+function callApi(prompt, provider) {
+  return llm.callLLM(provider, prompt, { system: S3_SYSTEM, maxTokens: 8192, temperature: S3_TEMPERATURE[provider] });
 }
 
-// ---------------------------------------------------------------------------
-// API CALLERS
-// ---------------------------------------------------------------------------
-// OpenRouter free-model discovery + round-robin now delegated entirely to
-// llm-model-resolver (fetchFreeModels/getNextFreeModel) - same
-// contract as the functions this replaces, live-fetched and cached there
-// instead of duplicated here.
-
-// ---------------------------------------------------------------------------
-// OPENROUTER: self-healing using live free models from OpenRouter API
-// ---------------------------------------------------------------------------
-async function callOpenRouter(prompt) {
-  if (!OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY not set');
-
-  let lastErr = null;
-  resetFreeModelIndex();   // reset for this call
-
-  // Reasonable max attempts using live free models
-  for (let attempt = 0; attempt < 10; attempt++) {
-    const model = await getNextFreeModel(OPENROUTER_API_KEY);
-
-    try {
-      const startTime = Date.now();
-      log('info', 'OpenRouter trying model', { model });
-
-      const heartbeat = setInterval(function() {
-        log('info', 'OpenRouter still waiting...', { model, elapsedSec: Math.round((Date.now()-startTime)/1000) });
-      }, 5000);
-
-      let res;
-      try {
-        res = await httpPost(
-          'openrouter.ai',
-          '/api/v1/chat/completions',
-          { 'Authorization': 'Bearer ' + OPENROUTER_API_KEY },
-          {
-            model:      model,
-            messages:   [
-              { role: 'system', content: S3_SYSTEM },
-              { role: 'user',   content: prompt }
-            ],
-            max_tokens: 8192
-          }
-        );
-      } finally {
-        clearInterval(heartbeat);
-      }
-
-      const elapsedSec = Math.round((Date.now()-startTime)/1000);
-      log('info', 'OpenRouter responded', { model, status: res.status, elapsedSec });
-
-      if (res.status === 429) {
-        log('warn', 'OpenRouter rate-limited, trying next', { model });
-        lastErr = new Error('rate-limited: ' + model);
-        continue;
-      }
-
-      if (res.status !== 200) {
-        log('warn', 'OpenRouter error, trying next', { model, status: res.status });
-        lastErr = new Error('OpenRouter error ' + res.status);
-        continue;
-      }
-
-      const choice = (res.body.choices || [])[0];
-      if (!choice?.message?.content) {
-        log('warn', 'OpenRouter empty response, trying next', { model });
-        lastErr = new Error('empty response from ' + model);
-        continue;
-      }
-
-      const usage = res.body.usage || {};
-      log('info', 'OpenRouter success', { model });
-
-      return {
-        text:       choice.message.content,
-        tokensIn:   usage.prompt_tokens || 0,
-        tokensOut:  usage.completion_tokens || 0,
-        provider:   'openrouter'
-      };
-
-    } catch (e) {
-      log('warn', 'OpenRouter attempt failed', { model, err: e.message });
-      lastErr = e;
-    }
-  }
-
-  throw lastErr || new Error('All OpenRouter models exhausted');
-}
-
-async function callGemini(prompt) {
-  if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not set');
-  let resolved = await resolveModel('gemini', GEMINI_API_KEY, { fallback: GEMINI_MODEL });
-  log('info', 'Gemini model resolved', resolved);
-
-  async function sendWith(modelId) {
-    const res = await httpPost('generativelanguage.googleapis.com',
-      '/v1beta/models/'+modelId+':generateContent?key='+GEMINI_API_KEY, {},
-      {
-        system_instruction: {parts:[{text:S3_SYSTEM}]},
-        contents: [{role:'user',parts:[{text:prompt}]}],
-        generationConfig: {maxOutputTokens:8192, temperature:0.1}
-      }
-    );
-    if (res.status!==200) { const err = new Error('Gemini error '+res.status+': '+JSON.stringify(res.body).slice(0,200)); err.status = res.status; throw err; }
-    return res;
-  }
-
-  // A model can be genuinely listed in the live /models response and still
-  // fail the actual generateContent call - Gemini has returned 404 "no
-  // longer available to new users" for models its own listing still shows,
-  // an account-tier mismatch resolveModel's own try/catch can't see (that
-  // only wraps the list-fetch/selection step, not this call). markModelBad
-  // + re-resolving picks the NEXT live candidate (not just the one static
-  // pinned fallback), and - since resolveModel checks the known-bad set
-  // internally - every other call in this same process benefits from this
-  // discovery too, not just this one retry.
-  let res;
-  try {
-    res = await sendWith(resolved.id);
-  } catch (e) {
-    // Only a failure ABOUT THE MODEL (404 not available to this account, 403 no access) is a
-    // reason to stop using it. A 429, a 5xx or a network error says nothing about the model;
-    // marking it bad would sideline a good model for the rest of the run.
-    if (e.status !== 404 && e.status !== 403) throw e;
-    log('warn', 'Gemini resolved model failed, marking bad and re-resolving', { failedModel: resolved.id, err: e.message });
-    markModelBad('gemini', resolved.id);
-    resolved = await resolveModel('gemini', GEMINI_API_KEY, { fallback: GEMINI_MODEL });
-    log('info', 'Gemini model re-resolved after failure', resolved);
-    res = await sendWith(resolved.id); // let this one throw for real if it also fails
-  }
-
-  const text  = ((((res.body.candidates||[])[0]||{}).content||{}).parts||[]).map(p=>p.text||'').join('');
-  const usage = res.body.usageMetadata||{};
-  return {text, tokensIn:usage.promptTokenCount||0, tokensOut:usage.candidatesTokenCount||0, provider:'gemini', model:resolved.id};
-}
-
-async function callGrok(prompt) {
-  if (!XAI_API_KEY) throw new Error('XAI_API_KEY not set');
-
-  const resolved = await resolveModel('xai', XAI_API_KEY, { fallback: 'grok-4' });
-
-  const startTime = Date.now();
-  log('info', 'Grok request sent', { model: resolved.id, resolvedVia: resolved.source });
-
-  const heartbeat = setInterval(function() {
-    log('info', 'Grok still waiting...', { elapsedSec: Math.round((Date.now()-startTime)/1000) });
-  }, 5000);
-
-  let res;
-  try {
-    res = await httpPost('api.x.ai', '/v1/chat/completions',
-      { 'Authorization': 'Bearer ' + XAI_API_KEY },
-      {
-        model: resolved.id,
-        messages: [
-          { role: 'system', content: S3_SYSTEM },
-          { role: 'user',   content: prompt }
-        ],
-        max_tokens: 8192,
-        temperature: 0.1
-      }
-    );
-  } finally {
-    clearInterval(heartbeat);
-  }
-
-  const elapsedSec = Math.round((Date.now()-startTime)/1000);
-  const u0 = (res.body && res.body.usage) || {};
-  log('info', 'Grok responded', { status: res.status, elapsedSec, tokensIn: u0.prompt_tokens, tokensOut: u0.completion_tokens, reasoningTokens: (u0.completion_tokens_details||{}).reasoning_tokens });
-
-  if (res.status !== 200) throw new Error('Grok error '+res.status+': '+JSON.stringify(res.body).slice(0,200));
-  const choice = (res.body.choices||[])[0];
-  if (!choice || !choice.message || !choice.message.content) throw new Error('Grok empty response');
-  const usage = res.body.usage || {};
-  return { text: choice.message.content, tokensIn: usage.prompt_tokens||0, tokensOut: usage.completion_tokens||0, provider: 'grok', model: resolved.id };
-}
-
-// Mindful-wc uses higher output limit, warmer temperature, longer timeout, and retry
-async function callGeminiMindful(prompt, attempt, modelRetried) {
-  if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not set');
-  attempt = attempt || 1;
-  const MAX_ATTEMPTS = 3;
-  const TIMEOUT_MS   = 5 * 60 * 1000; // 5 minutes — large outputs take time
-
-  // resolveModel checks the process-wide known-bad set internally (see
-  // markModelBad in llm-model-resolver), so once a model fails once
-  // below, this call automatically gets the next-best live candidate on the
-  // retry - no need to force a specific id here.
-  const resolved = await resolveModel('gemini', GEMINI_API_KEY, { fallback: GEMINI_MODEL });
-
-  return new Promise(function(resolve, reject) {
-    const bodyStr = JSON.stringify({
-      contents: [{role:'user', parts:[{text:prompt}]}],
-      generationConfig: {maxOutputTokens:65536, temperature:0.3}
-    });
-
-    const req = require('https').request({
-      hostname: 'generativelanguage.googleapis.com',
-      path:     '/v1beta/models/'+resolved.id+':generateContent?key='+GEMINI_API_KEY,
-      method:   'POST',
-      headers:  {'Content-Type':'application/json','Content-Length':Buffer.byteLength(bodyStr)}
-    }, function(res) {
-      let data = '';
-      res.on('data', function(c) { data += c; });
-      res.on('end', function() {
-        try {
-          const body      = JSON.parse(data);
-          if (res.statusCode !== 200) {
-            // A model can pass live resolution and still fail the actual
-            // call - e.g. Gemini returning 404 "no longer available to new
-            // users" for a model its own /models listing still shows
-            // (account-tier mismatch, not something resolveModel's own
-            // try/catch can see - that only wraps the list-fetch/selection
-            // step, not this call). markModelBad + one retry picks the next
-            // live candidate and benefits every other call in this process
-            // too. Bounded to a single retry (modelRetried) - if the SECOND
-            // pick also fails, fail loudly rather than keep chaining through
-            // every live model in the list.
-            if (!modelRetried && (res.statusCode === 404 || res.statusCode === 403)) {   // model errors only - see callGemini
-              log('warn', 'Gemini mindful resolved model failed, marking bad and re-resolving', { failedModel: resolved.id, status: res.statusCode });
-              markModelBad('gemini', resolved.id);
-              callGeminiMindful(prompt, attempt, true).then(resolve).catch(reject);
-              return;
-            }
-            reject(new Error('Gemini mindful error '+res.statusCode+': '+JSON.stringify(body).slice(0,200)));
-            return;
-          }
-          const candidate = ((body.candidates||[])[0]||{});
-          const text      = ((candidate.content||{}).parts||[]).map(function(p){return p.text||'';}).join('');
-          const usage     = body.usageMetadata||{};
-          if (candidate.finishReason && candidate.finishReason !== 'STOP') {
-            log('warn','Gemini mindful non-STOP finish',{reason:candidate.finishReason,tokensOut:usage.candidatesTokenCount});
-          }
-          resolve({text, tokensIn:usage.promptTokenCount||0, tokensOut:usage.candidatesTokenCount||0, provider:'gemini'});
-        } catch(e) { reject(e); }
-      });
-    });
-
-    // 5-minute socket timeout
-    req.setTimeout(TIMEOUT_MS, function() {
-      req.destroy(new Error('GEMINI_TIMEOUT'));
-    });
-
-    req.on('error', function(e) {
-      const retriable = e.code === 'ETIMEDOUT' || e.code === 'ECONNRESET' || e.message === 'GEMINI_TIMEOUT';
-      if (retriable && attempt < MAX_ATTEMPTS) {
-        const delay = attempt * 30000; // 30s, 60s back-off
-        log('warn','Gemini mindful timeout, retrying',{attempt, nextIn:delay/1000+'s', err:e.code||e.message});
-        setTimeout(function() {
-          callGeminiMindful(prompt, attempt+1).then(resolve).catch(reject);
-        }, delay);
-      } else {
-        reject(e);
-      }
-    });
-
-    req.write(bodyStr);
-    req.end();
+// Mindful-wc: big output budget, warmer temperature, no system prompt, 5-minute
+// socket timeout, and up to 2 retries (30s, 60s back-off) on timeouts/network errors.
+function callGeminiMindful(prompt) {
+  return llm.callLLM('gemini', prompt, {
+    maxTokens: 65536, temperature: 0.3, timeoutMs: 5 * 60 * 1000,
+    transientRetries: 2, retryBackoffMs: 30000, label: 'mindful-wc'
   });
 }
 
@@ -876,29 +599,6 @@ async function compressInChunks(body, listFmt, db, noteId) {
   clearChunkCache(noteId);
   return compressed.join('\n\n');
 }
-
-async function callClaude(prompt) {
-  if (!ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY not set');
-  const resolved = await resolveModel('anthropic', ANTHROPIC_API_KEY, { fallback: CLAUDE_MODEL });
-  log('info', 'Claude model resolved', resolved);
-  const res = await httpPost('api.anthropic.com', '/v1/messages',
-    {'x-api-key':ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01'},
-    {model:resolved.id, max_tokens:8192, system:S3_SYSTEM, messages:[{role:'user',content:prompt}]}
-  );
-  if (res.status!==200) throw new Error('Claude error '+res.status+': '+JSON.stringify(res.body).slice(0,200));
-  const text  = (res.body.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('');
-  const usage = res.body.usage||{};
-  return {text, tokensIn:usage.input_tokens||0, tokensOut:usage.output_tokens||0, provider:'claude', model:resolved.id};
-}
-
-async function callApi(prompt, provider) {
-  if (provider==='gemini')      return callGemini(prompt);
-  if (provider==='openrouter')  return callOpenRouter(prompt);
-  if (provider==='claude')      return callClaude(prompt);
-  if (provider==='grok')        return callGrok(prompt);
-  throw new Error('Unknown provider: '+provider);
-}
-
 // ---------------------------------------------------------------------------
 // NOTE FILE I/O
 // ---------------------------------------------------------------------------
@@ -998,7 +698,7 @@ async function runMindfulWc(db) {
   }
 
   // mindful-wc always uses Gemini (needs reliable large context)
-  if (!GEMINI_API_KEY) { log('error','mindful-wc requires GEMINI_API_KEY'); process.exit(1); }
+  if (!llm.hasKey('gemini')) { log('error','mindful-wc requires GEMINI_API_KEY'); process.exit(1); }
 
   for (const note of candidates) {
     try {
@@ -1248,7 +948,7 @@ async function main() {
   if (SYNC_WC)     { await runSyncWc(db); printStatus(db); db.close(); return; }
   if (MINDFUL_WC)  { await runMindfulWc(db); if (!MODE_DRY) printStatus(db); db.close(); return; }
 
-  const provider = PROVIDER_ARG || (OPENROUTER_API_KEY ? 'openrouter' : GEMINI_API_KEY ? 'gemini' : 'claude');
+  const provider = PROVIDER_ARG || (llm.hasKey('openrouter') ? 'openrouter' : llm.hasKey('gemini') ? 'gemini' : 'claude');
   const useFullContent = (SW3 || SW3_RETAG) && providerHasLargeContext(provider);
 
   // Select notes

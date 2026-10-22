@@ -585,8 +585,14 @@ document.addEventListener('click', function (e) {
       break;
     case 'run-cmd':
       e.preventDefault();
-      runCmd(el.getAttribute('data-cmd'), el.getAttribute('data-label') || el.getAttribute('data-cmd'),
-        el.getAttribute('data-dry') === '1' ? { dryRun: true } : undefined);
+      (function() {
+        var extra = {};
+        if (el.getAttribute('data-dry') === '1') extra.dryRun = true;
+        var limId = el.getAttribute('data-limit-input');
+        if (limId) { var limEl = document.getElementById(limId); if (limEl && limEl.value) extra.limit = limEl.value; }
+        runCmd(el.getAttribute('data-cmd'), el.getAttribute('data-label') || el.getAttribute('data-cmd'),
+          Object.keys(extra).length ? extra : undefined);
+      })();
       break;
     case 'run-vocab':
       e.preventDefault();

@@ -12,3 +12,5 @@ runtime-trace.jsonl
 chunks/
 backups/
 quarry-release3.zip
+*.orig
+.env*

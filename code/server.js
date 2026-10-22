@@ -211,7 +211,17 @@ function approvedCard(n) {
 // ---------------------------------------------------------------------------
 // CONTROL PANEL PAGES
 // ---------------------------------------------------------------------------
-function vaultPage() {
+function vaultPage(db) {
+  // Dynamic sync-approved stats from DB
+  let saApproved = 0, saNotes = 0, saWritten = 0;
+  try {
+    saApproved = (db.prepare("SELECT COUNT(*) AS n FROM note_tag_proposals WHERE status='approved'").get()||{}).n || 0;
+    saNotes    = (db.prepare("SELECT COUNT(DISTINCT note_id) AS n FROM note_tag_proposals WHERE status='approved'").get()||{}).n || 0;
+    saWritten  = (db.prepare("SELECT COUNT(DISTINCT note_id) AS n FROM writeback_log WHERE stage='sync-approved'").get()||{}).n || 0;
+  } catch(_) {}
+  const saDesc = saWritten > 0
+    ? `${saApproved.toLocaleString()} approved tags across ${saNotes.toLocaleString()} notes — <strong>${saWritten.toLocaleString()} already written to files</strong>. Re-run is safe (--diff skips notes already up to date).`
+    : `${saApproved.toLocaleString()} approved tags across ${saNotes.toLocaleString()} notes ready to write. Run the dry run first.`;
   return `<p class="page-title">Vault — git sync and indexing</p>
 <div class="ctrl-panel">
   <h3>Sync (recommended)</h3>
@@ -247,6 +257,24 @@ function vaultPage() {
   <p style="color:#666;font-size:.78rem;margin-bottom:10px">Recounts every note's word count directly from the files on disk. Run this if word counts look stale after a manual edit outside the normal git-pull flow.</p>
   <div class="ctrl-row">
     <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="sync-wc" data-label="Recount word counts">Recount from filesystem</button>
+  </div>
+</div>
+<div class="ctrl-panel">
+  <h3>Publish Writeback to GitHub <span style="color:#666;font-weight:normal;font-family:monospace;font-size:.75rem">(pull → commit → push)</span></h3>
+  <p style="color:#666;font-size:.78rem;margin-bottom:10px">After running sync-approved: pull first (Obsidian may have pushed changes you don&#39;t have), review the diff yourself, then commit and push. Obsidian Git will pick it up on its next pull.</p>
+  <div class="ctrl-row">
+    <button class="btn btn-grey" type="button" data-action="run-cmd" data-cmd="vault-git-pull" data-label="Vault git pull --rebase">1. Pull (--rebase)</button>
+    <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="vault-commit-push" data-label="Commit &amp; push writeback">2. Commit &amp; Push</button>
+  </div>
+  <p style="color:#555;font-size:.75rem;margin-top:8px">Review before step 2: <code>git -C ${VAULT_DIR} diff --cached --stat</code> or <code>git -C ${VAULT_DIR} status</code></p>
+</div>
+<div class="ctrl-panel">
+  <h3>Write Approved Tags to Vault Files <span style="color:#666;font-weight:normal;font-family:monospace;font-size:.75rem">(writeback sync-approved)</span></h3>
+  <p style="color:#666;font-size:.78rem;margin-bottom:10px">${saDesc} Updates each note&#39;s frontmatter <code>tags:</code> block with a union of existing tags plus the approved set — never removes. Does not git commit — use the Publish panel above after reviewing.</p>
+  <div class="ctrl-row">
+    <div class="field"><label>Limit:</label><input id="wb-sync-limit" type="number" value="" min="1" placeholder="all"></div>
+    <button class="btn btn-grey" type="button" data-action="run-cmd" data-cmd="wb-sync-approved-dry" data-label="Writeback sync-approved dry run" data-limit-input="wb-sync-limit">Dry run (preview changes)</button>
+    <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="wb-sync-approved" data-label="Writeback sync-approved" data-limit-input="wb-sync-limit">Write approved tags to files</button>
   </div>
 </div>
 <div id="cmd-output"></div>
@@ -321,15 +349,41 @@ function taggerPage() {
 
 function curatorPage() {
   return `<p class="page-title">Curator — build narrative queue</p>
+
 <div class="ctrl-panel">
-  <h3>Strategy: Informed Serendipity</h3>
-  <p style="font-size:.8rem;color:#666;margin-bottom:14px;line-height:1.6">80% random selection within quality+diversity constraints · 20% orphan rescue · 3-note clusters · No two notes from same domain · Different tag roots required</p>
+  <h3>Strategy: Shared Root</h3>
+  <p style="font-size:.8rem;color:#666;margin-bottom:14px;line-height:1.6">Clusters notes that share the same <strong>tag root</strong> but carry different leaf tags — e.g. three notes all under <code>science/</code> but hitting <code>science/physics</code>, <code>science/ecology</code>, and <code>science/mathematics</code>. Produces thematic unity with disciplinary diversity.</p>
   <div class="ctrl-row">
-    <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="curator-force" data-label="Curator --force">Force generate 20 clusters</button>
-    <button class="btn btn-grey" type="button" data-action="run-cmd" data-cmd="curator-refill" data-label="Curator --refill">Refill if below threshold</button>
-    <button class="btn btn-grey" type="button" data-action="run-cmd" data-cmd="curator-status" data-label="Curator status">Status</button>
+    <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="curator-shared-root-force" data-label="Curator shared-root --force">Force 20 clusters</button>
+    <button class="btn btn-grey" type="button" data-action="run-cmd" data-cmd="curator-shared-root-refill" data-label="Curator shared-root --refill">Refill if below threshold</button>
   </div>
 </div>
+
+<div class="ctrl-panel">
+  <h3>Strategy: Weak Tie</h3>
+  <p style="font-size:.8rem;color:#666;margin-bottom:14px;line-height:1.6">Picks an anchor note then finds the <strong>most topically distant</strong> note that still shares at least one tag — minimum Jaccard overlap. Surfaces surprising connections across the vault. The "bridge" cluster: notes that have no business being together yet share one quiet thread.</p>
+  <div class="ctrl-row">
+    <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="curator-weak-tie-force" data-label="Curator weak-tie --force">Force 20 clusters</button>
+    <button class="btn btn-grey" type="button" data-action="run-cmd" data-cmd="curator-weak-tie-refill" data-label="Curator weak-tie --refill">Refill if below threshold</button>
+  </div>
+</div>
+
+<div class="ctrl-panel">
+  <h3>Strategy: Cross Leaf</h3>
+  <p style="font-size:.8rem;color:#666;margin-bottom:14px;line-height:1.6">Finds notes that share the <strong>same leaf tag across different roots</strong> — e.g. <code>india/history</code> + <code>japan/history</code> + <code>rome/history</code>. Clusters notes that share a discipline or concept but approach it from entirely different geographic or cultural contexts.</p>
+  <div class="ctrl-row">
+    <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="curator-cross-leaf-force" data-label="Curator cross-leaf --force">Force 20 clusters</button>
+    <button class="btn btn-grey" type="button" data-action="run-cmd" data-cmd="curator-cross-leaf-refill" data-label="Curator cross-leaf --refill">Refill if below threshold</button>
+  </div>
+</div>
+
+<div class="ctrl-panel">
+  <h3>Queue Status</h3>
+  <div class="ctrl-row">
+    <button class="btn btn-grey" type="button" data-action="run-cmd" data-cmd="curator-status" data-label="Curator status">Queue depth + status</button>
+  </div>
+</div>
+
 <div id="cmd-output"></div>
 `;
 }
@@ -337,22 +391,8 @@ function curatorPage() {
 function narratorPage() {
   return `<p class="page-title">Narrator — generate narratives</p>
 <div class="ctrl-panel">
-  <h3>Live Mode — fresh selection at runtime</h3>
-  <div class="ctrl-row">
-    <div class="field"><label>Sources:</label>
-      <select id="ns-count">
-        <option value="1">1 — single note (junior)</option>
-        <option value="2">2 — tight braid</option>
-        <option value="3" selected>3 — default</option>
-        <option value="5">5 — ambitious</option>
-      </select>
-    </div>
-    <button class="btn btn-primary" type="button" data-action="run-live">▶ Run --live</button>
-    <span style="font-size:.75rem;color:#555">Result appears in Pending queue</span>
-  </div>
-</div>
-<div class="ctrl-panel">
   <h3>Queue Mode</h3>
+  <p style="color:#666;font-size:.78rem;margin-bottom:10px">Pops the next cluster from the narrative queue and generates a narrative. Fill the queue first from the Curator page using one of the three tag-based strategies.</p>
   <div class="ctrl-row">
     <button class="btn btn-primary" type="button" data-action="run-cmd" data-cmd="narrator-next" data-label="Narrator --next">▶ Process next queued item</button>
     <button class="btn btn-grey" type="button" data-action="run-cmd" data-cmd="narrator-dry" data-label="Narrator --dry-run">Dry run (show payload)</button>
@@ -762,7 +802,18 @@ function helpPage() {
   return `
 <div style="max-width:820px">
 
-<h2 style="color:#c8b89a;font-size:1.1rem;margin-bottom:6px">Pipeline order</h2>
+<h2 style="color:#c8b89a;font-size:1.1rem;margin-bottom:6px">Full sync cycle</h2>
+<p style="color:#999;font-size:.85rem;margin-bottom:6px"><strong style="color:#c8b89a">Inbound</strong> — Obsidian pushes a note to GitHub; you pull it into Quarry, tag it, and write the tags back:</p>
+<pre class="log-box" style="color:#ccc">Vault → Sync (pull + index --diff)          git pull + index new/changed/deleted notes. Zero API cost.
+Tagger → AI Tag Suggestions                 AI reads new notes, proposes tags → Tag Review queue.
+Tag Review → review &amp; submit                Approve/reject proposals. Approved → switch3-hil tier.
+Vault → Write Approved Tags to Vault Files  writeback sync-approved writes approved tags into .md frontmatter.
+Vault → Publish (pull --rebase, then        Commit the changed .md files and push to GitHub.
+         Commit &amp; Push)                     Obsidian Git picks it up on its next sync.
+</pre>
+<p style="color:#999;font-size:.8rem;margin-bottom:14px">The Vault page "Sync" button does step 1 as one click. Steps 4–5 are the Publish Writeback panel. writeback.js uses <code>--diff</code> mode — re-runs are safe, already-written notes are skipped.</p>
+
+<h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">Pipeline order (tagging only)</h2>
 <p style="color:#999;font-size:.85rem;margin-bottom:14px">Run in this sequence after a vault change (new/moved/deleted notes). Plain-language names on the left, the underlying CLI flag on the right:</p>
 <pre class="log-box" style="color:#ccc">cd ~/dev/md-vaults/knowledge &amp;&amp; git pull                                       (or the Vault page's "Sync" button)
 node --no-warnings ~/dev/quarry/code/indexer.js --diff                           Update the index
@@ -827,29 +878,38 @@ node --no-warnings ~/dev/quarry/code/tagger.js --switch3-retag --provider grok  
 <li>If the queue looks systematically wrong (e.g. after tightening an ontology rule), don't hand-correct hundreds of cards - run <strong>AI Tag Correction</strong> from the Tagger page instead. It re-reads each note, supersedes the old suggestion, and replaces it with a corrected one, so the queue you actually review is already clean.</li>
 </ul>
 
-<h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">Narrative generation — two independent modes</h2>
+<h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">Narrative generation — queue-only mode (v0.3+)</h2>
 <table class="report-result" style="margin-top:0"><tbody>
-<tr><td style="color:#c8b89a;white-space:nowrap">Planned<br><span style="color:#666;font-size:.75rem">curator --refill/--force<br>then narrator --next</span></td>
-<td>Curator pre-fills narrative_queue: 3-note clusters, 80% serendipity / 20% orphan rescue, avoids notes surfaced in the last 30 days. Narrator then pops the next queued cluster. Batchable, deliberate, good for cron.</td></tr>
-<tr><td style="color:#c8b89a;white-space:nowrap">Serendipitous<br><span style="color:#666;font-size:.75rem">narrator --live</span></td>
-<td>Bypasses the queue entirely — picks fresh notes at runtime and weaves a narrative on the spot. The "hit or miss" mode. No pre-planning, good for manual exploration.</td></tr>
+<tr><td style="color:#c8b89a;white-space:nowrap">Queue Mode<br><span style="color:#666;font-size:.75rem">curator --refill/--force<br>then narrator --next</span></td>
+<td>Curator pre-fills narrative_queue using tag-based clustering (shared_root, weak_tie, or cross_leaf strategies). Narrator then pops the next queued cluster. Batchable, deliberate, good for cron.</td></tr>
 </tbody></table>
+<p style="color:#999;font-size:.8rem;margin-bottom:14px"><strong>Note:</strong> serendipity mode (<code>--live</code> / <code>--numSources</code>) was removed in narrator v0.3. Tag-based clustering via the Curator is the sole queue-building path going forward.</p>
 
 <h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">narrator.js flags</h2>
-<pre class="log-box" style="color:#ccc">--next                    pop next from narrative_queue (planned mode)
---live                    pick fresh notes now, bypass queue (serendipity mode)
+<pre class="log-box" style="color:#ccc">--next                    pop next from narrative_queue
 --dry-run                 build the prompt, show it, no API call, no write
---reset                   delete a narrative (asks for typed YES confirmation)
+--reset                   delete all narratives + queue (with backup + confirmation)
 --id &lt;id&gt;                 regenerate a specific existing narrative
---numSources 1-5          cluster size override (v1 testing found 2-note clusters
-                           tighter than 3-note - worth re-testing at v2 scale)
 </pre>
 
 <h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">curator.js flags</h2>
 <pre class="log-box" style="color:#ccc">--refill                  top up narrative_queue only if below 15 entries (target 20)
 --force                   regenerate 20 new candidates regardless of current depth
 --status                  print queue depth and exit, no writes
+--strategy shared_root    cluster by same tag root, diverse leaf tags
+--strategy weak_tie       anchor + most topically distant note sharing ≥1 tag (min Jaccard)
+--strategy cross_leaf     same leaf tag from different roots (e.g. india/history + japan/history)
 </pre>
+
+<h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">writeback.js flags</h2>
+<pre class="log-box" style="color:#ccc">--stage sync-approved     Write approved (switch3-hil) tags into .md frontmatter tags: block.
+--dry-run                 Preview only — show which notes would change, write nothing.
+--confirm                 Required for real writes (safety gate — dry-run is the default).
+--diff                    Skip notes already up to date (idempotent; always pass with --confirm).
+--limit N                 Cap notes processed this run.
+</pre>
+<p style="color:#999;font-size:.8rem;margin-bottom:14px">The UI always passes <code>--confirm --diff</code> on real runs. Log: <code>~/dev/quarry/logs/writeback.log</code>. Every real run also writes a row to <code>writeback_log</code> so the Vault page can show how many notes have been written.</p>
+<p style="color:#999;font-size:.8rem;margin-bottom:14px"><strong>After writeback:</strong> the vault files are changed on disk but not committed. Use the Vault page "Publish Writeback to GitHub" panel (Pull --rebase → Commit &amp; Push) to send them to GitHub. <strong>Never automate this step.</strong></p>
 
 <h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">ZeroClaw cron candidates</h2>
 <table class="report-result" style="margin-top:0"><tbody>
@@ -858,8 +918,19 @@ node --no-warnings ~/dev/quarry/code/tagger.js --switch3-retag --provider grok  
 <tr><td style="color:#888">tagger.js --switch-vocab</td><td>Fallback only now (see Pipeline order above) - not recommended as a routine cron job when an LLM key is available. Zero API cost if you do still want it.</td></tr>
 <tr><td style="color:#c8b89a">narrator.js --next</td><td>Automate with a cap (e.g. 3-5/run) so the Pending approval queue stays reviewable, not overwhelming.</td></tr>
 <tr><td style="color:#e0a840">tagger.js --switch3 / --switch3-retag</td><td>Real API cost per run - cron with --limit and a budget check in the wrapper, not just QUARRY's internal $10 ceiling.</td></tr>
-<tr><td style="color:#c86e6e">writeback.js (any stage)</td><td>Never automate. Writes directly to vault files + git; keep this a deliberate, reviewed action.</td></tr>
+<tr><td style="color:#c86e6e">writeback.js --stage sync-approved</td><td><strong>Never automate.</strong> Writes approved tags directly into vault .md files and records to writeback_log. Only the --diff flag makes re-runs safe; still keep it deliberate — review the dry run output first.</td></tr>
+<tr><td style="color:#c86e6e">vault-commit-push (Publish panel)</td><td><strong>Never automate.</strong> Commits all modified vault files and pushes to GitHub. Always pull --rebase first; always review git status/diff before committing.</td></tr>
 </tbody></table>
+
+<h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">Bug fixes &amp; changes since v1</h2>
+<ul style="color:#ccc;font-size:.85rem;line-height:1.8;padding-left:20px">
+<li><strong>Double-logging fixed (writeback.js)</strong> — <code>launchInTmux()</code> redirects stdout to the log file via <code>&gt;&gt; logPath 2&gt;&amp;1</code>; writeback.js also called <code>fs.appendFileSync</code> on the same file, producing every line twice. Fixed by guarding <code>appendFileSync</code> with <code>if (!process.env.QUARRY_LAUNCHED)</code> — the env var is set by the server on every tmux launch.</li>
+<li><strong>Full re-index button was broken</strong> — <code>index-full</code> CMD_MAP entry was missing; clicking "Full re-index" printed usage and exited without doing anything. Added the entry.</li>
+<li><strong>Limit field not passed by writeback buttons</strong> — the <code>data-limit-input</code> attribute existed on the buttons but the <code>run-cmd</code> click handler in quarry.js didn't read it. Patched the handler to pick up the referenced input element's value and merge it into the request body as <code>limit</code>.</li>
+<li><strong>git push rejection (fetch first)</strong> — Obsidian Git plugin pushes independently to GitHub; the homelab server falling behind caused rejections on push. Fix: always "Pull (--rebase)" from the Publish panel before committing — added as a dedicated two-button panel on the Vault page.</li>
+<li><strong>Hardcoded tag count in Vault panel</strong> — the sync-approved panel previously showed a hardcoded "2,090 tags" string. Now queries live from <code>note_tag_proposals</code> and <code>writeback_log</code> on every page load, and switches text between "ready to write" and "already written" based on actual state.</li>
+<li><strong>SSH passphrase prompts suppressed</strong> — <code>keychain</code> installed on the server; <code>eval $(keychain --eval --quiet id_ed25519)</code> added to <code>.zshrc</code> section 2. Prompts once per reboot, caches the passphrase for all shells and tmux sessions including git push.</li>
+</ul>
 
 <h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">Ontological principles (tag_vocabulary governance)</h2>
 <ol style="color:#ccc;font-size:.85rem;line-height:1.8;padding-left:20px">
@@ -971,12 +1042,17 @@ const CMD_MAP = {
   'mwc-dry':           { session:'quarry-mwc',      log:'tagger.log',   build: (b,C)=>[NODE,[...FLAGS,path.join(C,'tagger.js'),'--mindful-wc','--dry-run']] },
   'extract-video':     { session:'quarry-video',    log:'video.log',    build: (b,C)=>[NODE,[...FLAGS,path.join(C,'extract_video_links.js')]] },
   'extract-video-dry': { session:'quarry-video',    log:'video.log',    build: (b,C)=>[NODE,[...FLAGS,path.join(C,'extract_video_links.js'),'--dry-run']] },
-  'curator-force':     { session:'quarry-curator',  log:'curator.log',  build: (b,C)=>[NODE,[...FLAGS,path.join(C,'curator.js'),'--force']] },
-  'curator-refill':    { session:'quarry-curator',  log:'curator.log',  build: (b,C)=>[NODE,[...FLAGS,path.join(C,'curator.js'),'--refill']] },
-  'curator-status':    { session:'quarry-curator',  log:'curator.log',  build: (b,C)=>[NODE,[...FLAGS,path.join(C,'curator.js'),'--status']] },
+  'curator-force':             { session:'quarry-curator',  log:'curator.log',  build: (b,C)=>[NODE,[...FLAGS,path.join(C,'curator.js'),'--force']] },
+  'curator-refill':            { session:'quarry-curator',  log:'curator.log',  build: (b,C)=>[NODE,[...FLAGS,path.join(C,'curator.js'),'--refill']] },
+  'curator-status':            { session:'quarry-curator',  log:'curator.log',  build: (b,C)=>[NODE,[...FLAGS,path.join(C,'curator.js'),'--status']] },
+  'curator-shared-root-force': { session:'quarry-curator',  log:'curator.log',  build: (b,C)=>[NODE,[...FLAGS,path.join(C,'curator.js'),'--force','--strategy','shared_root']] },
+  'curator-shared-root-refill':{ session:'quarry-curator',  log:'curator.log',  build: (b,C)=>[NODE,[...FLAGS,path.join(C,'curator.js'),'--refill','--strategy','shared_root']] },
+  'curator-weak-tie-force':    { session:'quarry-curator',  log:'curator.log',  build: (b,C)=>[NODE,[...FLAGS,path.join(C,'curator.js'),'--force','--strategy','weak_tie']] },
+  'curator-weak-tie-refill':   { session:'quarry-curator',  log:'curator.log',  build: (b,C)=>[NODE,[...FLAGS,path.join(C,'curator.js'),'--refill','--strategy','weak_tie']] },
+  'curator-cross-leaf-force':  { session:'quarry-curator',  log:'curator.log',  build: (b,C)=>[NODE,[...FLAGS,path.join(C,'curator.js'),'--force','--strategy','cross_leaf']] },
+  'curator-cross-leaf-refill': { session:'quarry-curator',  log:'curator.log',  build: (b,C)=>[NODE,[...FLAGS,path.join(C,'curator.js'),'--refill','--strategy','cross_leaf']] },
   'narrator-next':     { session:'quarry-narrator', log:'narrator.log', build: (b,C)=>[NODE,[...FLAGS,path.join(C,'narrator.js'),'--next']] },
   'narrator-dry':      { session:'quarry-narrator', log:'narrator.log', build: (b,C)=>[NODE,[...FLAGS,path.join(C,'narrator.js'),'--dry-run']] },
-  'narrator-live':     { session:'quarry-narrator', log:'narrator.log', build: (b,C)=>[NODE,[...FLAGS,path.join(C,'narrator.js'),'--live','--numSources',String(b.numSources||3)]] },
   'narrator-id':       { session:'quarry-narrator', log:'narrator.log', build: (b,C)=>{ if(!b.id)throw new Error('id required'); return [NODE,[...FLAGS,path.join(C,'narrator.js'),'--id',String(b.id)]]; } },
   // Deletes every narrative and the queue (after a JSON backup). expectApproved is the approved
   // count the person saw in the confirm dialog; narrator.js refuses if it no longer matches.
@@ -984,6 +1060,10 @@ const CMD_MAP = {
     const n = Number(b.expectApproved);
     if (!Number.isInteger(n) || n < 0) throw new Error('expectApproved (a count) is required');
     return [NODE,[...FLAGS,path.join(C,'narrator.js'),'--reset','--yes','--expect-approved',String(n)]]; } },
+  'wb-sync-approved-dry': { session:'quarry-writeback', log:'writeback.log', build: (b,C)=>[NODE,[...FLAGS,path.join(C,'writeback.js'),'--stage','sync-approved','--dry-run',...limitArgs(b)]] },
+  'wb-sync-approved':     { session:'quarry-writeback', log:'writeback.log', build: (b,C)=>[NODE,[...FLAGS,path.join(C,'writeback.js'),'--stage','sync-approved','--confirm','--diff',...limitArgs(b)]] },
+  'vault-git-pull':        { session:'quarry-git',      log:'git.log',      build: ()=>['git',['-C',VAULT_DIR,'pull','--rebase','origin','master']] },
+  'vault-commit-push':     { session:'quarry-git',      log:'git.log',      build: ()=>['bash',['-c','git -C \''+VAULT_DIR+'\' add -u && git -C \''+VAULT_DIR+'\' diff --cached --stat && git -C \''+VAULT_DIR+'\' commit -m \'QUARRY writeback: sync-approved tags\' && git -C \''+VAULT_DIR+'\' push']] },
 };
 
 // Commands in the same group must never run at the same time: they drive the same script
@@ -1107,7 +1187,7 @@ function router(req, res) {
     sendHtml('Approved','<p class="page-title">Approved Archive</p><div style="background:#141414;border:1px solid #2a2a2a;border-radius:6px;padding:10px 18px;margin-bottom:20px;font-size:.85rem;color:#888">Approved: <strong style="color:#c8b89a">'+approved.length+'</strong></div>'+cards,'/approved');
     return;
   }
-  if (method==='GET' && url==='/vault')    { sendHtml('Vault',   vaultPage(),   '/vault');    return; }
+  if (method==='GET' && url==='/vault')    { const db=openDb();ensureSchema(db);const c=vaultPage(db);db.close(); sendHtml('Vault',c,'/vault'); return; }
   if (method==='GET' && url==='/tagger')   { sendHtml('Tagger',  taggerPage(),  '/tagger');   return; }
   if (method==='GET' && url==='/curator')  { sendHtml('Curator', curatorPage(), '/curator');  return; }
   if (method==='GET' && url==='/narrator') { sendHtml('Narrator',narratorPage(),'/narrator'); return; }
