@@ -306,6 +306,35 @@ const MIGRATIONS = [
       db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_note_tags_unique ON note_tags(note_id, tag_full)');
       log('  Added unique index note_tags(note_id, tag_full)');
     }
+  },
+
+  {
+    id:   'M012',
+    desc: 'Muse step 1: burrs, nuggetizer status/cache, runs, note dispositions',
+    // Tables live in lib/burrs.js (SCHEMA_SQL) so the nuggetizer tests build the same schema.
+    // Later Muse tables get their own migrations; do not edit SCHEMA_SQL for tables already shipped.
+    up: function(db) {
+      db.exec(require('./lib/burrs').SCHEMA_SQL);
+      log('  Created muse_runs, burrs, nuggetize_status, nuggetize_cache, note_disposition');
+    }
+  },
+
+  {
+    id:   'M013',
+    desc: 'burrs.perishable flag (present-tense figures that can go stale)',
+    // A fresh DB already gets the column from M012 (SCHEMA_SQL); only older ones need the ALTER.
+    up: function(db) {
+      var has = db.prepare('PRAGMA table_info(burrs)').all().some(function(c) { return c.name === 'perishable'; });
+      if (!has) db.exec('ALTER TABLE burrs ADD COLUMN perishable INTEGER NOT NULL DEFAULT 0');
+      log(has ? '  perishable already present' : '  Added burrs.perishable');
+    }
+  },
+
+
+  {
+    id:   'M014',
+    desc: 'burr_dupes: burrs flagged as duplicates of another burr (nothing is deleted)',
+    up: function(db) { db.exec(require('./lib/dedupe').SCHEMA_SQL); log('  Added burr_dupes'); }
   }
 
 ];

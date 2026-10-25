@@ -813,6 +813,8 @@ Vault → Publish (pull --rebase, then        Commit the changed .md files and p
 </pre>
 <p style="color:#999;font-size:.8rem;margin-bottom:14px">The Vault page "Sync" button does step 1 as one click. Steps 4–5 are the Publish Writeback panel. writeback.js uses <code>--diff</code> mode — re-runs are safe, already-written notes are skipped.</p>
 
+${require('./lib/commands').renderHtml()}
+
 <h2 style="color:#c8b89a;font-size:1.1rem;margin:22px 0 6px">Pipeline order (tagging only)</h2>
 <p style="color:#999;font-size:.85rem;margin-bottom:14px">Run in this sequence after a vault change (new/moved/deleted notes). Plain-language names on the left, the underlying CLI flag on the right:</p>
 <pre class="log-box" style="color:#ccc">cd ~/dev/md-vaults/knowledge &amp;&amp; git pull                                       (or the Vault page's "Sync" button)
@@ -1471,7 +1473,7 @@ function router(req, res) {
 function readBody(req,cb){var b='';req.on('data',c=>{b+=c;});req.on('end',()=>cb(b));}
 
 const server=http.createServer(router);
-server.listen(PORT,'0.0.0.0',function(){
+server.listen(PORT,process.env.QUARRY_HOST||'0.0.0.0',function(){
   console.log('🪨 QUARRY server running at http://localhost:'+PORT);
   console.log('   Nav: / /approved /vault /tagger /curator /queue /narrator /reports /notes /review /stats');
   if (API_TOKEN) console.log('   API token required (QUARRY_API_TOKEN) on mutating routes');

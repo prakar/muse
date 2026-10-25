@@ -6,11 +6,16 @@
   "scripts": {
     "start": "node --no-warnings code/server.js",
     "migrate": "node --no-warnings code/migrate.js",
-    "index": "node --no-warnings code/indexer.js --diff"
+    "index": "node --no-warnings code/indexer.js --diff",
+    "nuggetize": "node --no-warnings code/nuggetizer.js",
+    "dedupe": "node --no-warnings code/dedupe.js",
+    "muse": "node --no-warnings code/muse_view.js",
+    "muse:report": "node --no-warnings code/muse_scratch.js",
+    "test": "node --no-warnings --test test/*.test.js"
   },
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "llm-model-resolver": "^1.4.1"
+    "llm-model-resolver": "^1.5.2"
   }
 }

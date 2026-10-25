@@ -190,6 +190,8 @@ async function callGemini(prompt, key, opts) {
       generationConfig: { maxOutputTokens: opts.maxTokens }
     };
     if (opts.temperature !== undefined) body.generationConfig.temperature = opts.temperature;
+    // Opt-in: 2.5 models spend maxOutputTokens on hidden thinking; 0 turns it off for extraction jobs.
+    if (opts.thinkingBudget !== undefined) body.generationConfig.thinkingConfig = { thinkingBudget: opts.thinkingBudget };
     if (opts.system) body.system_instruction = { parts: [{ text: opts.system }] };
 
     // Key goes in a header, not the URL, so it can never leak into a logged path or error.
@@ -224,6 +226,22 @@ function openAiMessages(prompt, system) {
   return m;
 }
 
+// Billed output tokens for an xAI response. Reasoning models bill their hidden "thinking" as output,
+// and xAI reports it separately (completion_tokens_details.reasoning_tokens): on one grok-build-0.1
+// extraction call completion_tokens was 1,884 while reasoning_tokens was 10,540, so counting only
+// completion_tokens under-recorded spend about 6x. total_tokens - prompt_tokens is right whether or not
+// completion_tokens already includes reasoning; without total_tokens, add the reasoning tokens
+// (over-counts, the safe direction, if completion_tokens already included them).
+function reasoning(u) { return ((u && u.completion_tokens_details) || {}).reasoning_tokens || 0; }
+
+function grokBilledOutput(u) {
+  u = u || {};
+  const completion = u.completion_tokens || 0;
+  const reasoning  = (u.completion_tokens_details || {}).reasoning_tokens || 0;
+  if (u.total_tokens && u.prompt_tokens != null) return Math.max(completion, u.total_tokens - u.prompt_tokens);
+  return completion + reasoning;
+}
+
 async function callGrok(prompt, key, opts) {
   return withResolvedModel('grok', key, opts, async function (modelId) {
     log('info', 'Grok request sent', { model: modelId, label: opts.label });
@@ -234,13 +252,13 @@ async function callGrok(prompt, key, opts) {
       { 'Authorization': 'Bearer ' + key }, body,
       { timeoutMs: opts.timeoutMs, heartbeatMs: PROVIDERS.grok.heartbeatMs, tag: 'Grok' });
     const u = (res.body && res.body.usage) || {};
-    log('info', 'Grok responded', { status: res.status, elapsedSec: res.elapsedSec, tokensIn: u.prompt_tokens, tokensOut: u.completion_tokens, reasoningTokens: (u.completion_tokens_details || {}).reasoning_tokens });
+    log('info', 'Grok responded', { status: res.status, elapsedSec: res.elapsedSec, tokensIn: u.prompt_tokens, tokensOut: u.completion_tokens, reasoningTokens: reasoning(u), billedOut: grokBilledOutput(u) });
     if (res.status !== 200) throw httpError('Grok', res);
 
     const choice = (res.body.choices || [])[0];
     if (!choice || !choice.message || !choice.message.content) throw new Error('Grok empty response');
     if (choice.finish_reason === 'length') log('warn', 'Grok response hit max_tokens - output truncated', { model: modelId, maxTokens: opts.maxTokens });
-    return { text: choice.message.content, model: modelId, provider: 'grok', tokensIn: u.prompt_tokens || 0, tokensOut: u.completion_tokens || 0 };
+    return { text: choice.message.content, model: modelId, provider: 'grok', tokensIn: u.prompt_tokens || 0, tokensOut: grokBilledOutput(u), reasoningTokens: reasoning(u) };
   });
 }
 
@@ -319,4 +337,4 @@ async function callLLM(provider, prompt, options) {
   }
 }
 
-module.exports = { callLLM, hasKey, setLogger, providers: Object.keys(PROVIDERS) };
+module.exports = { callLLM, hasKey, setLogger, providers: Object.keys(PROVIDERS), grokBilledOutput };

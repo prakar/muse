@@ -1,0 +1,10 @@
+# Quarry dev environment. mise applies this when you cd here (mise activate zsh).
+# Paths are relative to this file, so nothing here is machine-specific.
+[tools]
+node = "24"
+
+[env]
+QUARRY_HOME = "{{config_root}}"
+QUARRY_DB   = "{{config_root}}/vault.db"
+# A .git-free COPY of the vault (made by dev.sh setup), never the real vault.
+VAULT_PATH  = "{{config_root}}/../quarry-data/knowledge"

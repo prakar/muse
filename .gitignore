@@ -14,3 +14,13 @@ backups/
 quarry-release3.zip
 *.orig
 .env*
+dev.sh
+.quarry.zshrc.local
+
+# Muse scratch viewer: local labels
+muse-judgements.jsonl
+vault.db.bak-*
+muse-judgements*
+dedupe-*.csv
+vault.db.interrupted-*
+vault.db-journal.*

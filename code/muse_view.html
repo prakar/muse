@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Muse scratch viewer</title>
+<style>
+  :root { --bg:#faf9f6; --fg:#1d1d1b; --mute:#6b6a65; --line:#dedcd4; --card:#fff; --acc:#2f5d50; --chip:#ece9df; --warn:#9a4a1c; --sel:#eef4f1; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#161715; --fg:#e8e6df; --mute:#9a988f; --line:#33342f; --card:#1e1f1c; --acc:#7fc4ae; --chip:#2b2c28; --warn:#e0a070; --sel:#223029; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif; }
+  header { padding:14px 16px 0; }
+  h1 { font-size:17px; margin:0 0 2px; } .sub { color:var(--mute); font-size:12px; }
+  nav { display:flex; gap:4px; padding:10px 16px 0; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  nav button { background:none; border:1px solid transparent; border-bottom:none; padding:7px 14px; color:var(--mute); cursor:pointer; font:inherit; border-radius:6px 6px 0 0; }
+  nav button.on { background:var(--card); color:var(--fg); border-color:var(--line); font-weight:600; margin-bottom:-1px; }
+  main { padding:12px 16px 40px; }
+  .bar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:10px; }
+  input, select, button.b { font:inherit; padding:5px 8px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--fg); }
+  input[type=search] { min-width:220px; }
+  button.b { cursor:pointer; } button.b:hover { border-color:var(--acc); } button.b.on { background:var(--acc); color:var(--bg); border-color:var(--acc); }
+  table { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  th { text-align:left; font-size:12px; color:var(--mute); padding:7px 8px; border-bottom:1px solid var(--line); cursor:pointer; user-select:none; white-space:nowrap; }
+  th.on { color:var(--fg); }
+  td { padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  tr.r:hover { background:var(--sel); cursor:pointer; } tr.open { background:var(--sel); }
+  .num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .chip { display:inline-block; background:var(--chip); border-radius:10px; padding:1px 8px; margin:1px 3px 1px 0; font-size:11.5px; white-space:nowrap; }
+  .chip.rec { color:var(--warn); } .chip.t { color:var(--acc); }
+  .mute { color:var(--mute); } .claim { max-width:640px; }
+  .detail { padding:10px 14px 14px; background:var(--card); }
+  .detail .b1 { margin:6px 0; padding:6px 10px; border-left:3px solid var(--line); }
+  .jr { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-top:10px; }
+  .jr input[type=text] { flex:1; min-width:200px; }
+  .pg { display:flex; gap:10px; align-items:center; margin-top:10px; color:var(--mute); }
+  .fnd td { vertical-align:top; } .fnd .why { max-width:520px; }
+  .jmark { font-weight:600; color:var(--acc); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Muse scratch viewer</h1>
+  <div class="sub" id="sub">loading…</div>
+</header>
+<nav id="tabs"></nav>
+<main id="main"></main>
+<script>
+'use strict';
+var META = null, S = { view: 'findings', sort: {}, dir: {}, page: 0, f: {} };
+var COLS = {
+  burrs: [['id','id','num'],['note','note'],['kind','kind'],['rank','rank','num'],['nB','bristles','num'],['bestDf','best join (notes)','num'],['band','join'],['claim','claim'],['recs','recommendations']],
+  bristles: [['surface','surface'],['types','types'],['df','notes','num'],['nBurrs','burrs','num'],['rarity','rarity','num'],['band','band'],['recs','recommendations']],
+  sparks: [['surface','shared handle'],['df','notes','num'],['rarity','rarity','num'],['dist','domain dist','num'],['cos','context cos','num'],['score','rarity×dist','num'],['recs','recommendations']],
+  knots: [['surface','surface'],['df','notes','num'],['cos','context cos','num'],['dist','domain dist','num'],['cls','class'],['recs','recommendations']]
+};
+var TABNAME = { findings: 'proposed changes' };
+function itemLabels(v) { return (META && META.labels && META.labels[v]) || []; }
+function labelText(v, val) { var x = itemLabels(v).filter(function (l) { return l[0] === val; })[0]; return x ? x[1] : (val === 'apply' || val === 'leave' ? val : (val || '')); }
+function focal(v, r, rec) {
+  if (v === 'burrs') {
+    var pick = rec.pick || [], b = (r.bristles || []).filter(function (x) { return pick.indexOf(x.t) >= 0; })[0] || null;
+    return b ? '“' + b.s + '” (' + b.df + (b.df === 1 ? ' note' : ' notes') + ')' : 'this fact';
+  }
+  return '“' + r.surface + '” (' + r.df + (r.df === 1 ? ' note' : ' notes') + ')';
+}
+function h(tag, attrs, kids) {
+  var e = document.createElement(tag), k;
+  for (k in (attrs || {})) { if (k === 'class') e.className = attrs[k]; else if (k.slice(0,2) === 'on') e.addEventListener(k.slice(2), attrs[k]); else e.setAttribute(k, attrs[k]); }
+  (kids || []).forEach(function (c) { if (c == null) return; e.appendChild(typeof c === 'string' || typeof c === 'number' ? document.createTextNode(String(c)) : c); });
+  return e;
+}
+function api(path) { return fetch(path).then(function (r) { return r.json(); }); }
+function fmt(x, d) { return x == null ? '–' : (typeof x === 'number' ? x.toFixed(d == null ? 2 : d) : x); }
+function recName(id) { return META.recs[id] ? META.recs[id].label : id; }
+function chips(list, cls) { return (list || []).map(function (t) { return h('span', { class: 'chip ' + (cls || '') , title: META.recs[t] ? META.recs[t].finding : '' }, [cls === 'rec' ? recName(t) : t]); }); }
+
+function init() {
+  api('/api/meta').then(function (m) {
+    META = m;
+    document.getElementById('sub').textContent = m.version + ' · ' + m.totals.burrs + ' burrs from ' + m.notes + ' notes · ' + m.totals.bristles + ' bristle keys · ' + m.totals.sparks + ' spark candidates · ' + m.totals.knots + ' knot candidates · ' + m.judged + ' judgements saved (muse-judgements.jsonl)';
+    var tabs = document.getElementById('tabs');
+    ['findings','burrs','bristles','sparks','knots'].forEach(function (v) {
+      tabs.appendChild(h('button', { id: 'tab-' + v, onclick: function () { show(v); } }, [TABNAME[v] || v]));
+    });
+    show('findings');
+  });
+}
+function show(v, preset) {
+  S.view = v; S.page = 0; S.f = preset || {};
+  Array.prototype.forEach.call(document.querySelectorAll('nav button'), function (b) { b.className = b.id === 'tab-' + v ? 'on' : ''; });
+  v === 'findings' ? findings() : table();
+}
+
+function findings() {
+  var m = document.getElementById('main'); m.textContent = '';
+  m.appendChild(h('p', { class: 'mute' }, ['Each line is a change I propose to make to the pipeline, with the evidence from the nug-v4 sniff test. Click a count to see the rows it would touch. Click a row, read the question under it, and press the button that says what should happen (add a note if the row surprised you).']));
+  var t = h('table', { class: 'fnd' }, [h('tr', {}, ['proposed change','why','where the fix lands','burrs','bristles','sparks','knots'].map(function (x) { return h('th', {}, [x]); }))]);
+  Object.keys(META.recs).forEach(function (id) {
+    var r = META.recs[id];
+    var cell = function (view) { var n = (r.counts || {})[view] || 0; return h('td', { class: 'num' }, [n ? h('a', { href: '#', onclick: function (e) { e.preventDefault(); show(view, { rec: id }); } }, [String(n)]) : '–']); };
+    t.appendChild(h('tr', {}, [h('td', {}, [h('span', { class: 'chip rec' }, [r.label]), h('div', { class: 'mute' }, [id])]), h('td', { class: 'why' }, [r.finding]), h('td', {}, [r.fix]), cell('burrs'), cell('bristles'), cell('sparks'), cell('knots')]));
+  });
+  m.appendChild(t);
+}
+
+function sel(opts, val, on, first) {
+  var s = h('select', { onchange: function () { on(s.value); } }, [h('option', { value: '' }, [first])].concat(opts.map(function (o) { var v = Array.isArray(o) ? o[0] : o, l = Array.isArray(o) ? o[1] : o; var op = h('option', { value: v }, [l]); if (v === val) op.selected = true; return op; })));
+  return s;
+}
+function table() {
+  var v = S.view, m = document.getElementById('main'); m.textContent = '';
+  var f = S.f, reload = function () { S.page = 0; load(); };
+  var q = h('input', { type: 'search', placeholder: 'search text…', value: f.q || '' });
+  q.addEventListener('keydown', function (e) { if (e.key === 'Enter') { f.q = q.value; reload(); } });
+  var bar = h('div', { class: 'bar' }, [q]);
+  var recOpts = [['_any','has any recommendation'],['_none','no recommendation']].concat(Object.keys(META.recs).map(function (k) { return [k, META.recs[k].label]; }));
+  bar.appendChild(sel(recOpts, f.rec, function (x) { f.rec = x; reload(); }, 'any recommendation'));
+  if (v === 'burrs' || v === 'bristles' || v === 'sparks' || v === 'knots') bar.appendChild(sel(META.types, f.type, function (x) { f.type = x; reload(); }, 'any bristle type'));
+  if (v === 'burrs') { bar.appendChild(sel(META.kinds, f.kind, function (x) { f.kind = x; reload(); }, 'any kind')); bar.appendChild(sel([['none','no join'],['any','joins (2-40 notes)'],['spark','joins (2-8 notes)']], f.band, function (x) { f.band = x; reload(); }, 'any join level')); }
+  if (v === 'bristles') bar.appendChild(sel([['single','single note'],['spark','2-8 notes'],['mid','9-40 notes'],['hub','>40 notes']], f.band, function (x) { f.band = x; reload(); }, 'any band'));
+  if (v === 'knots') bar.appendChild(sel(['collision','same-sense','undecided'], f.cls, function (x) { f.cls = x; reload(); }, 'any class'));
+  bar.appendChild(sel([['_unjudged','not yet judged']].concat(itemLabels(v).map(function (l) { return [l[0], l[1]]; })), f.j, function (x) { f.j = x; reload(); }, 'any judgement'));
+  bar.appendChild(h('button', { class: 'b', onclick: function () { show(v); } }, ['clear']));
+  m.appendChild(bar);
+  m.appendChild(h('div', { id: 'tbl' }));
+  load();
+}
+function load() {
+  var v = S.view, f = S.f, p = new URLSearchParams({ view: v, page: S.page, size: 50 });
+  ['q','rec','type','kind','band','cls','j'].forEach(function (k) { if (f[k]) p.set(k, f[k]); });
+  if (S.sort[v]) { p.set('sort', S.sort[v]); p.set('dir', S.dir[v] || 'desc'); }
+  api('/api/rows?' + p.toString()).then(function (d) {
+    var box = document.getElementById('tbl'); box.textContent = '';
+    var cols = COLS[v];
+    var tr = h('tr', {}, cols.concat([['j','your label']]).map(function (c) {
+      var th = h('th', { class: (S.sort[v] === c[0] ? 'on ' : '') + (c[2] || ''), onclick: function () { if (c[0] === 'j') return; S.dir[v] = (S.sort[v] === c[0] && S.dir[v] !== 'asc') ? 'asc' : 'desc'; S.sort[v] = c[0]; S.page = 0; load(); } }, [c[1] || c[0], S.sort[v] === c[0] ? (S.dir[v] === 'asc' ? ' ▲' : ' ▼') : '']);
+      return th;
+    }));
+    var t = h('table', {}, [tr]);
+    d.rows.forEach(function (r) { t.appendChild(rowFor(v, r, cols)); });
+    box.appendChild(t);
+    var last = Math.max(0, Math.ceil(d.total / d.size) - 1);
+    box.appendChild(h('div', { class: 'pg' }, [
+      h('button', { class: 'b', onclick: function () { if (S.page > 0) { S.page--; load(); } } }, ['‹ prev']),
+      d.total + ' rows · page ' + (d.page + 1) + ' of ' + (last + 1),
+      h('button', { class: 'b', onclick: function () { if (S.page < last) { S.page++; load(); } } }, ['next ›'])]));
+  });
+}
+function cellFor(v, r, c) {
+  var k = c[0], cls = c[2] || '';
+  if (k === 'recs') return h('td', {}, chips(r.recs, 'rec'));
+  if (k === 'types') return h('td', {}, chips(r.types, 't'));
+  if (k === 'claim') return h('td', { class: 'claim' }, [r.claim]);
+  if (k === 'note') return h('td', { class: 'mute' }, [r.note.length > 44 ? r.note.slice(0, 43) + '…' : r.note]);
+  if (k === 'band' && v === 'burrs') return h('td', {}, [{ none: 'no join', any: 'joins', spark: 'joins (rare)' }[r.band]]);
+  if (typeof r[k] === 'number') return h('td', { class: 'num' }, [k === 'rarity' || k === 'cos' || k === 'dist' || k === 'score' ? fmt(r[k]) : String(r[k])]);
+  return h('td', { class: cls }, [r[k] == null ? '–' : String(r[k])]);
+}
+function rowFor(v, r, cols) {
+  var tr = h('tr', { class: 'r' }, cols.map(function (c) { return cellFor(v, r, c); }).concat([h('td', { class: 'jmark' }, [labelText(v, r.j)])]));
+  var detailRow = null;
+  tr.addEventListener('click', function () {
+    if (detailRow) { detailRow.remove(); detailRow = null; tr.classList.remove('open'); return; }
+    tr.classList.add('open');
+    var box = h('div', { class: 'detail' });
+    detailRow = h('tr', {}, [h('td', { colspan: String(cols.length + 1) }, [box])]);
+    tr.after(detailRow);
+    fillDetail(v, r, box, tr);
+  });
+  return tr;
+}
+function burrBlock(b) { return h('div', { class: 'b1' }, [h('div', {}, [b.claim]), h('div', { class: 'mute' }, ['“' + (b.quote || '') + '” — ' + b.note])]); }
+function fillDetail(v, r, box, tr) {
+  if (v === 'burrs') {
+    box.appendChild(h('div', {}, [r.claim]));
+    box.appendChild(h('div', { class: 'mute' }, ['evidence: “' + r.quote + '”']));
+    box.appendChild(h('div', { class: 'mute' }, ['note: ' + r.note + ' · burr ' + r.rank + ' of ' + r.noteBurrs + (r.perishable ? ' · perishable' : '')]));
+    if (r.loop) box.appendChild(h('div', {}, ['loop: ' + r.loop]));
+    box.appendChild(h('div', {}, [h('b', {}, ['bristles: '])].concat(r.bristles.length ? r.bristles.map(function (b) { return h('span', { class: 'chip t', title: 'shared by ' + b.df + ' note(s); source ' + b.src }, [b.t + ': ' + b.s + ' (' + b.df + ')']); }) : ['none'])));
+  } else if (v === 'bristles') {
+    box.appendChild(h('div', { class: 'mute' }, ['loading burrs…']));
+    api('/api/detail?view=bristles&id=' + encodeURIComponent(r.id)).then(function (bs) { box.firstChild.remove(); box.insertBefore(h('div', {}, bs.map(burrBlock)), box.firstChild); });
+  } else {
+    box.appendChild(h('div', {}, r.burrs.map(burrBlock)));
+  }
+  var note = h('input', { type: 'text', placeholder: 'your note (optional: why, or what surprised you)', value: r.jnote || '' });
+  (r.recs || []).forEach(function (t) {
+    var rec = META.recs[t]; if (!rec || !rec.ask || (t === 'verify-collision' && v === 'knots')) return;
+    r.rj = r.rj || {};
+    var q = rec.ask.replace('{x}', focal(v, r, rec));
+    var rr = h('div', { class: 'jr' }, [h('span', {}, [q]), h('span', { class: 'mute', title: rec.finding }, [' (' + recName(t) + ')'])]);
+    [['apply', rec.yes], ['leave', rec.no]].forEach(function (pr) {
+      rr.appendChild(h('button', { class: 'b' + (r.rj[t] === pr[0] ? ' on' : ''), onclick: function () {
+        fetch('/api/judge', { method: 'POST', body: JSON.stringify({ view: v, id: r.id, rule: t, label: pr[0], note: note.value }) }).then(function () {
+          r.rj[t] = pr[0]; Array.prototype.forEach.call(rr.querySelectorAll('button'), function (b) { b.classList.toggle('on', b.textContent === pr[1]); });
+        });
+      } }, [pr[1]]));
+    });
+    box.appendChild(rr);
+  });
+  var jr = h('div', { class: 'jr' });
+  jr.appendChild(h('span', { class: 'mute' }, ['This ' + ({ burrs: 'fact', bristles: 'hook', sparks: 'pairing', knots: 'word' }[v] || 'row') + ':']));
+  itemLabels(v).forEach(function (l) {
+    jr.appendChild(h('button', { class: 'b' + (r.j === l[0] ? ' on' : ''), title: l[2] || '', onclick: function () {
+      fetch('/api/judge', { method: 'POST', body: JSON.stringify({ view: v, id: r.id, label: l[0], note: note.value }) }).then(function () {
+        r.j = l[0]; tr.lastChild.textContent = l[1]; Array.prototype.forEach.call(jr.querySelectorAll('button'), function (b) { b.classList.toggle('on', b.textContent === l[1]); });
+      });
+    } }, [l[1]]));
+  });
+  jr.appendChild(note);
+  box.appendChild(jr);
+}
+init();
+</script>
+</body>
+</html>
