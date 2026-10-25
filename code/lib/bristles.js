@@ -51,25 +51,27 @@ function escRe(x) { return x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 function unitWord(w) { return String(w || '').toLowerCase().replace(/[.,;:)]+$/, ''); }
 
 // -> { key, surface, kind: 'year'|'qty'|'bare'|'text', duration }   kind 'bare' and 'text' have no key to join on ('text': not a number).
-function qualifyNumber(value, claim, pos) {
+function qualifyNumber(value, claim, pos, hookType) {
   const v = String(value == null ? '' : value).trim();
   const m = /^([$€£₹¥])?\s*(\d[\d,]*(?:\.\d+)?)\s*(.*)$/.exec(v);
   if (!m) return { key: '', surface: v, kind: 'text' };
   const num = m[2].replace(/,/g, ''), rest = m[3].trim();
-  let cur = m[1] ? CURRENCY[m[1]] : '', after = rest, before = '';
+  let cur = m[1] ? CURRENCY[m[1]] : '', after = rest, before = '', noYear = hookType === 'number' || /,/.test(m[2]);   // the model typed it a number, or it is written with a thousands comma: never a calendar year
   if (!rest || !m[1]) {
     // Look the number up in the claim to see what surrounds it.
     let f = null;
     if (pos != null) f = { index: pos, 0: m[2] };
     else f = new RegExp('(?<![\\d.,])' + m[2].replace(/,/g, '').replace(/^(\d+)/, function (d) { return d.split('').join(',?'); }).replace(/\./g, '\\.') + '(?!\\d)', 'g').exec(String(claim || ''));
+    if (f && /,/.test(f[0])) noYear = true;
     if (f) { if (!rest) after = String(claim).slice(f.index + f[0].length, f.index + f[0].length + 30); before = String(claim).slice(Math.max(0, f.index - 10), f.index); }
   }
+  if (/#\s*$/.test(before)) noYear = true;                    // store #2,000, item #1743
   if (!cur && before) { const c = before.trim().slice(-1); if (CURRENCY[c]) cur = CURRENCY[c]; }
   const era = ERA_RE.exec(after);
   if (era) return { key: num + (/^b/i.test(era[1]) ? ' bc' : ' ad'), surface: num + ' ' + (/^b/i.test(era[1]) ? 'BC' : 'AD'), kind: 'year' };
   if (cur) return { key: num + ' ' + cur, surface: (m[1] || '') + num, kind: 'qty' };
   const wm = /^\s*[-–]?\s*([A-Za-z%°][A-Za-z%°.\/²³]*)(?:\s+([A-Za-z]+))?/.exec(after);
-  const yearLike = isYearKey(num);
+  const yearLike = !noYear && isYearKey(num);
   if (wm) {
     const raw = wm[1];
     let w = unitWord(raw);
@@ -79,25 +81,36 @@ function qualifyNumber(value, claim, pos) {
     const datePrep = /\b(in|by|since|until|till|from|during|around|circa|c\.|year|of|and|to)\s*$/i.test(before);
     const ok = w && lower && !NOT_UNIT.has(w) && !MONTHS.has(w);
     // A year-like number is a date unless the next word is a known unit, or a plural noun with no date word before it.
+    if (yearLike && w === 's') return { key: num, surface: num + 's', kind: 'year', decade: true };   // 1960s: a decade, dated at its start
     const asQty = ok && (!yearLike || KNOWN_UNITS.has(w) || (/s$/.test(w) && !datePrep));
     if (asQty) return { key: num + ' ' + w, surface: num + ' ' + w, kind: 'qty', duration: DURATION_UNITS.has(w) };
   }
   if (/^[%°]/.test(after.trim())) return { key: num + ' ' + after.trim()[0], surface: num + after.trim()[0], kind: 'qty' };
-  if (isYearKey(num)) return { key: num, surface: num, kind: 'year' };   // a plain year: read as a calendar date
+  if (yearLike) return { key: num, surface: num, kind: 'year' };   // a plain year: read as a calendar date
   return { key: '', surface: v, kind: 'bare' };
 }
 
+const MON = 'january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec';
+const DATE_CUE = new RegExp('(?:\\b(?:in|by|since|during|from|until|till|circa|c\\.|year|before|after|around|early|late|mid|between)\\s+|\\b(?:' + MON + ')\\.?\\s+(?:\\d{1,2},?\\s+)?|\\b\\d{1,2}\\s+(?:' + MON + ')\\s+|\\(\\s*|\\b(?:1[0-9]{3}|20[0-3][0-9])\\s*(?:[-–—]|to|and)\\s*)$', 'i');
 // Every dated year in a claim: "in 1085", "1170 BC"; not "1743 runs" or "1120 km".
 function datesIn(text) {
   const out = [], seen = new Set(), re = /(?<![\d,.\/$€£₹¥])(\d{1,4})(?![\d,]|\.\d)/g;
   let m; const t = String(text || '');
   while ((m = re.exec(t)) !== null) {
     const q = qualifyNumber(m[1], t, m.index);
-    if (q.kind === 'year' && q.key && !seen.has(q.key) && (/ (bc|ad)$/.test(q.key) || isYearKey(q.key))) { seen.add(q.key); out.push(q); }
+    if (q.kind === 'year' && q.key && !seen.has(q.key) && (/ (bc|ad)$/.test(q.key) || (isYearKey(q.key) && DATE_CUE.test(t.slice(Math.max(0, m.index - 24), m.index))))) { seen.add(q.key); out.push(q); }
   }
   return out;
 }
 
+
+// Group unit spellings together for browsing: kms/kilometres -> km, percent -> %, feet -> ft, plurals -> singular.
+const UNIT_MAP = { percent: '%', 'per cent': '%', kms: 'km', kilometre: 'km', kilometres: 'km', kilometer: 'km', kilometers: 'km', metre: 'm', metres: 'm', meter: 'm', meters: 'm', feet: 'ft', foot: 'ft', mile: 'mile', miles: 'mile', kilogram: 'kg', kilograms: 'kg', kgs: 'kg', tonnes: 'tonne', tons: 'tonne', ton: 'tonne', dollar: 'usd', dollars: 'usd', people: 'person', persons: 'person' };
+function normUnit(u) { const w = String(u || '').toLowerCase(); if (UNIT_MAP[w]) return UNIT_MAP[w]; return w.length > 3 && /[^s]s$/.test(w) ? w.slice(0, -1) : w; }
+
+// A qualified key back into numbers. yearOfKey('1170 bc') -> -1170; quantityOfKey('1120 km') -> { v: 1120, u: 'km' }.
+function yearOfKey(key) { const m = /^(\d{1,4})(?: (bc|ad))?$/.exec(key); if (!m || (!m[2] && !isYearKey(m[1]))) return null; return (m[2] === 'bc' ? -1 : 1) * parseInt(m[1], 10); }
+function quantityOfKey(key) { const m = /^(\d+(?:\.\d+)?) (.+)$/.exec(key); return m && m[2] !== 'bc' && m[2] !== 'ad' ? { v: parseFloat(m[1]), u: m[2] } : null; }
 
 function tokens(text) { return foldKey(text).split(' ').filter(Boolean); }
 
@@ -155,4 +168,4 @@ function tagDistance(a, b) {
   return 1 - inter / (a.size + b.size - inter);
 }
 
-module.exports = { STOP, foldKey, variantKey, yearsIn, qualifyNumber, datesIn, isYearKey, tokens, usableKey, titleKey, buildIdf, vectorOf, cosine, tagDistance };
+module.exports = { normUnit, yearOfKey, quantityOfKey, STOP, foldKey, variantKey, yearsIn, qualifyNumber, datesIn, isYearKey, tokens, usableKey, titleKey, buildIdf, vectorOf, cosine, tagDistance };

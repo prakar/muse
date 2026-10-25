@@ -24,3 +24,6 @@ muse-judgements*
 dedupe-*.csv
 vault.db.interrupted-*
 vault.db-journal.*
+
+# Private-content scan output (masked evidence, still sensitive): never commit
+private-candidates*

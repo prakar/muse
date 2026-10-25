@@ -35,6 +35,8 @@
   .pg { display:flex; gap:10px; align-items:center; margin-top:10px; color:var(--mute); }
   .fnd td { vertical-align:top; } .fnd .why { max-width:520px; }
   .jmark { font-weight:600; color:var(--acc); }
+  .brow { display:flex; align-items:center; gap:8px; margin:2px 0; cursor:pointer; } .brow:hover { background:var(--sel); }
+  .blab { width:140px; text-align:right; flex:none; } .bbar { height:14px; background:var(--acc); border-radius:2px; flex:none; }
 </style>
 </head>
 <body>
@@ -90,7 +92,7 @@ function init() {
 function show(v, preset) {
   S.view = v; S.page = 0; S.f = preset || {};
   Array.prototype.forEach.call(document.querySelectorAll('nav button'), function (b) { b.className = b.id === 'tab-' + v ? 'on' : ''; });
-  v === 'findings' ? findings() : table();
+  v === 'findings' ? findings() : v === 'slices' ? slicesView('time', {}) : table();
 }
 
 function findings() {
@@ -111,6 +113,7 @@ function sel(opts, val, on, first) {
 }
 function table() {
   var v = S.view, m = document.getElementById('main'); m.textContent = '';
+  if (v === 'slices') m.appendChild(slicesNav('keys'));
   var f = S.f, reload = function () { S.page = 0; load(); };
   var q = h('input', { type: 'search', placeholder: 'search text…', value: f.q || '' });
   q.addEventListener('keydown', function (e) { if (e.key === 'Enter') { f.q = q.value; reload(); } });
@@ -174,6 +177,80 @@ function rowFor(v, r, cols) {
   });
   return tr;
 }
+
+// ---------- Slices: time and quantities ----------
+function slicesNav(active) {
+  return h('div', { class: 'bar' }, [['time', 'Time'], ['qty', 'Quantities'], ['keys', 'All keys']].map(function (x) {
+    return h('button', { class: 'b' + (active === x[0] ? ' on' : ''), onclick: function () { x[0] === 'keys' ? table() : slicesView(x[0], {}); } }, [x[1]]);
+  }));
+}
+function slicesView(kind, st) {
+  var m = document.getElementById('main'); m.textContent = ''; m.appendChild(slicesNav(kind));
+  var box = h('div'); m.appendChild(box);
+  kind === 'time' ? timeView(box, st) : qtyView(box, st);
+}
+function barRows(rows, max, onclick) {
+  return h('div', {}, rows.map(function (r) {
+    return h('div', { class: 'brow', onclick: function () { onclick(r); } }, [
+      h('span', { class: 'blab mute' }, [r.label]),
+      h('span', { class: 'bbar', style: 'width:' + Math.max(2, Math.round(r.n / max * 55)) + '%' }),
+      h('span', { class: 'mute' }, [r.n + (r.sub ? ' · ' + r.sub : '')])]);
+  }));
+}
+function crumbs(parts) {
+  return h('div', { class: 'bar' }, parts.map(function (p, i) { return h('button', { class: 'b' + (i === parts.length - 1 ? ' on' : ''), onclick: p.go }, [p.label]); }));
+}
+function burrList(box, url, mk, extraCols) {
+  function go(page) {
+    api(url + '&page=' + page).then(function (d) {
+      box.textContent = '';
+      var t = h('table', {}, [h('tr', {}, [h('th', {}, [extraCols]), h('th', {}, ['fact']), h('th', {}, ['note'])])]);
+      d.rows.forEach(function (r) { t.appendChild(h('tr', {}, [h('td', { class: 'num' }, [mk(r)]), h('td', { class: 'claim' }, [r.claim, h('div', { class: 'mute' }, ['“' + (r.quote || '') + '”'])]), h('td', { class: 'mute' }, [r.note.length > 44 ? r.note.slice(0, 43) + '…' : r.note])])); });
+      box.appendChild(t);
+      var last = Math.max(0, Math.ceil(d.total / d.size) - 1);
+      box.appendChild(h('div', { class: 'pg' }, [h('button', { class: 'b', onclick: function () { if (d.page > 0) go(d.page - 1); } }, ['‹ prev']), d.total + ' facts · page ' + (d.page + 1) + ' of ' + (last + 1), h('button', { class: 'b', onclick: function () { if (d.page < last) go(d.page + 1); } }, ['next ›'])]));
+    });
+  }
+  go(0);
+}
+function timeView(box, st) {
+  box.textContent = '';
+  var bc = [{ label: 'all time', go: function () { slicesView('time', {}); } }];
+  if (st.century) bc.push({ label: st.century.label, go: function () { slicesView('time', { century: st.century }); } });
+  if (st.decade) bc.push({ label: st.decade.label, go: function () {} });
+  box.appendChild(crumbs(bc));
+  var area = h('div'); box.appendChild(area);
+  if (st.decade) {
+    area.appendChild(h('p', { class: 'mute' }, ['Facts that mention a date in ' + st.decade.label + ', in date order. A fact with several dates appears once per date.']));
+    var lb = h('div'); area.appendChild(lb);
+    burrList(lb, '/api/time/burrs?from=' + st.decade.start + '&to=' + st.decade.end, function (r) { return r.date; }, 'date');
+    return;
+  }
+  var q = st.century ? '/api/time?size=10&from=' + st.century.start + '&to=' + st.century.end : '/api/time?size=100';
+  api(q).then(function (d) {
+    area.appendChild(h('p', { class: 'mute' }, [st.century ? 'Click a decade to read its facts. Bar length is the number of facts; the second number is how many notes they come from.' : 'Dates found in facts, by century. Click a century to see its decades. Only dated mentions count: a year needs a date cue (in, since, a month…) or an era (BC/AD); a bare number does not.']));
+    var max = Math.max.apply(null, d.buckets.map(function (b) { return b.n; }).concat([1]));
+    area.appendChild(barRows(d.buckets.map(function (b) { return Object.assign({}, b, { sub: b.notes + ' notes' }); }), max, function (b) {
+      slicesView('time', st.century ? { century: st.century, decade: b } : { century: b });
+    }));
+  });
+}
+function qtyView(box, st) {
+  box.textContent = '';
+  if (st.unit) {
+    box.appendChild(crumbs([{ label: 'all units', go: function () { slicesView('qty', {}); } }, { label: st.unit + (st.dir === 'asc' ? ' (smallest first)' : ' (largest first)'), go: function () {} },
+      { label: 'flip order', go: function () { slicesView('qty', { unit: st.unit, dir: st.dir === 'asc' ? 'desc' : 'asc' }); } }]));
+    var lb = h('div'); box.appendChild(lb);
+    burrList(lb, '/api/qty/burrs?u=' + encodeURIComponent(st.unit) + '&dir=' + (st.dir || 'desc'), function (r) { return String(r.v); }, 'value (' + st.unit + ')');
+    return;
+  }
+  api('/api/qty').then(function (d) {
+    box.appendChild(h('p', { class: 'mute' }, ['Measured things by unit. Pick a unit to rank its facts by value: the tallest, longest, oldest, costliest. Unit spellings are grouped (kms and kilometres are km); a number with no unit is not listed.']));
+    var max = Math.max.apply(null, d.units.map(function (u) { return u.n; }).concat([1]));
+    box.appendChild(barRows(d.units.map(function (u) { return { label: u.u, n: u.n, sub: 'range ' + u.min + ' to ' + u.max, u: u.u }; }), max, function (r) { slicesView('qty', { unit: r.u, dir: 'desc' }); }));
+  });
+}
+
 function burrBlock(b) { return h('div', { class: 'b1' }, [h('div', {}, [b.claim]), h('div', { class: 'mute' }, ['“' + (b.quote || '') + '” — ' + b.note])]); }
 function fillDetail(v, r, box, tr) {
   if (v === 'burrs') {

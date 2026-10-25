@@ -53,3 +53,28 @@ test('numbers and dates carry a unit or an era, so look-alikes do not join', () 
   assert.notStrictEqual(k('156.8', 'measured 156.8 cm'), k('156.8', 'measured 156.8 kg'));
   assert.deepStrictEqual(L.datesIn('In 1085 Toledo fell; he scored 1085 runs; a 1120 km road; 1170 BC; $12.25.').map(x => x.key), ['1085', '1170 bc']);
 });
+
+test('a comma number, a #number or a hook the model typed "number" is a quantity, never a year', () => {
+  const L = require('../code/lib/bristles');
+  assert.strictEqual(L.qualifyNumber('2,000', 'Texas could have between 2,000 and 5,000 tigers.').key, '');
+  assert.strictEqual(L.qualifyNumber('2000', '7-Eleven christened store #2,000 in 1968.').key, '');
+  assert.strictEqual(L.qualifyNumber('2000', 'crucified 2000 Jewish rebels', null, 'number').key, '');
+  assert.strictEqual(L.qualifyNumber('2000', 'in the year 2000', null, 'time').key, '2000');
+  assert.deepStrictEqual(L.datesIn('The 1900 Universal Exhibition; the 1947 series; lived from 1908 to 2000; since 1995; (1962)').map(x => x.key), ['1908', '2000', '1995', '1962']);
+});
+
+test('qualified keys parse back into years and quantities', () => {
+  const L = require('../code/lib/bristles');
+  assert.strictEqual(L.yearOfKey('1170 bc'), -1170);
+  assert.strictEqual(L.yearOfKey('1085'), 1085);
+  assert.strictEqual(L.yearOfKey('476'), null);
+  assert.deepStrictEqual(L.quantityOfKey('1120 km'), { v: 1120, u: 'km' });
+  assert.strictEqual(L.quantityOfKey('1170 bc'), null);
+});
+
+test('"1960s" is a decade date, not the quantity "1960 s"; unit spellings group', () => {
+  const L = require('../code/lib/bristles');
+  const q = L.qualifyNumber('1960s', 'Beatles formed in the 1960s and toured widely.');
+  assert.strictEqual(q.kind, 'year'); assert.strictEqual(q.key, '1960');
+  assert.strictEqual(L.normUnit('kilometres'), 'km'); assert.strictEqual(L.normUnit('years'), 'year'); assert.strictEqual(L.normUnit('percent'), '%');
+});

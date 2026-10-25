@@ -101,7 +101,7 @@ function build(db, version, opts) {
   // Burrs flagged as duplicates by code/dedupe.js are hidden unless opts.showDupes (nothing is ever deleted).
   let hasDupes = false; try { hasDupes = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='burr_dupes'").get(); } catch (e) {}
   const dupClause = hasDupes && !opts.showDupes ? " AND b.id NOT IN (SELECT burr_id FROM burr_dupes WHERE status='dup')" : '';
-  const burrsRaw = db.prepare('SELECT b.id, b.note_id, b.claim, b.quote, b.kind, b.hooks_json, b.loop_text, b.perishable, n.title FROM burrs b JOIN vault_notes n ON n.id=b.note_id WHERE b.prompt_version=?' + dupClause + ' ORDER BY b.id').all(version);
+  const burrsRaw = db.prepare('SELECT b.id, b.note_id, b.claim, b.quote, b.kind, b.hooks_json, b.loop_text, b.perishable, n.title FROM burrs b JOIN vault_notes n ON n.id=b.note_id WHERE b.prompt_version=? AND COALESCE(n.quarry_exclude,0)=0' + dupClause + ' ORDER BY b.id').all(version);
   const noteTitle = new Map(), noteTags = new Map();
   db.prepare('SELECT id,title FROM vault_notes').all().forEach(function (r) { noteTitle.set(r.id, r.title); });
   db.prepare('SELECT note_id, tag_root FROM note_tags WHERE tag_root IS NOT NULL').all().forEach(function (r) {
@@ -110,23 +110,24 @@ function build(db, version, opts) {
   const titleDict = new Map();
   noteTitle.forEach(function (t, id) { const k = L.titleKey(t); if (k && !titleDict.has(k)) titleDict.set(k, id); });
 
-  const perNote = new Map(), rank = new Map(), toks = new Map(), bristles = new Map();
+  const perNote = new Map(), rank = new Map(), toks = new Map(), bristles = new Map(), timeline = [], quantities = [];
   burrsRaw.forEach(function (b) { const c = (perNote.get(b.note_id) || 0) + 1; perNote.set(b.note_id, c); rank.set(b.id, c); toks.set(b.id, L.tokens(b.claim)); });
   burrsRaw.forEach(function (b) {
-    const own = L.titleKey(b.title), seen = new Set(), out = [];
+    const own = L.titleKey(b.title), seen = new Set(), out = [], seenQ = new Set();
+    const note = function (key, kindHint) { if (seenQ.has(key)) return; seenQ.add(key); const y = L.yearOfKey(key); if (y != null) timeline.push({ y: y, b: b.id }); else { const q = L.quantityOfKey(key); if (q) quantities.push({ u: L.normUnit(q.u), v: q.v, b: b.id }); } };
     const add = function (type, surface, key, src, cat) { if (!L.usableKey(key) || seen.has(key)) return; seen.add(key); out.push({ type: type, surface: surface, key: key, src: src, cat: cat || '' }); };
     let hooks = []; try { hooks = JSON.parse(b.hooks_json || '[]'); } catch (e) {}
     hooks.forEach(function (h) {
       // Numbers and dates carry a unit or an era so that 1170 BC, 1170 AD, 1120 km and 1120 runs never join.
       if (h.type === 'time' || h.type === 'number') {
-        const q = L.qualifyNumber(h.value, b.claim);
+        const q = L.qualifyNumber(h.value, b.claim, null, h.type);
         if (q.kind === 'text') return add(h.type, h.value, L.foldKey(h.value), 'hook');
         if (!q.key) return;                                   // a bare number with no unit or era is not a handle
-        return add(q.kind === 'qty' && !q.duration ? 'number' : 'time', q.surface, q.key, 'hook');
+        note(q.key); return add(q.kind === 'qty' && !q.duration ? 'number' : 'time', q.surface, q.key, 'hook');
       }
       add(h.type, h.value, L.foldKey(h.value), 'hook', h.cat);
     });
-    L.datesIn(b.claim).forEach(function (q) { add('time', q.surface, q.key, 'year'); });
+    L.datesIn(b.claim).forEach(function (q) { note(q.key); add('time', q.surface, q.key, 'year'); });
     const t = toks.get(b.id); let nT = 0;
     for (let n = 6; n >= 1 && nT < 4; n--) for (let i = 0; i + n <= t.length && nT < 4; i++) {
       const k = t.slice(i, i + n).join(' ');
@@ -193,7 +194,7 @@ function build(db, version, opts) {
       sparkRows.push({ _ns: Array.from(e.notes).sort(function (a, b) { return a - b; }).join(','), id: key, surface: e.surface, types: Array.from(e.types), df: df, rarity: Math.log(NN / df), dist: st.dist, cos: st.cos, clone: clone,
         score: st.dist == null ? -1 : Math.log(NN / df) * st.dist, recs: recs, burrs: bs.slice(0, 6).map(brief), _s: (key + ' ' + e.surface).toLowerCase() });
     }
-    if (df >= 2 && df <= 40 && !L.isYearKey(key) && Array.from(e.types).some(function (t) { return SURF.has(t); })) {
+    if (df >= 2 && df <= 40 && !L.isYearKey(key) && Array.from(e.types).some(function (t) { return SURF.has(t); }) && !(e.cats.size && Array.from(e.cats).every(function (c) { return c === 'other'; }))) {
       const bs = pickPerNote(e).slice(0, 12), st = pairStats(bs, key);
       const cls = st.cos >= 0.15 || (st.dist != null && st.dist <= 0.4) ? 'same-sense' : (st.cos < 0.06 && st.dist != null && st.dist >= 0.8) ? 'collision' : 'undecided';
       const recs = keyRecs.get(key).filter(function (r) { return r === 'common-word' || r === 'needs-category' || r === 'hub' || r === 'title-hub'; });
@@ -231,7 +232,7 @@ function build(db, version, opts) {
   const counts = {};
   [['burrs', burrRows], ['bristles', bristleRows], ['sparks', sparkRows], ['knots', knotRows]].forEach(function (p) {
     p[1].forEach(function (r) { r.recs.forEach(function (t) { (counts[t] = counts[t] || {})[p[0]] = ((counts[t] || {})[p[0]] || 0) + 1; }); }); });
-  return { version: version, notes: NN, burrs: burrRows, bristles: bristleRows, sparks: sparkRows, knots: knotRows, slices: sliceRows, excluded: excluded, detail: detail, recCounts: counts,
+  return { version: version, notes: NN, burrs: burrRows, bristles: bristleRows, sparks: sparkRows, knots: knotRows, slices: sliceRows, timeline: timeline, quantities: quantities, excluded: excluded, detail: detail, recCounts: counts,
     kinds: Array.from(new Set(burrRows.map(function (r) { return r.kind; }))).sort(),
     types: Array.from(new Set([].concat.apply([], bristleRows.map(function (r) { return r.types; })))).sort() };
 }

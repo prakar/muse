@@ -17,6 +17,8 @@ const STOP = new Set('the a an of in on at to is was were are and or for by with
 
 function norm(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim(); }
 function words(s) { return new Set(norm(s).split(' ').filter(function (w) { return w && !STOP.has(w); })); }
+// Symbols that norm() erases but that carry meaning: ']' vs '+', '%', '$', '=' ... Two claims that differ in them are different facts.
+function symbols(s) { return (String(s || '').match(/[^\p{L}\p{N}\s.,;:!?'"“”‘’()\-–—\/]/gu) || []).sort().join(''); }
 function digits(s) { return new Set(String(s || '').match(/\d+(?:[.,]\d+)*/g) || []); }
 function names(s) {   // capitalised words, except the first word of the claim (a sentence-initial capital means nothing)
   const out = new Set(), caps = String(s || '').match(/\b[A-Z][A-Za-z'’-]+\b/g) || [];
@@ -28,10 +30,11 @@ function subset(a, b) { for (const x of a) if (!b.has(x)) return false; return t
 function inter(a, b) { let n = 0; for (const x of a) if (b.has(x)) n++; return n; }
 
 const NEG = /\b(not|no|never|none|neither|nor|without|cannot|can't|isn't|wasn't|aren't|weren't|didn't|doesn't|don't|hasn't|hadn't|won't)\b/i;
-function prep(b) { return { id: b.id, note_id: b.note_id, claim: b.claim, n: norm(b.claim), w: words(b.claim), d: digits(b.claim), p: names(b.claim), neg: NEG.test(String(b.claim || '').replace(/’/g, "'")) }; }
+function prep(b) { return { id: b.id, note_id: b.note_id, claim: b.claim, n: norm(b.claim), w: words(b.claim), d: digits(b.claim), p: names(b.claim), sy: symbols(b.claim), neg: NEG.test(String(b.claim || '').replace(/’/g, "'")) }; }
 
 // Are x and y the same fact? Returns a score in (0,1] or 0.
 function sameFact(x, y) {
+  if (x.sy !== y.sy) return 0;   // differing symbols: ']' vs '+' are different keys, '5%' is not '5'
   if (x.n === y.n) return 1;
   if (x.neg !== y.neg) return 0;   // a negation in one claim only: opposite facts, never a match
   if (x.w.size < 3 || y.w.size < 3) return 0;

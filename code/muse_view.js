@@ -65,6 +65,45 @@ function query(q) {
   return { total: rows.length, page: page, size: size, rows: out };
 }
 
+
+// ---- Slices: time and quantities (built from the model's dated and measured mentions)
+const BURR = new Map(model.burrs.map(function (b) { return [b.id, b]; }));
+const TL = model.timeline.slice().sort(function (a, b) { return a.y - b.y || a.b - b.b; });
+const spanLabel = function (start, size) {
+  const end = start + size - 1;
+  if (start >= 0) return size >= 100 ? start + '–' + end : start + 's';
+  return Math.abs(start) + '–' + Math.abs(end) + ' BC';
+};
+const yLabel = function (y) { return y < 0 ? Math.abs(y) + ' BC' : String(y); };
+const burrRow = function (b, extra) { return Object.assign({ id: b.id, claim: b.claim, quote: b.quote, note: b.note }, extra); };
+function timeBuckets(q) {
+  const size = parseInt(q.get('size') || '100', 10), lo = q.get('from') == null ? -Infinity : parseInt(q.get('from'), 10), hi = q.get('to') == null ? Infinity : parseInt(q.get('to'), 10);
+  const g = new Map();
+  TL.forEach(function (t) {
+    if (t.y < lo || t.y > hi) return;
+    const start = Math.floor(t.y / size) * size, b = BURR.get(t.b); if (!b) return;
+    let e = g.get(start); if (!e) { e = { start: start, burrs: new Set(), notes: new Set() }; g.set(start, e); }
+    e.burrs.add(t.b); e.notes.add(b.noteId);
+  });
+  return Array.from(g.values()).sort(function (a, b) { return a.start - b.start; }).map(function (e) { return { start: e.start, end: e.start + size - 1, size: size, label: spanLabel(e.start, size), n: e.burrs.size, notes: e.notes.size }; });
+}
+function timeBurrs(q) {
+  const lo = parseInt(q.get('from'), 10), hi = parseInt(q.get('to'), 10), page = Math.max(0, parseInt(q.get('page') || '0', 10)), size = 50;
+  const rows = TL.filter(function (t) { return t.y >= lo && t.y <= hi && BURR.has(t.b); });
+  return { total: rows.length, page: page, size: size, rows: rows.slice(page * size, page * size + size).map(function (t) { return burrRow(BURR.get(t.b), { y: t.y, date: yLabel(t.y) }); }) };
+}
+const QTY = new Map(); model.quantities.forEach(function (x) { (QTY.get(x.u) || QTY.set(x.u, []).get(x.u)).push(x); });
+function qtyUnits() {
+  return Array.from(QTY.entries()).filter(function (e) { return e[1].length >= 3; }).map(function (e) {
+    const vs = e[1].map(function (x) { return x.v; }); return { u: e[0], n: e[1].length, min: Math.min.apply(null, vs), max: Math.max.apply(null, vs) };
+  }).sort(function (a, b) { return b.n - a.n; });
+}
+function qtyBurrs(q) {
+  const list = (QTY.get(q.get('u')) || []).filter(function (x) { return BURR.has(x.b); }), dir = q.get('dir') === 'asc' ? 1 : -1, page = Math.max(0, parseInt(q.get('page') || '0', 10)), size = 50;
+  list.sort(function (a, b) { return (a.v - b.v) * dir; });
+  return { total: list.length, page: page, size: size, rows: list.slice(page * size, page * size + size).map(function (x) { return burrRow(BURR.get(x.b), { v: x.v, u: x.u }); }) };
+}
+
 function send(res, code, type, body) { res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store' }); res.end(body); }
 
 http.createServer(function (req, res) {
@@ -75,6 +114,10 @@ http.createServer(function (req, res) {
     return send(res, 200, 'application/json', JSON.stringify({ version: VERSION, notes: model.notes, totals: { burrs: model.burrs.length, bristles: model.bristles.length, sparks: model.sparks.length, knots: model.knots.length, slices: model.slices.length },
       recs: recs, labels: M.ITEM_LABELS, kinds: model.kinds, types: model.types, judged: judged.size }));
   }
+  if (req.method === 'GET' && u.pathname === '/api/time') return send(res, 200, 'application/json', JSON.stringify({ buckets: timeBuckets(u.searchParams) }));
+  if (req.method === 'GET' && u.pathname === '/api/time/burrs') return send(res, 200, 'application/json', JSON.stringify(timeBurrs(u.searchParams)));
+  if (req.method === 'GET' && u.pathname === '/api/qty') return send(res, 200, 'application/json', JSON.stringify({ units: qtyUnits() }));
+  if (req.method === 'GET' && u.pathname === '/api/qty/burrs') return send(res, 200, 'application/json', JSON.stringify(qtyBurrs(u.searchParams)));
   if (req.method === 'GET' && u.pathname === '/api/rows') return send(res, 200, 'application/json', JSON.stringify(query(u.searchParams)));
   if (req.method === 'GET' && u.pathname === '/api/detail') return send(res, 200, 'application/json', JSON.stringify(model.detail(u.searchParams.get('view'), u.searchParams.get('id')) || []));
   if (req.method === 'POST' && u.pathname === '/api/judge') {

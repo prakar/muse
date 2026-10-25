@@ -66,3 +66,9 @@ test('a number followed by a full stop is the same number', () => {
   assert.strictEqual(D.sameFact(D.prep(b(1, 1, 'It was founded in 1953.')), D.prep(b(2, 2, 'It was founded in 1953'))) > 0, true);
   assert.strictEqual(D.sameFact(D.prep(b(1, 1, 'It cost 1,500 pounds in 1953.')), D.prep(b(2, 2, 'It cost 1,500 pounds in 1954.'))), 0);
 });
+
+test('claims that differ only in a symbol are different facts, not echoes', () => {
+  const D = require('../code/lib/dedupe');
+  const r = D.findDupes([{ id: 1, note_id: 1, claim: "The ']' key goes to the next page in a multi-page document in Lynx." }, { id: 2, note_id: 2, claim: "The '+' key goes to the next page in a multi-page document in Lynx." }]);
+  assert.strictEqual(r.length, 0);
+});
