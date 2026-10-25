@@ -50,10 +50,12 @@ var META = null, S = { view: 'findings', sort: {}, dir: {}, page: 0, f: {} };
 var COLS = {
   burrs: [['id','id','num'],['note','note'],['kind','kind'],['rank','rank','num'],['nB','bristles','num'],['bestDf','best join (notes)','num'],['band','join'],['claim','claim'],['recs','recommendations']],
   bristles: [['surface','surface'],['types','types'],['df','notes','num'],['nBurrs','burrs','num'],['rarity','rarity','num'],['band','band'],['recs','recommendations']],
-  sparks: [['surface','shared handle'],['df','notes','num'],['rarity','rarity','num'],['dist','domain dist','num'],['cos','context cos','num'],['score','rarity×dist','num'],['recs','recommendations']],
+  sparks: [['surface','shared handle'],['also','also joined by'],['df','notes','num'],['rarity','rarity','num'],['dist','domain dist','num'],['cos','context cos','num'],['score','rarity×dist','num'],['recs','recommendations']],
+  slices: [['surface','slice'],['why','kind of slice'],['types','types'],['df','notes','num']],
   knots: [['surface','surface'],['df','notes','num'],['cos','context cos','num'],['dist','domain dist','num'],['cls','class'],['recs','recommendations']]
 };
 var TABNAME = { findings: 'proposed changes' };
+var WHY = [['year-slice','a year or date'],['quantity-slice','a quantity (number + unit)'],['generic-word','a generic word'],['title-only','a note title found in text'],['spelled-number','a spelled-out number']];
 function itemLabels(v) { return (META && META.labels && META.labels[v]) || []; }
 function labelText(v, val) { var x = itemLabels(v).filter(function (l) { return l[0] === val; })[0]; return x ? x[1] : (val === 'apply' || val === 'leave' ? val : (val || '')); }
 function focal(v, r, rec) {
@@ -77,9 +79,9 @@ function chips(list, cls) { return (list || []).map(function (t) { return h('spa
 function init() {
   api('/api/meta').then(function (m) {
     META = m;
-    document.getElementById('sub').textContent = m.version + ' · ' + m.totals.burrs + ' burrs from ' + m.notes + ' notes · ' + m.totals.bristles + ' bristle keys · ' + m.totals.sparks + ' spark candidates · ' + m.totals.knots + ' knot candidates · ' + m.judged + ' judgements saved (muse-judgements.jsonl)';
+    document.getElementById('sub').textContent = m.version + ' · ' + m.totals.burrs + ' burrs from ' + m.notes + ' notes · ' + m.totals.bristles + ' bristle keys · ' + m.totals.sparks + ' spark candidates · ' + m.totals.slices + ' slices · ' + m.totals.knots + ' knot candidates · ' + m.judged + ' judgements saved (muse-judgements.jsonl)';
     var tabs = document.getElementById('tabs');
-    ['findings','burrs','bristles','sparks','knots'].forEach(function (v) {
+    ['findings','burrs','bristles','sparks','slices','knots'].forEach(function (v) {
       tabs.appendChild(h('button', { id: 'tab-' + v, onclick: function () { show(v); } }, [TABNAME[v] || v]));
     });
     show('findings');
@@ -114,8 +116,9 @@ function table() {
   q.addEventListener('keydown', function (e) { if (e.key === 'Enter') { f.q = q.value; reload(); } });
   var bar = h('div', { class: 'bar' }, [q]);
   var recOpts = [['_any','has any recommendation'],['_none','no recommendation']].concat(Object.keys(META.recs).map(function (k) { return [k, META.recs[k].label]; }));
-  bar.appendChild(sel(recOpts, f.rec, function (x) { f.rec = x; reload(); }, 'any recommendation'));
-  if (v === 'burrs' || v === 'bristles' || v === 'sparks' || v === 'knots') bar.appendChild(sel(META.types, f.type, function (x) { f.type = x; reload(); }, 'any bristle type'));
+  if (v !== 'slices') bar.appendChild(sel(recOpts, f.rec, function (x) { f.rec = x; reload(); }, 'any recommendation'));
+  if (v === 'slices') bar.appendChild(sel(WHY, f.why, function (x) { f.why = x; reload(); }, 'any kind of slice'));
+  if (v === 'burrs' || v === 'bristles' || v === 'sparks' || v === 'knots' || v === 'slices') bar.appendChild(sel(META.types, f.type, function (x) { f.type = x; reload(); }, 'any bristle type'));
   if (v === 'burrs') { bar.appendChild(sel(META.kinds, f.kind, function (x) { f.kind = x; reload(); }, 'any kind')); bar.appendChild(sel([['none','no join'],['any','joins (2-40 notes)'],['spark','joins (2-8 notes)']], f.band, function (x) { f.band = x; reload(); }, 'any join level')); }
   if (v === 'bristles') bar.appendChild(sel([['single','single note'],['spark','2-8 notes'],['mid','9-40 notes'],['hub','>40 notes']], f.band, function (x) { f.band = x; reload(); }, 'any band'));
   if (v === 'knots') bar.appendChild(sel(['collision','same-sense','undecided'], f.cls, function (x) { f.cls = x; reload(); }, 'any class'));
@@ -127,7 +130,7 @@ function table() {
 }
 function load() {
   var v = S.view, f = S.f, p = new URLSearchParams({ view: v, page: S.page, size: 50 });
-  ['q','rec','type','kind','band','cls','j'].forEach(function (k) { if (f[k]) p.set(k, f[k]); });
+  ['q','rec','type','kind','band','cls','why','j'].forEach(function (k) { if (f[k]) p.set(k, f[k]); });
   if (S.sort[v]) { p.set('sort', S.sort[v]); p.set('dir', S.dir[v] || 'desc'); }
   api('/api/rows?' + p.toString()).then(function (d) {
     var box = document.getElementById('tbl'); box.textContent = '';
@@ -150,6 +153,8 @@ function cellFor(v, r, c) {
   var k = c[0], cls = c[2] || '';
   if (k === 'recs') return h('td', {}, chips(r.recs, 'rec'));
   if (k === 'types') return h('td', {}, chips(r.types, 't'));
+  if (k === 'also') return h('td', {}, chips(r.also || [], 't'));
+  if (k === 'why') { var w = WHY.filter(function (x) { return x[0] === r.why; })[0]; return h('td', {}, [w ? w[1] : r.why]); }
   if (k === 'claim') return h('td', { class: 'claim' }, [r.claim]);
   if (k === 'note') return h('td', { class: 'mute' }, [r.note.length > 44 ? r.note.slice(0, 43) + '…' : r.note]);
   if (k === 'band' && v === 'burrs') return h('td', {}, [{ none: 'no join', any: 'joins', spark: 'joins (rare)' }[r.band]]);
@@ -177,7 +182,7 @@ function fillDetail(v, r, box, tr) {
     box.appendChild(h('div', { class: 'mute' }, ['note: ' + r.note + ' · burr ' + r.rank + ' of ' + r.noteBurrs + (r.perishable ? ' · perishable' : '')]));
     if (r.loop) box.appendChild(h('div', {}, ['loop: ' + r.loop]));
     box.appendChild(h('div', {}, [h('b', {}, ['bristles: '])].concat(r.bristles.length ? r.bristles.map(function (b) { return h('span', { class: 'chip t', title: 'shared by ' + b.df + ' note(s); source ' + b.src }, [b.t + ': ' + b.s + ' (' + b.df + ')']); }) : ['none'])));
-  } else if (v === 'bristles') {
+  } else if (v === 'bristles' || v === 'slices') {
     box.appendChild(h('div', { class: 'mute' }, ['loading burrs…']));
     api('/api/detail?view=bristles&id=' + encodeURIComponent(r.id)).then(function (bs) { box.firstChild.remove(); box.insertBefore(h('div', {}, bs.map(burrBlock)), box.firstChild); });
   } else {
@@ -199,7 +204,7 @@ function fillDetail(v, r, box, tr) {
     box.appendChild(rr);
   });
   var jr = h('div', { class: 'jr' });
-  jr.appendChild(h('span', { class: 'mute' }, ['This ' + ({ burrs: 'fact', bristles: 'hook', sparks: 'pairing', knots: 'word' }[v] || 'row') + ':']));
+  jr.appendChild(h('span', { class: 'mute' }, ['This ' + ({ burrs: 'fact', bristles: 'hook', sparks: 'pairing', slices: 'slice', knots: 'word' }[v] || 'row') + ':']));
   itemLabels(v).forEach(function (l) {
     jr.appendChild(h('button', { class: 'b' + (r.j === l[0] ? ' on' : ''), title: l[2] || '', onclick: function () {
       fetch('/api/judge', { method: 'POST', body: JSON.stringify({ view: v, id: r.id, label: l[0], note: note.value }) }).then(function () {

@@ -61,6 +61,7 @@ const ITEM_LABELS = {
   burrs: [['good', 'Interesting fact', 'Faithful to its evidence and a fact you would gladly hold as a card.'], ['weak', 'Dull fact', 'True, but too trivial or vague to build on.'], ['junk', 'Wrong or not a fact', 'Not supported by the evidence, or not a fact at all.']],
   bristles: [['good handle', 'Use as a link', 'Specific and meaning the same wherever it appears.'], ['bad handle', 'Too generic to link', 'Correct, but too common or too vague to connect notes.'], ['noise', 'Not a real hook (a mistake)', 'An extraction artefact: a fragment, URL or stray number.']],
   sparks: [['spark', 'Worth a question', 'This pairing makes you want to write a question.'], ['held (keep juxtaposition)', 'Keep this pairing for later', 'Not a question yet, but keep the two together.'], ['dull', 'Dull', 'Valid, but uninteresting.'], ['trivial', 'Too obvious', 'Obvious or a coincidence.']],
+  slices: [['useful slice', 'Useful to browse', 'A year, quantity or word worth pulling every note for.'], ['noise', 'Not worth browsing', 'Too generic or accidental to be a slice.']],
   knots: [['homonym', 'Unrelated meanings', 'e.g. bank (river edge) and bank (money): nothing connects them.'], ['polyseme', 'Related meanings', 'e.g. mouth (body) and mouth (river): one grew out of the other.'], ['same sense', 'Same meaning', 'One meaning everywhere, so not a real knot.'], ['unsure', "Can't tell", '']]
 };
 
@@ -185,7 +186,7 @@ function build(db, version, opts) {
   index.forEach(function (e, key) {
     const df = e.notes.size;
     const why = df >= 2 && df <= 8 ? sparkExclusion(key, e) : '';
-    if (why) { excluded[why] = (excluded[why] || 0) + 1; sliceRows.push({ id: key, surface: e.surface, types: Array.from(e.types), df: df, why: why, _s: (key + ' ' + e.surface).toLowerCase() }); }
+    if (why) excluded[why] = (excluded[why] || 0) + 1;
     if (df >= 2 && df <= 8 && !why) {
       const bs = pickPerNote(e), st = pairStats(bs, key), clone = st.cos >= 0.5, recs = keyRecs.get(key).slice();
       if (clone) recs.push('clone-of');
@@ -200,6 +201,14 @@ function build(db, version, opts) {
       knotRows.push({ id: key, surface: e.surface, types: Array.from(e.types), df: df, cos: st.cos, dist: st.dist, cls: cls, recs: recs, burrs: bs.slice(0, 6).map(brief), _s: (key + ' ' + e.surface).toLowerCase() });
     }
   });
+
+  // Slices: every key that is a way to browse, not a lead, at any frequency (a year, a quantity, a generic word). Pick one, see its notes.
+  index.forEach(function (e, key) {
+    if (e.notes.size < 2) return;
+    const why = sparkExclusion(key, e);
+    if (why) sliceRows.push({ id: key, surface: e.surface, types: Array.from(e.types), df: e.notes.size, why: why, recs: [], _s: (key + ' ' + e.surface).toLowerCase() });
+  });
+  sliceRows.sort(function (a, b) { return b.df - a.df; });
 
   // Sparks that join exactly the same notes are one lead, not several (Beckham, Posh and Baby). Keep the most specific, list the rest.
   const byNotes = new Map();

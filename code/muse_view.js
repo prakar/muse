@@ -27,19 +27,20 @@ console.log('Model ready in ' + (Date.now() - t0) + ' ms: ' + model.burrs.length
 const judged = new Map();   // "view|id" -> {label, note}
 try { fs.readFileSync(JFILE, 'utf8').split('\n').filter(Boolean).forEach(function (l) { try { const j = JSON.parse(l); judged.set(j.view + '|' + j.id + (j.rule ? '|' + j.rule : ''), { label: j.label, note: j.note || '' }); } catch (e) {} }); } catch (e) {}
 
-const VIEWS = { burrs: model.burrs, bristles: model.bristles, sparks: model.sparks, knots: model.knots };
+const VIEWS = { burrs: model.burrs, bristles: model.bristles, sparks: model.sparks, knots: model.knots, slices: model.slices };
 const BAND_ORDER = { none: 0, any: 1, spark: 2, single: 0, mid: 1, hub: 3 };
 const SORTS = {
   burrs: { id: 'id', note: 'note', kind: 'kind', rank: 'rank', nB: 'nB', bestDf: 'bestDf', band: function (r) { return BAND_ORDER[r.band]; }, claim: 'claim', recs: function (r) { return r.recs.length; } },
   bristles: { surface: 'surface', df: 'df', rarity: 'rarity', nBurrs: 'nBurrs', band: function (r) { return BAND_ORDER[r.band]; }, types: function (r) { return r.types.join(); }, recs: function (r) { return r.recs.length; } },
   sparks: { surface: 'surface', df: 'df', rarity: 'rarity', dist: function (r) { return r.dist == null ? -1 : r.dist; }, cos: 'cos', score: 'score', recs: function (r) { return r.recs.length; } },
+  slices: { surface: 'surface', df: 'df', why: 'why', types: function (r) { return r.types.join(); } },
   knots: { surface: 'surface', df: 'df', cos: 'cos', dist: function (r) { return r.dist == null ? -1 : r.dist; }, cls: 'cls', recs: function (r) { return r.recs.length; } }
 };
 
 function query(q) {
   const view = q.get('view') || 'burrs';
   let rows = VIEWS[view]; if (!rows) return { error: 'bad view' };
-  const s = (q.get('q') || '').toLowerCase().trim(), rec = q.get('rec') || '', type = q.get('type') || '', band = q.get('band') || '', kind = q.get('kind') || '', cls = q.get('cls') || '', jf = q.get('j') || '';
+  const s = (q.get('q') || '').toLowerCase().trim(), rec = q.get('rec') || '', type = q.get('type') || '', band = q.get('band') || '', kind = q.get('kind') || '', cls = q.get('cls') || '', why = q.get('why') || '', jf = q.get('j') || '';
   rows = rows.filter(function (r) {
     if (s && r._s.indexOf(s) < 0) return false;
     if (rec === '_any' && !r.recs.length) return false;
@@ -49,6 +50,7 @@ function query(q) {
     if (band && r.band !== band) return false;
     if (kind && r.kind !== kind) return false;
     if (cls && r.cls !== cls) return false;
+    if (why && r.why !== why) return false;
     if (jf) { const j = judged.get(view + '|' + r.id); if (jf === '_unjudged' ? !!j : !j || j.label !== jf) return false; }
     return true;
   });
@@ -70,7 +72,7 @@ http.createServer(function (req, res) {
   if (req.method === 'GET' && u.pathname === '/') return send(res, 200, 'text/html; charset=utf-8', fs.readFileSync(path.join(__dirname, 'muse_view.html')));
   if (req.method === 'GET' && u.pathname === '/api/meta') {
     const recs = {}; Object.keys(M.REC).forEach(function (k) { recs[k] = Object.assign({}, M.REC[k], { counts: model.recCounts[k] || {} }); });
-    return send(res, 200, 'application/json', JSON.stringify({ version: VERSION, notes: model.notes, totals: { burrs: model.burrs.length, bristles: model.bristles.length, sparks: model.sparks.length, knots: model.knots.length },
+    return send(res, 200, 'application/json', JSON.stringify({ version: VERSION, notes: model.notes, totals: { burrs: model.burrs.length, bristles: model.bristles.length, sparks: model.sparks.length, knots: model.knots.length, slices: model.slices.length },
       recs: recs, labels: M.ITEM_LABELS, kinds: model.kinds, types: model.types, judged: judged.size }));
   }
   if (req.method === 'GET' && u.pathname === '/api/rows') return send(res, 200, 'application/json', JSON.stringify(query(u.searchParams)));
