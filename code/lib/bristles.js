@@ -42,7 +42,9 @@ const MONTHS = new Set('january february march april may june july august septem
 const NOT_UNIT = new Set(['and', 'or', 'the', 'a', 'an', 'in', 'on', 'at', 'by', 'to', 'of', 'for', 'from', 'was', 'were', 'is', 'are', 'as', 'with', 'that', 'which', 'who', 'when', 'where', 'but', 'also', 'after', 'before', 'during', 'since', 'until', 'it', 'he', 'she', 'they', 'his', 'her', 'its', 'their', 'st', 'nd', 'rd', 'th', 'century', 'centuries', 'ce', 'ad', 'bc', 'bce']);
 const SCALE = new Set(['thousand', 'million', 'billion', 'trillion', 'lakh', 'lakhs', 'crore', 'crores', 'k', 'm', 'bn']);
 const DURATION_UNITS = new Set(['year', 'years', 'yr', 'yrs', 'month', 'months', 'week', 'weeks', 'day', 'days', 'hour', 'hours', 'minute', 'minutes', 'decade', 'decades']);
-const KNOWN_UNITS = new Set('km kms m cm mm mi mile miles metre metres meter meters kg g mg tonne tonnes tons lb lbs oz litre litres l ml mph kmh kph hz khz mhz ghz mb gb tb kb watt watts kw mw volt volts runs wickets goals points votes people soldiers men women deaths students acres hectares sq'.split(' '));
+const U = require('./units');
+// Counted nouns that a year-like number may precede as a quantity ("1743 runs"), plus every spelling in the unit table.
+const KNOWN_UNITS = new Set(['runs', 'wickets', 'goals', 'points', 'votes', 'soldiers', 'deaths', 'students', 'sq'].concat(Array.from(U.KNOWN_FORMS)));
 const CURRENCY = { '$': 'usd', '€': 'eur', '£': 'gbp', '₹': 'inr', '¥': 'jpy' };
 const CUR_WORD = { rs: 'inr', inr: 'inr', rupee: 'inr', rupees: 'inr', usd: 'usd', dollar: 'usd', dollars: 'usd', eur: 'eur', euro: 'eur', euros: 'eur', gbp: 'gbp', pound: 'gbp', pounds: 'gbp' };
 const ERA_RE = /^\s*(b\.?\s?c\.?e?\.?|bce|a\.?\s?d\.?|c\.?e\.?)(?![a-z])/i;
@@ -70,6 +72,8 @@ function qualifyNumber(value, claim, pos, hookType) {
   const era = ERA_RE.exec(after);
   if (era) return { key: num + (/^b/i.test(era[1]) ? ' bc' : ' ad'), surface: num + ' ' + (/^b/i.test(era[1]) ? 'BC' : 'AD'), kind: 'year' };
   if (cur) return { key: num + ' ' + cur, surface: (m[1] || '') + num, kind: 'qty' };
+  const ex = /^\s*[-–]?\s*([A-Za-z]{1,3})([23])(?![\w])/.exec(after);
+  if (ex && U.withExponent(ex[1], ex[2])) { const cu = U.withExponent(ex[1], ex[2]); return { key: num + ' ' + cu, surface: num + ' ' + ex[1] + ex[2], kind: 'qty' }; }
   const wm = /^\s*[-–]?\s*([A-Za-z%°][A-Za-z%°.\/²³]*)(?:\s+([A-Za-z]+))?/.exec(after);
   const yearLike = !noYear && isYearKey(num);
   if (wm) {
@@ -83,7 +87,7 @@ function qualifyNumber(value, claim, pos, hookType) {
     // A year-like number is a date unless the next word is a known unit, or a plural noun with no date word before it.
     if (yearLike && w === 's') return { key: num, surface: num + 's', kind: 'year', decade: true };   // 1960s: a decade, dated at its start
     const asQty = ok && (!yearLike || KNOWN_UNITS.has(w) || (/s$/.test(w) && !datePrep));
-    if (asQty) return { key: num + ' ' + w, surface: num + ' ' + w, kind: 'qty', duration: DURATION_UNITS.has(w) };
+    if (asQty) return { key: num + ' ' + normUnit(w), surface: num + ' ' + w, kind: 'qty', duration: DURATION_UNITS.has(w) };
   }
   if (/^[%°]/.test(after.trim())) return { key: num + ' ' + after.trim()[0], surface: num + after.trim()[0], kind: 'qty' };
   if (yearLike) return { key: num, surface: num, kind: 'year' };   // a plain year: read as a calendar date
@@ -105,8 +109,7 @@ function datesIn(text) {
 
 
 // Group unit spellings together for browsing: kms/kilometres -> km, percent -> %, feet -> ft, plurals -> singular.
-const UNIT_MAP = { percent: '%', 'per cent': '%', kms: 'km', kilometre: 'km', kilometres: 'km', kilometer: 'km', kilometers: 'km', metre: 'm', metres: 'm', meter: 'm', meters: 'm', feet: 'ft', foot: 'ft', mile: 'mile', miles: 'mile', kilogram: 'kg', kilograms: 'kg', kgs: 'kg', tonnes: 'tonne', tons: 'tonne', ton: 'tonne', dollar: 'usd', dollars: 'usd', people: 'person', persons: 'person' };
-function normUnit(u) { const w = String(u || '').toLowerCase(); if (UNIT_MAP[w]) return UNIT_MAP[w]; return w.length > 3 && /[^s]s$/.test(w) ? w.slice(0, -1) : w; }
+const normUnit = U.normUnit;
 
 // A qualified key back into numbers. yearOfKey('1170 bc') -> -1170; quantityOfKey('1120 km') -> { v: 1120, u: 'km' }.
 function yearOfKey(key) { const m = /^(\d{1,4})(?: (bc|ad))?$/.exec(key); if (!m || (!m[2] && !isYearKey(m[1]))) return null; return (m[2] === 'bc' ? -1 : 1) * parseInt(m[1], 10); }

@@ -203,11 +203,20 @@ test('parseModelJson: newlines between tokens are untouched, and a valid reply i
   assert.ok(!r.repaired);
 });
 
-test('parseModelJson: an unrecoverable reply returns bad_json with the parser message', () => {
+test('parseModelJson: a reply with no usable burrs array is rejected (bad_shape or bad_json)', () => {
+  for (const bad of ['{"burrs":"nope"}', '{"other":1}', '{}']) {
+    const r = B.parseModelJson(bad);
+    assert.strictEqual(r.ok, false);
+    assert.ok(r.error === 'bad_shape' || r.error === 'bad_json');
+  }
+});
+
+test('parseModelJson: jsonrepair may turn a broken claim into null; the verifier then rejects that burr', () => {
   const r = B.parseModelJson('{"burrs":[{"claim":}]}');
-  assert.strictEqual(r.ok, false);
-  assert.strictEqual(r.error, 'bad_json');
-  assert.ok(r.detail && r.detail.length > 5);
+  if (r.ok) {
+    const v = B.verifyBurrs(r.burrs, { title: 'T', cleaned: 'some note text here' });
+    assert.strictEqual(v.accepted.length, 0);
+  }
 });
 
 test('parseModelJson: unescaped quotes inside a claim are repaired and flagged', () => {

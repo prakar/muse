@@ -1,4 +1,5 @@
 'use strict';
+const { jsonrepair } = require('jsonrepair');
 /**
  * QUARRY lib/burrs.js — the burr contract: schema, prompt, parser and VERIFIER.
  *
@@ -204,22 +205,6 @@ function cacheKey(provider, input) {
 // Double a backslash that is not a valid JSON escape.
 function fixBackslashes(s) { return s.replace(/\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})/g, '\\\\'); }
 
-// Escape raw control characters (newline, tab, ...) that sit INSIDE a string; whitespace between tokens is left alone.
-function escapeControlChars(s) {
-  let out = '', inStr = false, esc = false;
-  for (let i = 0; i < s.length; i++) {
-    const c = s[i], code = c.charCodeAt(0);
-    if (inStr) {
-      if (esc) { esc = false; out += c; continue; }
-      if (c === '\\') { esc = true; out += c; continue; }
-      if (c === '"') { inStr = false; out += c; continue; }
-      if (code < 0x20) { out += code === 10 ? '\\n' : code === 13 ? '\\r' : code === 9 ? '\\t' : '\\u' + ('0000' + code.toString(16)).slice(-4); continue; }
-      out += c;
-    } else { if (c === '"') inStr = true; out += c; }
-  }
-  return out;
-}
-
 // Gemini sometimes garbles a hook object's keys: {"type":"place":"Hassan",...}, {"type":"":"number","value":..},
 // {"type":"type":"former-role",..}. The type (or the missing "value" key) is recoverable, so restore it. An object
 // whose type is genuinely lost ({"type":"value":"X",...}) is dropped: one hook lost, the burr kept.
@@ -230,25 +215,6 @@ function fixHookKeys(s) {
     .replace(/"type":"":"([\w-]+)","value"/g, '"type":"$1","value"')
     .replace(/"type":"([\w-]+)":"/g, '"type":"$1","value":"');
 }
-// An unescaped double quote inside a string ("the article "Petanque" was..."). A quote closes a string only if what
-// follows is , : } ] or the end; otherwise escape it.
-function escapeInnerQuotes(s) {
-  let out = '', inStr = false;
-  for (let i = 0; i < s.length; i++) {
-    const c = s[i];
-    if (inStr) {
-      if (c === '\\') { out += c + (s[i + 1] || ''); i++; continue; }
-      if (c === '"') {
-        const rest = s.slice(i + 1).match(/^\s*(.)/);
-        if (!rest || ',:}]'.indexOf(rest[1]) >= 0) { inStr = false; out += c; } else out += '\\"';
-        continue;
-      }
-      out += c;
-    } else { if (c === '"') inStr = true; out += c; }
-  }
-  return out;
-}
-
 function parseModelJson(text) {
   let t = String(text || '').trim();
   t = t.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
@@ -259,14 +225,18 @@ function parseModelJson(text) {
   const body = t.slice(a, b + 1);
   try { obj = JSON.parse(body); }
   catch (e) {
-    // Models sometimes write a lone backslash inside a string (an etymon like \*bhares-), or a raw newline/tab inside a
-    // string. Both are invalid JSON. Repair each (alone, then together) and try again. Content is still verified against
-    // the note afterwards, so a repaired parse cannot put anything into the store that is not in the note.
-    const all = function (s) { return escapeInnerQuotes(escapeControlChars(fixBackslashes(fixHookKeys(s)))); };
-    const fixes = [fixBackslashes, escapeControlChars, function (s) { return escapeControlChars(fixBackslashes(s)); }, fixHookKeys, escapeInnerQuotes, all];
+    // Syntax damage (raw newline/tab in a string, unescaped inner quotes, truncation, trailing commas, single quotes, bad
+    // tokens) is repaired by the jsonrepair library. Two repairs stay ours because they are about meaning, not syntax:
+    // fixHookKeys (garbled hook keys) and fixBackslashes (keeps a lone backslash such as \\*bhares- instead of dropping it).
+    // Content is still verified against the note afterwards, so a repaired parse cannot put anything into the store
+    // that is not in the note.
     let lastErr = e;
-    for (let i = 0; i < fixes.length && !obj; i++) {
-      try { obj = JSON.parse(fixes[i](body)); repaired = true; } catch (e2) { lastErr = e2; }
+    const attempts = [
+      function (x) { return jsonrepair(fixBackslashes(fixHookKeys(x))); },
+      function (x) { return jsonrepair(x); }
+    ];
+    for (let i = 0; i < attempts.length && !obj; i++) {
+      try { obj = JSON.parse(attempts[i](body)); repaired = true; } catch (e2) { lastErr = e2; }
     }
     if (!obj) {
       const m = /position (\d+)/.exec(String(e.message || ''));

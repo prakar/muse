@@ -27,3 +27,10 @@ vault.db-journal.*
 
 # Private-content scan output (masked evidence, still sensitive): never commit
 private-candidates*
+
+# Library bake-off: local installs and results
+bakeoff/.venv/
+bakeoff/node_modules/
+bakeoff/results-*.txt
+__pycache__/
+bakeoff/rust/target/

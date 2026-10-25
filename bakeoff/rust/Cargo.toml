@@ -1,0 +1,11 @@
+[package]
+name = "bakeoff-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+duckling = "0.4"
+chrono = "0.4"
+llm_json = "1"
+pluralizer = "0.6"
+serde_json = "1"

@@ -1,0 +1,38 @@
+{
+ "plural": [["inches","inch"],["countries","country"],["series","series"],["matches","match"],["people","person"],["feet","foot"],["miles","mile"],["kilometres","kilometre"],["children","child"],["dollars","dollar"],["centuries","century"],["years","year"],["copies","copy"],["languages","language"],["men","man"],["women","woman"],["wickets","wicket"],["lakhs","lakh"],["crores","crore"],["yards","yard"],["seats","seat"],["bus","bus"],["news","news"],["species","species"],["physics","physics"],["gas","gas"],["lens","lens"],["kms","km"]],
+ "text": [
+  "He scored 1,234 runs in 1998.",
+  "Windows 95 shipped in 1995.",
+  "The U2 spy plane flew at 70,000 feet.",
+  "The tower is 1250 feet tall and opened in 1931.",
+  "The Laki eruption produced about 0.4 km3 of tephra.",
+  "The satellites are in orbit at about 20,000km altitude.",
+  "Texas could have between 2,000 and 5,000 tigers.",
+  "7-Eleven christened store #2,000 in 1968.",
+  "Priced at $1,999 in 2019, or about 12.25 dollars a week.",
+  "5 million people lived there by 1900.",
+  "A 1500-metre race in 1972; the track is 156.8 cm wide.",
+  "The product was developed in the 1980s.",
+  "Emmy Noether 1882-1935 was a mathematician.",
+  "England scored 552 runs in the 1947 series against South Africa.",
+  "The imperial Chinese exam occurred in the 7th century.",
+  "The Roman Empire fell in AD 476.",
+  "Vesuvius erupted in 79 AD.",
+  "The eruption of Thera was c. 1600 BC.",
+  "He lived 1908-2000.",
+  "Apollo 11 landed in July 1969 at 20:17 UTC.",
+  "The Treaty of Westphalia (1648) ended the war.",
+  "George Orwell wrote 1984 in 1948.",
+  "Born 12 March 1962 in Pune."
+ ],
+ "json": [
+  ["{\"burrs\":[{\"claim\":\"The article \"Petanque, a hit\" ran in Puducherry.\",\"hooks\":[]}],\"reason\":\"\"}", "claim contains quotes"],
+  ["{\"burrs\":[{\"claim\":\"c\",\"hooks\":[{\"type\":\"place\":\"Hassan\",\"cat\":\"place\"}]}]}", "garbled hook key (type lost or value restored)"],
+  ["{\"burrs\":[{\"claim\":\"line one\nline two\",\"hooks\":[]}]}", "raw newline in string"],
+  ["{\"burrs\":[{\"claim\":\"etymon \\*bhares-\",\"hooks\":[]}]}", "stray backslash"],
+  ["{\"burrs\":[{\"claim\":\"cut off mid-string", "truncated"],
+  ["{\"burrs\":[{\"claim\":\"ok\",\"hooks\":[],}],}", "trailing commas"],
+  ["{'burrs':[{'claim':'single quoted','hooks':[]}]}", "single quotes"],
+  ["{\"burrs\":[{\"src\":[6,T],\"claim\":\"bad token\"}]}", "bad token in array (note 1864)"]
+ ]
+}
