@@ -97,3 +97,22 @@ test('units: year-like numbers with a table unit are quantities; glued exponents
   assert.strictEqual(k('5', 'there were 5 inches of rain'), k('5', 'there was 5 inch of rain'));
   assert.strictEqual(k('1984', 'wrote 1984 in 1948'), '1984');
 });
+
+test('units: words that follow a number but are not units are not read as units', () => {
+  const L = require('../code/lib/bristles');
+  const k = (v, c) => L.qualifyNumber(v, c).key;
+  assert.strictEqual(k('11', 'Apollo 11 landed on the moon'), '');
+  assert.strictEqual(k('5', 'there were 5 different kinds'), '');
+  assert.strictEqual(k('3', 'the 3 most common words'), '');
+  assert.strictEqual(k('41', 'a 41 x 10 grid'), '');
+  assert.strictEqual(k('95', 'Windows 95 shipped'), '');
+  assert.strictEqual(k('1743', 'scored 1743 runs'), '1743 run');
+  assert.strictEqual(k('2', 'only 2 tigers remained'), '2 tiger');
+  assert.strictEqual(k('250', 'a tower 250 m long'), '250 m');
+  assert.strictEqual(k('5', 'about 5 m people lived there'), '5 m person');
+  assert.strictEqual(k('7', 'it cost 7 crore in 1990'), '7 crore');
+  assert.strictEqual(k('25', 'an area of 25 square miles'), '25 square mile');
+  assert.strictEqual(k('3', 'it lasted 3 second'), '3 second');
+  assert.strictEqual(L.normUnit('dialysis'), 'dialysis');
+  assert.strictEqual(L.normUnit('census'), 'census');
+});

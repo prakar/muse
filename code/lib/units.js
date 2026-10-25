@@ -53,7 +53,7 @@ Object.keys(TABLE).forEach(function (canon) { TABLE[canon].split(' ').forEach(fu
 FORM.delete('pound-weight');
 
 function singular(w) {
-  if (!w || NOT_PLURAL.has(w) || /ics$/.test(w)) return w;
+  if (!w || NOT_PLURAL.has(w) || /(?:ics|is|us|ss)$/.test(w)) return w;   // dialysis, census, genus, class: never plurals
   const s = pluralize.singular(w);
   return s || w;
 }
@@ -76,4 +76,35 @@ function withExponent(word, digit) {
   return FORM.get((word + digit).toLowerCase()) || null;
 }
 
-module.exports = { normUnit, KNOWN_FORMS, withExponent, TABLE, singular };
+
+// ---- words that follow a number but are not units ("11 landed", "3 most", "5 different", "41 x") ----
+// Closed-class English words are a finite list, so a list is sound for them. Open-class words (nouns, adjectives, verbs)
+// cannot be listed: those are caught by shape rules (single letters, -ly, -ed, -ing, -ous, -ive, -able, -ible, -ful, -less)
+// plus the adjectives and verbs actually seen after numbers in the nug-v5 data. This is a stop-gap: the v6 prompt will
+// have the model state the unit, and a part-of-speech tagger (compromise) is the library route if this list keeps growing.
+const JUNK = new Set(('x per s most other different like over out plus mean total primary enormous high odd separate possible new nuclear ' +
+  'elementary has strong major free black ancient minor similar actual complete single available known above this that these those ' +
+  'more less many few several some any each every both all such same only just also still even ever very much around about nearly almost ' +
+  'roughly approximately up down off into onto upon under between among through across along against within without until because while ' +
+  'although though since if then than so no not own other another one two three four five six seven eight nine ten first third last ' +
+  'next early late old young big small large little long short good bad best better worse worst full half whole entire various certain ' +
+  'recent current former latter main chief key basic final real true false sure able likely unlikely national political critical hydraulic ' +
+  'monetary golden candid pointed wild rubber odd occur refer led win take play beat move represent ' +
+  'imperial specific medieval generic ethnic solar traditional significant military genetic distinct infinite female male dimensional floppy meant over stop visual additional unrelated consecutive complete developing selected discarded surviving losing').split(' '));
+const M_NOUNS = new Set('year years people person persons dollar dollars usd rupee rupees euro euros pound pounds users viewers'.split(' '));
+const DIM_WORDS = new Set('long high wide tall deep thick diameter width height depth length away above below from x apart across'.split(' '));
+const MODS = new Set(['square', 'cubic', 'nautical', 'sq']);
+
+function junkUnit(word) {
+  const w = String(word == null ? '' : word).toLowerCase();
+  if (!w) return true;
+  if (FORM.has(w)) return false;
+  if (['k', 'bn'].indexOf(w) >= 0) return false;
+  if (w.length === 1) return true;                                     // a stray letter: x, c, d, b, o, h
+  if (JUNK.has(w)) return true;
+  if (/ly$/.test(w) || /ed$/.test(w) || /(?:ous|ive|able|ible|ful|less)$/.test(w)) return true;
+  if (/ing$/.test(w) && w.length > 4) return true;                     // singular -ing: "glistening", "surviving"; a plural (-ings) passes
+  return false;
+}
+
+module.exports = { junkUnit, M_NOUNS, DIM_WORDS, MODS, normUnit, KNOWN_FORMS, withExponent, TABLE, singular };

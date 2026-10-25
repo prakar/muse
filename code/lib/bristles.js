@@ -82,9 +82,13 @@ function qualifyNumber(value, claim, pos, hookType) {
     let w = unitWord(raw);
     if (CUR_WORD[w]) return { key: num + ' ' + CUR_WORD[w], surface: num + ' ' + raw, kind: 'qty' };
     const lower = /^[a-z%°]/.test(raw);                       // "1085 Toledo" / "12 Angry Men": a capitalised word is a name, not a unit
-    if (SCALE.has(w) && wm[2]) w = w + ' ' + unitWord(wm[2]);
+    const w2 = wm[2] ? unitWord(wm[2]) : '';
+    if (w === 'm' && !(w2 && U.M_NOUNS.has(w2))) { /* "250 m long", "10 m gold": metres; only "5 m people", "3 m years" are millions */ }
+    else if (SCALE.has(w) && w2 && !NOT_UNIT.has(w2) && !U.junkUnit(w2)) w = w + ' ' + w2;     // "5 million people"; not "5 crore in"
+    else if (U.MODS.has(w) && w2) w = w + ' ' + w2;                                              // "25 square miles", "9 cubic metres"
     const datePrep = /\b(in|by|since|until|till|from|during|around|circa|c\.|year|of|and|to)\s*(?:the\s+|a\s+|an\s+)?$/i.test(before);
-    const ok = w && lower && !NOT_UNIT.has(w) && !MONTHS.has(w);
+    const lastW = w.split(' ').pop();
+    const ok = w && lower && !NOT_UNIT.has(w) && !MONTHS.has(w) && !U.junkUnit(lastW);
     // A year-like number is a date unless the next word is a known unit, or a plural noun with no date word before it.
     if (yearLike && w === 's') return { key: num, surface: num + 's', kind: 'year', decade: true };   // 1960s: a decade, dated at its start
     const asQty = ok && (!yearLike || KNOWN_UNITS.has(w) || (/s$/.test(w) && !datePrep));
