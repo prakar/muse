@@ -110,7 +110,7 @@ function build(db, version, opts) {
   const titleDict = new Map();
   noteTitle.forEach(function (t, id) { const k = L.titleKey(t); if (k && !titleDict.has(k)) titleDict.set(k, id); });
 
-  const perNote = new Map(), rank = new Map(), toks = new Map(), bristles = new Map(), timeline = [], quantities = [];
+  const perNote = new Map(), rank = new Map(), toks = new Map(), bristles = new Map(), timeline = [], quantities = [], coarse = [];
   burrsRaw.forEach(function (b) { const c = (perNote.get(b.note_id) || 0) + 1; perNote.set(b.note_id, c); rank.set(b.id, c); toks.set(b.id, L.tokens(b.claim)); });
   burrsRaw.forEach(function (b) {
     const own = L.titleKey(b.title), seen = new Set(), out = [], seenQ = new Set();
@@ -127,6 +127,7 @@ function build(db, version, opts) {
       }
       add(h.type, h.value, L.foldKey(h.value), 'hook', h.cat);
     });
+    L.findDates(b.claim).forEach(function (f) { if (f.grain === 'century') coarse.push({ from: f.from, to: f.to, g: 'century', stated: f.eraStated, b: b.id }); });   // centuries: coarse dates, kept apart from the year timeline
     L.datesIn(b.claim).forEach(function (q) { note(q.key); add('time', q.surface, q.key, 'year'); });
     const t = toks.get(b.id); let nT = 0;
     for (let n = 6; n >= 1 && nT < 4; n--) for (let i = 0; i + n <= t.length && nT < 4; i++) {
@@ -232,7 +233,7 @@ function build(db, version, opts) {
   const counts = {};
   [['burrs', burrRows], ['bristles', bristleRows], ['sparks', sparkRows], ['knots', knotRows]].forEach(function (p) {
     p[1].forEach(function (r) { r.recs.forEach(function (t) { (counts[t] = counts[t] || {})[p[0]] = ((counts[t] || {})[p[0]] || 0) + 1; }); }); });
-  return { version: version, notes: NN, burrs: burrRows, bristles: bristleRows, sparks: sparkRows, knots: knotRows, slices: sliceRows, timeline: timeline, quantities: quantities, excluded: excluded, detail: detail, recCounts: counts,
+  return { version: version, notes: NN, burrs: burrRows, bristles: bristleRows, sparks: sparkRows, knots: knotRows, slices: sliceRows, timeline: timeline, coarse: coarse, quantities: quantities, excluded: excluded, detail: detail, recCounts: counts,
     kinds: Array.from(new Set(burrRows.map(function (r) { return r.kind; }))).sort(),
     types: Array.from(new Set([].concat.apply([], bristleRows.map(function (r) { return r.types; })))).sort() };
 }

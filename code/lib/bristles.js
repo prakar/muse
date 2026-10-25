@@ -27,7 +27,7 @@ function variantKey(s) {
 
 // Four-digit years 1000-2039 in running text (not parts of 12,000 or 3.1415; both ends of 1914-1918 count).
 function yearsIn(text) {
-  const out = [], re = /(?<![\d,.\/])(1[0-9]{3}|20[0-3][0-9])(?![\d,]|\.\d)/g;
+  const out = [], re = /(?<![\d,.\/])(1[0-9]{3}|20[0-3][0-9])(?!\d|,\d|\.\d)/g;
   let m;
   while ((m = re.exec(String(text))) !== null) if (out.indexOf(m[1]) < 0) out.push(m[1]);
   return out;
@@ -43,6 +43,7 @@ const NOT_UNIT = new Set(['and', 'or', 'the', 'a', 'an', 'in', 'on', 'at', 'by',
 const SCALE = new Set(['thousand', 'million', 'billion', 'trillion', 'lakh', 'lakhs', 'crore', 'crores', 'k', 'm', 'bn']);
 const DURATION_UNITS = new Set(['year', 'years', 'yr', 'yrs', 'month', 'months', 'week', 'weeks', 'day', 'days', 'hour', 'hours', 'minute', 'minutes', 'decade', 'decades']);
 const U = require('./units');
+const D = require('./dates');
 // Counted nouns that a year-like number may precede as a quantity ("1743 runs"), plus every spelling in the unit table.
 const KNOWN_UNITS = new Set(['runs', 'wickets', 'goals', 'points', 'votes', 'soldiers', 'deaths', 'students', 'sq'].concat(Array.from(U.KNOWN_FORMS)));
 const CURRENCY = { '$': 'usd', '€': 'eur', '£': 'gbp', '₹': 'inr', '¥': 'jpy' };
@@ -82,7 +83,7 @@ function qualifyNumber(value, claim, pos, hookType) {
     if (CUR_WORD[w]) return { key: num + ' ' + CUR_WORD[w], surface: num + ' ' + raw, kind: 'qty' };
     const lower = /^[a-z%°]/.test(raw);                       // "1085 Toledo" / "12 Angry Men": a capitalised word is a name, not a unit
     if (SCALE.has(w) && wm[2]) w = w + ' ' + unitWord(wm[2]);
-    const datePrep = /\b(in|by|since|until|till|from|during|around|circa|c\.|year|of|and|to)\s*$/i.test(before);
+    const datePrep = /\b(in|by|since|until|till|from|during|around|circa|c\.|year|of|and|to)\s*(?:the\s+|a\s+|an\s+)?$/i.test(before);
     const ok = w && lower && !NOT_UNIT.has(w) && !MONTHS.has(w);
     // A year-like number is a date unless the next word is a known unit, or a plural noun with no date word before it.
     if (yearLike && w === 's') return { key: num, surface: num + 's', kind: 'year', decade: true };   // 1960s: a decade, dated at its start
@@ -95,16 +96,30 @@ function qualifyNumber(value, claim, pos, hookType) {
 }
 
 const MON = 'january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec';
-const DATE_CUE = new RegExp('(?:\\b(?:in|by|since|during|from|until|till|circa|c\\.|year|before|after|around|early|late|mid|between)\\s+|\\b(?:' + MON + ')\\.?\\s+(?:\\d{1,2},?\\s+)?|\\b\\d{1,2}\\s+(?:' + MON + ')\\s+|\\(\\s*|\\b(?:1[0-9]{3}|20[0-3][0-9])\\s*(?:[-–—]|to|and)\\s*)$', 'i');
+const DATE_CUE = new RegExp('(?:\\b(?:in|by|since|during|from|until|till|circa|c\\.|year|before|after|around|early|late|mid|between)\\s+(?:(?:the|a|an)\\s+)?|\\b(?:' + MON + ')\\.?\\s+(?:\\d{1,2},?\\s+)?|\\b\\d{1,2}\\s+(?:' + MON + ')\\s+|\\(\\s*|\\b(?:1[0-9]{3}|20[0-3][0-9])\\s*(?:[-–—]|to|and)\\s*)$', 'i');
 // Every dated year in a claim: "in 1085", "1170 BC"; not "1743 runs" or "1120 km".
 function datesIn(text) {
-  const out = [], seen = new Set(), re = /(?<![\d,.\/$€£₹¥])(\d{1,4})(?![\d,]|\.\d)/g;
-  let m; const t = String(text || '');
+  const out = [], seen = new Set(), t = String(text || '');
+  const add = function (q, at) { if (q.key && !seen.has(q.key)) { seen.add(q.key); q.at = at; out.push(q); } };
+  // Eras, ranges and decades come from lib/dates.js: "AD 476", "79 AD", "1600 BC", "1882-1935", "the 1980s".
+  // Centuries ("the 7th century") are coarse dates and are returned by D.findDates, not as year keys.
+  const spans = [];
+  D.findDates(t).forEach(function (f) {
+    spans.push([f.index, f.end]);
+    if (f.grain === 'century') return;
+    if (f.grain === 'decade') return add({ key: String(f.from), surface: f.text, kind: 'year', decade: true }, f.index);
+    const n = Math.abs(f.from);
+    if (f.eraStated) return add({ key: n + ' ' + f.era, surface: n + ' ' + f.era.toUpperCase(), kind: 'year' }, f.index);
+    if (isYearKey(String(n))) add({ key: String(n), surface: String(n), kind: 'year' }, f.index);   // end of a range with no era: a plain year
+  });
+  const re = /(?<![\d,.\/$€£₹¥])(\d{1,4})(?!\d|,\d|\.\d)/g;
+  let m;
   while ((m = re.exec(t)) !== null) {
+    if (spans.some(function (sp) { return m.index >= sp[0] && m.index < sp[1]; })) continue;
     const q = qualifyNumber(m[1], t, m.index);
-    if (q.kind === 'year' && q.key && !seen.has(q.key) && (/ (bc|ad)$/.test(q.key) || (isYearKey(q.key) && DATE_CUE.test(t.slice(Math.max(0, m.index - 24), m.index))))) { seen.add(q.key); out.push(q); }
+    if (q.kind === 'year' && q.key && (/ (bc|ad)$/.test(q.key) || (isYearKey(q.key) && DATE_CUE.test(t.slice(Math.max(0, m.index - 24), m.index))))) add(q, m.index);
   }
-  return out;
+  return out.sort(function (a, b) { return a.at - b.at; });
 }
 
 
@@ -171,4 +186,4 @@ function tagDistance(a, b) {
   return 1 - inter / (a.size + b.size - inter);
 }
 
-module.exports = { normUnit, yearOfKey, quantityOfKey, STOP, foldKey, variantKey, yearsIn, qualifyNumber, datesIn, isYearKey, tokens, usableKey, titleKey, buildIdf, vectorOf, cosine, tagDistance };
+module.exports = { findDates: D.findDates, normUnit, yearOfKey, quantityOfKey, STOP, foldKey, variantKey, yearsIn, qualifyNumber, datesIn, isYearKey, tokens, usableKey, titleKey, buildIdf, vectorOf, cosine, tagDistance };
