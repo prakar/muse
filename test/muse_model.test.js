@@ -28,3 +28,18 @@ test('every recommendation has a plain question and two verb buttons; item label
   Object.keys(M.REC).forEach(k => { const r = M.REC[k]; assert.ok(r.ask && r.yes && r.no && Array.isArray(r.pick), k); assert.notStrictEqual(r.yes, r.no, k); });
   ['burrs', 'bristles', 'sparks', 'knots'].forEach(v => assert.ok(M.ITEM_LABELS[v].every(l => l[0] && l[1]), v));
 });
+
+test('spark eligibility: years, quantities, title-only, spelled numbers and generic words are not sparks', () => {
+  const e = (surface, types, srcs, cats) => ({ surface, types: new Set(types), srcs: new Set(srcs || ['hook']), cats: new Set(cats || []), notes: new Set([1, 2]) });
+  assert.strictEqual(M.sparkExclusion('1162', e('1162', ['time'], ['year'])), 'year-slice');
+  assert.strictEqual(M.sparkExclusion('2000 bc', e('2000 BC', ['time'])), 'year-slice');
+  assert.strictEqual(M.sparkExclusion('1120 km', e('1120 km', ['number'])), 'quantity-slice');
+  assert.strictEqual(M.sparkExclusion('public interest', e('public interest', ['title'], ['title'])), 'title-only');
+  assert.strictEqual(M.sparkExclusion('seven', e('seven', ['entity'])), 'spelled-number');
+  assert.strictEqual(M.sparkExclusion('chemicals', e('chemicals', ['material'], ['hook'], ['substance'])), 'generic-word');
+  // what the judged sparks must keep
+  assert.strictEqual(M.sparkExclusion('ginger', e('ginger', ['entity'], ['hook'], ['plant'])), '');
+  assert.strictEqual(M.sparkExclusion('hanami', e('hanami', ['entity'], ['hook'], ['concept'])), '');
+  assert.strictEqual(M.sparkExclusion('thomas becket', e('Thomas Becket', ['entity'], ['hook'], ['person'])), '');
+  assert.strictEqual(M.sparkExclusion('yamuna', e('Yamuna', ['entity', 'place'], ['hook'], ['place'])), '');
+});

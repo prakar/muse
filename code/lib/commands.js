@@ -47,7 +47,7 @@ const MUSE = {
 
 const NOTES = [
   'Ports: 3001 is the Quarry server, 3002 is the Muse viewer. tmux sessions: quarry-dev and quarry-muse.',
-  'Prompt versions: burrs are stored per prompt version (nug-v1 to nug-v5). The viewer shows nug-v4 until you start it with <code>--version nug-v5</code>; older burrs are kept, never deleted.',
+  'Prompt versions: burrs are stored per prompt version (nug-v1 to nug-v5). The viewer shows nug-v5 by default; start it with <code>--version nug-v4</code> to see the old burrs; older burrs are kept, never deleted.',
   'Burrs exist only in the dev DB. Back up vault.db before any snapshot or migration; <code>.gitignore</code> already covers <code>vault.db.bak-*</code>.',
   'The environment (QUARRY_DB, VAULT_PATH, Node version) comes from <code>mise.toml</code> in the quarry folder; run <code>mise trust</code> once.'
 ];

@@ -38,3 +38,18 @@ test('cosine: same-context burrs are close, different-context far; tagDistance h
   assert.strictEqual(L.tagDistance(new Set(['a']), new Set(['a'])), 0);
   assert.strictEqual(L.tagDistance(new Set(), new Set(['a'])), null);
 });
+
+test('numbers and dates carry a unit or an era, so look-alikes do not join', () => {
+  const L = require('../code/lib/bristles');
+  const k = (v, c) => L.qualifyNumber(v, c).key;
+  assert.strictEqual(k('1170', 'Founded in 1170 BC'), '1170 bc');
+  assert.strictEqual(k('1170', 'Founded in 1170 by Henry'), '1170');
+  assert.strictEqual(k('1120', 'a distance of 1120 km'), '1120 km');
+  assert.strictEqual(k('1743', 'scored 1743 runs in tests'), '1743 runs');
+  assert.strictEqual(k('12.25', 'it cost $12.25 per kg'), '12.25 usd');
+  assert.strictEqual(k('1085', 'Toledo fell in 1085 Toledo'), '1085');
+  assert.strictEqual(k('1000', 'about 1,000 people came'), '1000 people');
+  assert.strictEqual(k('156.8', 'a value of 156.8'), '');
+  assert.notStrictEqual(k('156.8', 'measured 156.8 cm'), k('156.8', 'measured 156.8 kg'));
+  assert.deepStrictEqual(L.datesIn('In 1085 Toledo fell; he scored 1085 runs; a 1120 km road; 1170 BC; $12.25.').map(x => x.key), ['1085', '1170 bc']);
+});

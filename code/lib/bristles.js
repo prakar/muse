@@ -33,7 +33,71 @@ function yearsIn(text) {
   return out;
 }
 
-function isYearKey(k) { return /^(1[0-9]{3}|20[0-3][0-9])$/.test(k); }
+function isYearKey(k) { return /^(1[0-9]{3}|20[0-3][0-9])( (bc|ad))?$/.test(k) || /^\d{1,4} (bc|ad)$/.test(k); }
+
+// ---------- numbers and dates: always carry a unit or an era ----------
+// "1170 BC" is not "1170 AD", "1120 km" is not the year 1120, "1743 runs" is not 1743. A number only joins others of
+// the same kind: a dated year keeps its era, a quantity keeps its unit, and a bare number with neither is not a handle.
+const MONTHS = new Set('january february march april may june july august september october november december jan feb mar apr jun jul aug sep sept oct nov dec'.split(' '));
+const NOT_UNIT = new Set(['and', 'or', 'the', 'a', 'an', 'in', 'on', 'at', 'by', 'to', 'of', 'for', 'from', 'was', 'were', 'is', 'are', 'as', 'with', 'that', 'which', 'who', 'when', 'where', 'but', 'also', 'after', 'before', 'during', 'since', 'until', 'it', 'he', 'she', 'they', 'his', 'her', 'its', 'their', 'st', 'nd', 'rd', 'th', 'century', 'centuries', 'ce', 'ad', 'bc', 'bce']);
+const SCALE = new Set(['thousand', 'million', 'billion', 'trillion', 'lakh', 'lakhs', 'crore', 'crores', 'k', 'm', 'bn']);
+const DURATION_UNITS = new Set(['year', 'years', 'yr', 'yrs', 'month', 'months', 'week', 'weeks', 'day', 'days', 'hour', 'hours', 'minute', 'minutes', 'decade', 'decades']);
+const KNOWN_UNITS = new Set('km kms m cm mm mi mile miles metre metres meter meters kg g mg tonne tonnes tons lb lbs oz litre litres l ml mph kmh kph hz khz mhz ghz mb gb tb kb watt watts kw mw volt volts runs wickets goals points votes people soldiers men women deaths students acres hectares sq'.split(' '));
+const CURRENCY = { '$': 'usd', '€': 'eur', '£': 'gbp', '₹': 'inr', '¥': 'jpy' };
+const CUR_WORD = { rs: 'inr', inr: 'inr', rupee: 'inr', rupees: 'inr', usd: 'usd', dollar: 'usd', dollars: 'usd', eur: 'eur', euro: 'eur', euros: 'eur', gbp: 'gbp', pound: 'gbp', pounds: 'gbp' };
+const ERA_RE = /^\s*(b\.?\s?c\.?e?\.?|bce|a\.?\s?d\.?|c\.?e\.?)(?![a-z])/i;
+
+function escRe(x) { return x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+function unitWord(w) { return String(w || '').toLowerCase().replace(/[.,;:)]+$/, ''); }
+
+// -> { key, surface, kind: 'year'|'qty'|'bare'|'text', duration }   kind 'bare' and 'text' have no key to join on ('text': not a number).
+function qualifyNumber(value, claim, pos) {
+  const v = String(value == null ? '' : value).trim();
+  const m = /^([$€£₹¥])?\s*(\d[\d,]*(?:\.\d+)?)\s*(.*)$/.exec(v);
+  if (!m) return { key: '', surface: v, kind: 'text' };
+  const num = m[2].replace(/,/g, ''), rest = m[3].trim();
+  let cur = m[1] ? CURRENCY[m[1]] : '', after = rest, before = '';
+  if (!rest || !m[1]) {
+    // Look the number up in the claim to see what surrounds it.
+    let f = null;
+    if (pos != null) f = { index: pos, 0: m[2] };
+    else f = new RegExp('(?<![\\d.,])' + m[2].replace(/,/g, '').replace(/^(\d+)/, function (d) { return d.split('').join(',?'); }).replace(/\./g, '\\.') + '(?!\\d)', 'g').exec(String(claim || ''));
+    if (f) { if (!rest) after = String(claim).slice(f.index + f[0].length, f.index + f[0].length + 30); before = String(claim).slice(Math.max(0, f.index - 10), f.index); }
+  }
+  if (!cur && before) { const c = before.trim().slice(-1); if (CURRENCY[c]) cur = CURRENCY[c]; }
+  const era = ERA_RE.exec(after);
+  if (era) return { key: num + (/^b/i.test(era[1]) ? ' bc' : ' ad'), surface: num + ' ' + (/^b/i.test(era[1]) ? 'BC' : 'AD'), kind: 'year' };
+  if (cur) return { key: num + ' ' + cur, surface: (m[1] || '') + num, kind: 'qty' };
+  const wm = /^\s*[-–]?\s*([A-Za-z%°][A-Za-z%°.\/²³]*)(?:\s+([A-Za-z]+))?/.exec(after);
+  const yearLike = isYearKey(num);
+  if (wm) {
+    const raw = wm[1];
+    let w = unitWord(raw);
+    if (CUR_WORD[w]) return { key: num + ' ' + CUR_WORD[w], surface: num + ' ' + raw, kind: 'qty' };
+    const lower = /^[a-z%°]/.test(raw);                       // "1085 Toledo" / "12 Angry Men": a capitalised word is a name, not a unit
+    if (SCALE.has(w) && wm[2]) w = w + ' ' + unitWord(wm[2]);
+    const datePrep = /\b(in|by|since|until|till|from|during|around|circa|c\.|year|of|and|to)\s*$/i.test(before);
+    const ok = w && lower && !NOT_UNIT.has(w) && !MONTHS.has(w);
+    // A year-like number is a date unless the next word is a known unit, or a plural noun with no date word before it.
+    const asQty = ok && (!yearLike || KNOWN_UNITS.has(w) || (/s$/.test(w) && !datePrep));
+    if (asQty) return { key: num + ' ' + w, surface: num + ' ' + w, kind: 'qty', duration: DURATION_UNITS.has(w) };
+  }
+  if (/^[%°]/.test(after.trim())) return { key: num + ' ' + after.trim()[0], surface: num + after.trim()[0], kind: 'qty' };
+  if (isYearKey(num)) return { key: num, surface: num, kind: 'year' };   // a plain year: read as a calendar date
+  return { key: '', surface: v, kind: 'bare' };
+}
+
+// Every dated year in a claim: "in 1085", "1170 BC"; not "1743 runs" or "1120 km".
+function datesIn(text) {
+  const out = [], seen = new Set(), re = /(?<![\d,.\/$€£₹¥])(\d{1,4})(?![\d,]|\.\d)/g;
+  let m; const t = String(text || '');
+  while ((m = re.exec(t)) !== null) {
+    const q = qualifyNumber(m[1], t, m.index);
+    if (q.kind === 'year' && q.key && !seen.has(q.key) && (/ (bc|ad)$/.test(q.key) || isYearKey(q.key))) { seen.add(q.key); out.push(q); }
+  }
+  return out;
+}
+
 
 function tokens(text) { return foldKey(text).split(' ').filter(Boolean); }
 
@@ -91,4 +155,4 @@ function tagDistance(a, b) {
   return 1 - inter / (a.size + b.size - inter);
 }
 
-module.exports = { STOP, foldKey, variantKey, yearsIn, isYearKey, tokens, usableKey, titleKey, buildIdf, vectorOf, cosine, tagDistance };
+module.exports = { STOP, foldKey, variantKey, yearsIn, qualifyNumber, datesIn, isYearKey, tokens, usableKey, titleKey, buildIdf, vectorOf, cosine, tagDistance };

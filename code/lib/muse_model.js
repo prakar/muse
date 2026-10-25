@@ -64,6 +64,20 @@ const ITEM_LABELS = {
   knots: [['homonym', 'Unrelated meanings', 'e.g. bank (river edge) and bank (money): nothing connects them.'], ['polyseme', 'Related meanings', 'e.g. mouth (body) and mouth (river): one grew out of the other.'], ['same sense', 'Same meaning', 'One meaning everywhere, so not a real knot.'], ['unsure', "Can't tell", '']]
 };
 
+// ---------- spark eligibility (from the first v5 spark judgements, 25 Oct 2026) ----------
+// A spark is a handle worth following between notes. These keys are not: they go to `slices` (a way to browse a year,
+// a quantity or a generic word), not to the spark list. Nothing is deleted; each exclusion has a reason.
+const NUMBER_WORDS = new Set('one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty thirty forty fifty sixty seventy eighty ninety hundred thousand million billion first second third fourth fifth sixth seventh eighth ninth tenth'.split(' '));
+const GENERIC_CATS = new Set(['substance', 'other', 'object']);
+function sparkExclusion(key, e) {
+  const types = Array.from(e.types), surf = String(e.surface || ''), srcs = e.srcs;
+  if (types.every(function (t) { return t === 'time' || t === 'number'; })) return L.isYearKey(key) ? 'year-slice' : 'quantity-slice';
+  if (srcs.size === 1 && srcs.has('title')) return 'title-only';                       // found by matching note titles in the text, not by an extracted hook
+  if (key.split(' ').every(function (w) { return NUMBER_WORDS.has(w); })) return 'spelled-number';
+  if (key.indexOf(' ') < 0 && surf && surf === surf.toLowerCase() && e.cats.size && Array.from(e.cats).every(function (c) { return GENERIC_CATS.has(c); })) return 'generic-word';   // chemicals, compounds: a kind of thing, not a thing
+  return '';
+}
+
 function recsForKey(key, e) {
   const df = e.notes.size, surf = String(e.surface || ''), out = [];
   const types = Array.from(e.types), single = key.indexOf(' ') < 0;
@@ -99,10 +113,19 @@ function build(db, version, opts) {
   burrsRaw.forEach(function (b) { const c = (perNote.get(b.note_id) || 0) + 1; perNote.set(b.note_id, c); rank.set(b.id, c); toks.set(b.id, L.tokens(b.claim)); });
   burrsRaw.forEach(function (b) {
     const own = L.titleKey(b.title), seen = new Set(), out = [];
-    const add = function (type, surface, key, src) { if (!L.usableKey(key) || seen.has(key)) return; seen.add(key); out.push({ type: type, surface: surface, key: key, src: src }); };
+    const add = function (type, surface, key, src, cat) { if (!L.usableKey(key) || seen.has(key)) return; seen.add(key); out.push({ type: type, surface: surface, key: key, src: src, cat: cat || '' }); };
     let hooks = []; try { hooks = JSON.parse(b.hooks_json || '[]'); } catch (e) {}
-    hooks.forEach(function (h) { add(h.type, h.value, L.foldKey(h.value), 'hook'); });
-    L.yearsIn(b.claim).forEach(function (y) { add('time', y, y, 'year'); });
+    hooks.forEach(function (h) {
+      // Numbers and dates carry a unit or an era so that 1170 BC, 1170 AD, 1120 km and 1120 runs never join.
+      if (h.type === 'time' || h.type === 'number') {
+        const q = L.qualifyNumber(h.value, b.claim);
+        if (q.kind === 'text') return add(h.type, h.value, L.foldKey(h.value), 'hook');
+        if (!q.key) return;                                   // a bare number with no unit or era is not a handle
+        return add(q.kind === 'qty' && !q.duration ? 'number' : 'time', q.surface, q.key, 'hook');
+      }
+      add(h.type, h.value, L.foldKey(h.value), 'hook', h.cat);
+    });
+    L.datesIn(b.claim).forEach(function (q) { add('time', q.surface, q.key, 'year'); });
     const t = toks.get(b.id); let nT = 0;
     for (let n = 6; n >= 1 && nT < 4; n--) for (let i = 0; i + n <= t.length && nT < 4; i++) {
       const k = t.slice(i, i + n).join(' ');
@@ -114,8 +137,8 @@ function build(db, version, opts) {
   const index = new Map();
   burrsRaw.forEach(function (b) { bristles.get(b.id).forEach(function (br) {
     let e = index.get(br.key);
-    if (!e) { e = { burrs: [], notes: new Set(), types: new Set(), srcs: new Set(), surface: br.surface }; index.set(br.key, e); }
-    e.burrs.push(b.id); e.notes.add(b.note_id); e.types.add(br.type); e.srcs.add(br.src); }); });
+    if (!e) { e = { burrs: [], notes: new Set(), types: new Set(), srcs: new Set(), cats: new Set(), surface: br.surface }; index.set(br.key, e); }
+    e.burrs.push(b.id); e.notes.add(b.note_id); e.types.add(br.type); e.srcs.add(br.src); if (br.cat) e.cats.add(br.cat); }); });
   const byId = new Map(burrsRaw.map(function (b) { return [b.id, b]; }));
   const keyRecs = new Map(); index.forEach(function (e, k) { keyRecs.set(k, recsForKey(k, e)); });
   const brief = function (b) { return { id: b.id, claim: b.claim, quote: b.quote, note: noteTitle.get(b.note_id) }; };
@@ -158,13 +181,15 @@ function build(db, version, opts) {
       const d = L.tagDistance(noteTags.get(bs[i].note_id), noteTags.get(bs[j].note_id)); if (d != null) { ds += d; dn++; } }
     return { cos: cn ? cs / cn : 0, dist: dn ? ds / dn : null };
   };
-  const sparkRows = [], knotRows = [], SURF = new Set(['entity', 'homonym', 'material', 'place', 'etymon', 'title']);
+  const sparkRows = [], knotRows = [], sliceRows = [], excluded = {}, SURF = new Set(['entity', 'homonym', 'material', 'place', 'etymon', 'title']);
   index.forEach(function (e, key) {
     const df = e.notes.size;
-    if (df >= 2 && df <= 8) {
+    const why = df >= 2 && df <= 8 ? sparkExclusion(key, e) : '';
+    if (why) { excluded[why] = (excluded[why] || 0) + 1; sliceRows.push({ id: key, surface: e.surface, types: Array.from(e.types), df: df, why: why, _s: (key + ' ' + e.surface).toLowerCase() }); }
+    if (df >= 2 && df <= 8 && !why) {
       const bs = pickPerNote(e), st = pairStats(bs, key), clone = st.cos >= 0.5, recs = keyRecs.get(key).slice();
       if (clone) recs.push('clone-of');
-      sparkRows.push({ id: key, surface: e.surface, types: Array.from(e.types), df: df, rarity: Math.log(NN / df), dist: st.dist, cos: st.cos, clone: clone,
+      sparkRows.push({ _ns: Array.from(e.notes).sort(function (a, b) { return a - b; }).join(','), id: key, surface: e.surface, types: Array.from(e.types), df: df, rarity: Math.log(NN / df), dist: st.dist, cos: st.cos, clone: clone,
         score: st.dist == null ? -1 : Math.log(NN / df) * st.dist, recs: recs, burrs: bs.slice(0, 6).map(brief), _s: (key + ' ' + e.surface).toLowerCase() });
     }
     if (df >= 2 && df <= 40 && !L.isYearKey(key) && Array.from(e.types).some(function (t) { return SURF.has(t); })) {
@@ -176,6 +201,19 @@ function build(db, version, opts) {
     }
   });
 
+  // Sparks that join exactly the same notes are one lead, not several (Beckham, Posh and Baby). Keep the most specific, list the rest.
+  const byNotes = new Map();
+  sparkRows.forEach(function (r) { (byNotes.get(r._ns) || byNotes.set(r._ns, []).get(r._ns)).push(r); });
+  const sparkOut = [];
+  byNotes.forEach(function (rs) {
+    rs.sort(function (a, b) { return (/^[A-Z]/.test(b.surface) - /^[A-Z]/.test(a.surface)) || (b.surface.length - a.surface.length); });
+    const head = rs[0]; head.also = rs.slice(1).map(function (r) { return r.surface; });
+    if (head.also.length) excluded['same-notes'] = (excluded['same-notes'] || 0) + head.also.length;
+    sparkOut.push(head);
+  });
+  sparkOut.sort(function (a, b) { return b.score - a.score; });
+  sparkRows.length = 0; sparkOut.forEach(function (r) { delete r._ns; sparkRows.push(r); });
+
   const detail = function (view, id) {
     if (view !== 'bristles') return null;
     const e = index.get(id); if (!e) return null;
@@ -184,9 +222,9 @@ function build(db, version, opts) {
   const counts = {};
   [['burrs', burrRows], ['bristles', bristleRows], ['sparks', sparkRows], ['knots', knotRows]].forEach(function (p) {
     p[1].forEach(function (r) { r.recs.forEach(function (t) { (counts[t] = counts[t] || {})[p[0]] = ((counts[t] || {})[p[0]] || 0) + 1; }); }); });
-  return { version: version, notes: NN, burrs: burrRows, bristles: bristleRows, sparks: sparkRows, knots: knotRows, detail: detail, recCounts: counts,
+  return { version: version, notes: NN, burrs: burrRows, bristles: bristleRows, sparks: sparkRows, knots: knotRows, slices: sliceRows, excluded: excluded, detail: detail, recCounts: counts,
     kinds: Array.from(new Set(burrRows.map(function (r) { return r.kind; }))).sort(),
     types: Array.from(new Set([].concat.apply([], bristleRows.map(function (r) { return r.types; })))).sort() };
 }
 
-module.exports = { build, REC, ITEM_LABELS, recsForKey, DURATION, REL, DEAD_END };
+module.exports = { sparkExclusion, build, REC, ITEM_LABELS, recsForKey, DURATION, REL, DEAD_END };

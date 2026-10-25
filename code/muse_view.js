@@ -2,7 +2,7 @@
 'use strict';
 /**
  * QUARRY muse_view.js — SCRATCH viewer for burrs, bristles, sparks and knots.
- *   node code/muse_view.js [--port 3002] [--version nug-v4]     then open http://localhost:3002
+ *   node code/muse_view.js [--port 3002] [--version nug-v5]     then open http://localhost:3002
  *
  * Read-only on vault.db. The ONLY thing it writes is muse-judgements.jsonl in QUARRY_HOME (your labels),
  * which is local and gitignored. Binds to 127.0.0.1. Zero dependencies. Not part of the quarry server.
@@ -13,7 +13,7 @@ const M = require('./lib/muse_model');
 
 const args = process.argv.slice(2);
 const opt = function (k, d) { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : d; };
-const PORT = parseInt(opt('--port', '3002'), 10), VERSION = opt('--version', 'nug-v4');
+const PORT = parseInt(opt('--port', '3002'), 10), VERSION = opt('--version', 'nug-v5');
 const HOME = process.env.QUARRY_HOME || path.join(__dirname, '..');
 const DB = process.env.QUARRY_DB || path.join(HOME, 'vault.db');
 const JFILE = path.join(HOME, 'muse-judgements.jsonl');
