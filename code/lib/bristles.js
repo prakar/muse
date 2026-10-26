@@ -54,8 +54,21 @@ function escRe(x) { return x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 function unitWord(w) { return String(w || '').toLowerCase().replace(/[.,;:)]+$/, ''); }
 
 // -> { key, surface, kind: 'year'|'qty'|'bare'|'text', duration }   kind 'bare' and 'text' have no key to join on ('text': not a number).
-function qualifyNumber(value, claim, pos, hookType) {
+function qualifyNumber(value, claim, pos, hookType, hint) {
   const v = String(value == null ? '' : value).trim();
+  // nug-v6: the model stated the era or unit and the verifier checked it; that beats reading the claim text.
+  if (hint && (hint.era || hint.unit)) {
+    const hm = /^[$\u20ac\u00a3\u20b9\u00a5]?\s*(\d[\d,]*(?:\.\d+)?)(s?)\s*$/.exec(v);
+    if (hm) {
+      const hn = hm[1].replace(/,/g, '');
+      if (hint.era && hookType === 'time') {
+        if (hm[2] === 's' && hint.era === 'ad') return { key: hn, surface: v, kind: 'year', decade: true };
+        if (hint.era === 'bc') return { key: hn + ' bc', surface: hn + ' BC', kind: 'year' };
+        return isYearKey(hn) ? { key: hn, surface: hn, kind: 'year' } : { key: hn + ' ad', surface: hn + ' AD', kind: 'year' };
+      }
+      if (hint.unit && hookType === 'number') return { key: hn + ' ' + hint.unit, surface: v + (/[a-z%\u00b0]/i.test(v) ? '' : ' ' + hint.unit), kind: 'qty', duration: DURATION_UNITS.has(hint.unit) || DURATION_UNITS.has(hint.unit + 's') };
+    }
+  }
   const m = /^([$€£₹¥])?\s*(\d[\d,]*(?:\.\d+)?)\s*(.*)$/.exec(v);
   if (!m) return { key: '', surface: v, kind: 'text' };
   const num = m[2].replace(/,/g, ''), rest = m[3].trim();

@@ -23,6 +23,8 @@ const GOLDEN = [
   ['He lived 1908-2000.', ['1908|1908..1909|year|ad?|r', '2000|2000..2001|year|ad?|r']],
   ['The 1963-64 season.', ['1963|1963..1964|year|ad?|r', '64|1964..1965|year|ad?|r']],
   ['Reigned 500-400 BC.', ['500|-500..-499|year|bc!|r', '400|-400..-399|year|bc!|r']],
+  ['The Dattilam was composed between the 1st and 4th century AD.', ['1st and 4th century AD|1..101|century|ad!|r', '1st and 4th century AD|301..401|century|ad!|r']],
+  ['Mid-20th century physics.', ['Mid-20th century|1901..2001|century|ad?|mid']],
   // not dates
   ['He scored 1,234 runs in 1998.', []],
   ['Windows 95 shipped in 1995.', []],

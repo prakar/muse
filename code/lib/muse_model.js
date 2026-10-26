@@ -119,8 +119,9 @@ function build(db, version, opts) {
     let hooks = []; try { hooks = JSON.parse(b.hooks_json || '[]'); } catch (e) {}
     hooks.forEach(function (h) {
       // Numbers and dates carry a unit or an era so that 1170 BC, 1170 AD, 1120 km and 1120 runs never join.
+      if (h.type === 'time' && h.grain === 'century') return;   // coarse date: read from the claim text into `coarse`
       if (h.type === 'time' || h.type === 'number') {
-        const q = L.qualifyNumber(h.value, b.claim, null, h.type);
+        const q = L.qualifyNumber(h.value, b.claim, null, h.type, h.xc ? null : { era: h.era, unit: h.unit });   // where the model and the claim-text reading disagree (xc), fall back to the claim text until reviewed
         if (q.kind === 'text') return add(h.type, h.value, L.foldKey(h.value), 'hook');
         if (!q.key) return;                                   // a bare number with no unit or era is not a handle
         note(q.key); return add(q.kind === 'qty' && !q.duration ? 'number' : 'time', q.surface, q.key, 'hook');

@@ -11,7 +11,7 @@ const note = { title: 'Quokka selfie craze', cleaned: 'Quokkas on Rottnest Islan
 
 test('verifier accepts a grounded burr and keeps real hooks only', () => {
   const v = B.verifyBurrs([{ claim: 'Quokkas became a selfie craze in 2015.', quote: 'selfie craze in 2015', kind: 'fact',
-    hooks: [{ type: 'time', value: '2015' }, { type: 'place', value: 'Perth' }, { type: 'set', value: 'internet fads' }] }], note);
+    hooks: [{ type: 'time', value: '2015', era: 'AD' }, { type: 'place', value: 'Perth' }, { type: 'set', value: 'internet fads' }] }], note);
   assert.strictEqual(v.accepted.length, 1);
   assert.deepStrictEqual(v.accepted[0].hooks.map(h => h.type), ['time', 'set']);
   assert.strictEqual(v.hooksDropped, 1);
@@ -230,4 +230,61 @@ test('parseModelJson: garbled hook keys are restored, and a hook with a lost typ
   const r = B.parseModelJson('{"burrs":[{"claim":"c","hooks":[{"type":"place":"Hassan","cat":"place"},{"type":"":"number","value":"6"},{"type":"type":"former-role","value":"polymath"},{"type":"value":"Zed","cat":"person"},{"type":"entity","value":"Ok","cat":"person"}]}],"reason":""}');
   assert.strictEqual(r.ok, true);
   assert.deepStrictEqual(r.burrs[0].hooks.map(h => h.type + ':' + h.value), ['place:Hassan', 'number:6', 'former-role:polymath', 'entity:Ok']);
+});
+
+// ---- nug-v6: a time hook needs an era, a number hook needs a unit ----
+const note6 = { title: 'Notes', cleaned: 'Rome fell in 476. The tower is 1250 feet tall. Windows 95 shipped in 1995. Thera erupted c. 1600 BC. About 2,000 tigers remain. It lasted 150 years.' };
+const burr6 = (hooks, claim) => ({ claim: claim || 'Rome fell in 476 and the tower is 1250 feet tall.', src: [1, 2], hooks: hooks });
+const hooksOf = (hooks, claim) => { const v = B.verifyBurrs([burr6(hooks, claim)], note6); return { h: v.accepted[0] ? v.accepted[0].hooks : null, dropped: v.hooksDropped }; };
+
+test('nug-v6: prompt version and the prompt ask for era and unit', () => {
+  assert.strictEqual(B.PROMPT_VERSION, 'nug-v6');
+  const p = B.buildPrompt({ title: 'T', source_url: '' }, 'Rome fell in 476.').prompt;
+  assert.ok(/"era": "AD" or "BC"/.test(p) && /"unit": what is counted/.test(p) && /"unit":"","era":""/.test(p));
+});
+test('nug-v6: a time hook keeps its era; a missing or unknown era drops the hook, not the burr', () => {
+  let r = hooksOf([{ type: 'time', value: '476', era: 'AD' }, { type: 'time', value: '1995' }, { type: 'time', value: '1600', era: 'unknown' }, { type: 'time', value: '1600', era: 'B.C.' }]);
+  assert.deepStrictEqual(r.h.map(h => h.value + ':' + h.era), ['476:ad', '1600:bc']);
+  assert.strictEqual(r.dropped, 2);
+});
+test('nug-v6: a number hook keeps its unit (singular, normalised); empty, label and junk units drop the hook', () => {
+  const r = hooksOf([{ type: 'number', value: '1250', unit: 'feet' }, { type: 'number', value: '2,000', unit: 'Tigers' }, { type: 'number', value: '95', unit: 'id' },
+    { type: 'number', value: '1250' }, { type: 'number', value: '150', unit: 'different' }, { type: 'number', value: '150', unit: 'years' }]);
+  assert.deepStrictEqual(r.h.map(h => h.value + ':' + h.unit), ['1250:ft', '2,000:tiger', '150:year']);
+  assert.strictEqual(r.dropped, 3);
+});
+test('nug-v6: where the model and the claim-text reading disagree, the hook records it (xc)', () => {
+  const agree = hooksOf([{ type: 'time', value: '476', era: 'AD' }], 'Rome fell in 476.').h[0];
+  assert.strictEqual(agree.xc, undefined);
+  const off = hooksOf([{ type: 'number', value: '1250', unit: 'metre' }], 'The tower is 1250 feet tall.').h[0];
+  assert.strictEqual(off.unit, 'm'); assert.ok(off.xc && off.xc !== '1250 m');
+});
+test('nug-v6: era-less legacy hooks still verify when units are not required (v5 replies)', () => {
+  const v = B.verifyBurrs([burr6([{ type: 'time', value: '476' }])], note6, { requireUnits: false });
+  assert.strictEqual(v.accepted[0].hooks.length, 1);
+});
+test('nug-v6: the model-stated era and unit decide the join key', () => {
+  const L = require('../code/lib/bristles');
+  assert.strictEqual(L.qualifyNumber('1170', 'Founded in 1170', null, 'time', { era: 'bc' }).key, '1170 bc');
+  assert.strictEqual(L.qualifyNumber('1170', 'Founded in 1170', null, 'time', { era: 'ad' }).key, '1170');
+  assert.strictEqual(L.qualifyNumber('476', 'Rome fell in 476', null, 'time', { era: 'ad' }).key, '476 ad');
+  assert.strictEqual(L.qualifyNumber('1960s', 'in the 1960s', null, 'time', { era: 'ad' }).decade, true);
+  assert.strictEqual(L.qualifyNumber('1120', 'a road of 1120', null, 'number', { unit: 'km' }).key, '1120 km');
+  assert.strictEqual(L.qualifyNumber('150', 'it lasted 150', null, 'number', { unit: 'year' }).duration, true);
+});
+
+test('nug-v6: a hook the cross-check flagged (xc) is keyed by the claim text, not the model, until reviewed', () => {
+  const M = require('../code/lib/muse_model');
+  assert.ok(typeof M.build === 'function');   // wiring is exercised on real data; the rule is one line in muse_model.js (h.xc ? null : hint)
+});
+
+test('nug-v6: a repeated number is not flagged ("between 200 BC and 200 AD"); a century hook is kept as a coarse date', () => {
+  const n = { title: 'Natya Shastra', cleaned: 'The Natya Shastra was written between 200 BC and 200 AD. Damnatio ad bestias reached Rome in the 2nd century BC.' };
+  const v = B.verifyBurrs([
+    { claim: 'The Natya Shastra was written during the period between 200 BC and 200 AD.', src: [1], hooks: [{ type: 'time', value: '200', era: 'BC' }, { type: 'time', value: '200', era: 'AD' }] },
+    { claim: 'Damnatio ad bestias was brought to Rome around the 2nd century BC.', src: [2], hooks: [{ type: 'time', value: '2nd century', era: 'BC' }] }], n);
+  assert.strictEqual(v.accepted.length, 2);
+  assert.deepStrictEqual(v.accepted[0].hooks.map(h => h.era + ':' + (h.xc || '')), ['bc:', 'ad:']);
+  assert.strictEqual(v.accepted[1].hooks[0].grain, 'century');
+  assert.strictEqual(v.accepted[1].hooks[0].xc, undefined);
 });

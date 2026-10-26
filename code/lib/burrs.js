@@ -10,8 +10,10 @@ const { jsonrepair } = require('jsonrepair');
  * Pure functions only (no I/O), so they are unit-tested in nuggetizer.test.js.
  */
 const crypto = require('crypto');
+const L = require('./bristles');
+const U = require('./units');
 
-const PROMPT_VERSION = 'nug-v5';
+const PROMPT_VERSION = 'nug-v6';
 const SCHEMA_VERSION = 'burr-v1';
 const MAX_BODY_CHARS = 6000;
 const MAX_BURRS      = 6;
@@ -180,6 +182,8 @@ function buildPrompt(note, cleaned) {
 4. Every number or year in "claim" must appear in the cited lines.
 5. "kind": fact | etymology | aside | pattern | opinion. "aside" = a side detail in a digression; "pattern" = a streak, gap or count across a list or table; "etymology" = where a word or name comes from.
 6. "hooks": handles another note could share: [{"type": T, "value": V, "cat": C}] where T is one of: entity, time, number, etymon, material, place, homonym, set, uniqueness, mechanism, former-role. For entity, time, number, etymon, material, place and homonym, V must be copied exactly from the note. For set, uniqueness, mechanism and former-role, V is a short phrase. For entity, place and material add "cat", the kind of thing V is here, one of: person, place, organisation, work, event, food, animal, plant, substance, object, concept, language, myth, other (so "Mercury" the planet and "Mercury" the metal differ: place vs substance).
+6b. nug-v6, time hooks: V is a calendar year or decade as written in the note ("1066", "476", "1960s"); add "era": "AD" or "BC". Use "AD" for a year after 1000 when the note gives no era; if you cannot tell the era, leave the hook out. A duration or an age ("150 years", "three decades", "1400 years ago", "aged 30", "2000 years old") is NOT a time hook: make it a number hook with unit "year". A century ("the 2nd century BC") is a time hook whose value is the century as written and whose era is AD or BC.
+6c. nug-v6, number hooks: V is a quantity written in the note; add "unit": what is counted or measured, as one lowercase singular word or a standard symbol (km, kg, usd, %, °c, run, person, tiger, page, year). Do not invent a unit the note does not imply. A number that is only a label or identifier (Windows 95, store #2000, Route 66, a jersey number, a year used as part of a name) is NOT a number hook: leave it out. Only number hooks carry "unit" and only time hooks carry "era".
 7. "loop": ONE open question the note raises but does not answer (an unexplained name, a "why?", a gap, a surprising coincidence). Write one whenever the note leaves something unexplained; use "" only when nothing is left open.
 7b. "perishable": true if the claim is a present-tense figure or status that can go stale (a population, price, record, office holder, "currently", "today", "latest"); otherwise false.
 8. Telegraphic notes are fine: turn shorthand into a sentence using only the words and facts in the note.
@@ -190,9 +194,9 @@ function buildPrompt(note, cleaned) {
 
 Example note:
 [T] Quokka selfie craze, Rottnest, 2015
-Reply: {"burrs":[{"claim":"Quokkas on Rottnest Island became a selfie craze in 2015.","src":["T"],"kind":"fact","hooks":[{"type":"entity","value":"Quokka","cat":"animal"},{"type":"place","value":"Rottnest","cat":"place"},{"type":"time","value":"2015"}],"loop":"Why did quokkas, not other animals, become the selfie craze?","perishable":false}],"reason":""}
+Reply: {"burrs":[{"claim":"Quokkas on Rottnest Island became a selfie craze in 2015.","src":["T"],"kind":"fact","hooks":[{"type":"entity","value":"Quokka","cat":"animal"},{"type":"place","value":"Rottnest","cat":"place"},{"type":"time","value":"2015","era":"AD"}],"loop":"Why did quokkas, not other animals, become the selfie craze?","perishable":false}],"reason":""}
 
-Schema: {"burrs":[{"claim":"","src":[],"kind":"fact","hooks":[{"type":"","value":"","cat":""}],"loop":"","perishable":false}],"reason":""}
+Schema: {"burrs":[{"claim":"","src":[],"kind":"fact","hooks":[{"type":"","value":"","cat":"","unit":"","era":""}],"loop":"","perishable":false}],"reason":""}
 
 ${buildInput(note, cleaned)}`;
   return { system, prompt };
@@ -293,12 +297,47 @@ function locateQuote(quote, hays) {
   return null;
 }
 
+// nug-v6: a time hook needs an era (AD or BC), a number hook needs a unit. Both are checked here; a hook whose era is missing
+// or unknown, or whose unit is empty, a stray word, a digit string or a label word, is dropped (the burr is kept). The older
+// claim-text rules in bristles.js still run as a cross-check: where they read the hook differently the result is stored in
+// hook.xc, so the disagreements can be listed and reviewed.
+const NOT_A_UNIT = new Set(['none', 'unknown', 'count', 'number', 'numeral', 'id', 'identifier', 'label', 'name', 'n/a', 'na', 'unit', 'units', 'value']);
+function qualifyHook(type, value, claim, h) {
+  const m = /^[$\u20ac\u00a3\u20b9\u00a5]?\s*(\d[\d,]*(?:\.\d+)?)\s*(s?)/.exec(value);
+  if (!m) return null;
+  const num = m[1].replace(/,/g, '');
+  // Every place the number occurs in the claim ("between 200 BC and 200 AD" has two): the model agrees with the claim-text
+  // reading if ANY occurrence reads the same way, so a repeated number is never flagged just because the first one differs.
+  const reads = [];
+  const re = new RegExp('(?<![\\d.,])' + num.replace(/^(\d+)/, function (d) { return d.split('').join(',?'); }).replace(/\./g, '\\.') + '(?!\\d)', 'g');
+  let f; while ((f = re.exec(claim)) !== null) reads.push(L.qualifyNumber(f[0], claim, f.index, type));
+  if (!reads.length) reads.push(L.qualifyNumber(value, claim, null, type));
+  if (type === 'time') {
+    const e = typeof h.era === 'string' ? h.era.trim().toLowerCase().replace(/[.\s]/g, '') : '';
+    const era = (e === 'bc' || e === 'bce') ? 'bc' : (e === 'ad' || e === 'ce') ? 'ad' : '';
+    if (!era || !/^\d{1,4}$/.test(num)) return null;
+    if (/century/i.test(value)) return { era: era, grain: 'century', xc: '' };   // "2nd century BC": a coarse date; the claim scan reads it
+    const y = (era === 'bc' ? -1 : 1) * parseInt(num, 10);
+    const agree = reads.some(function (q) { return q.kind === 'year' && L.yearOfKey(q.key) === y; });
+    const keys = reads.map(function (q) { return q.key; }).filter(Boolean);
+    return { era: era, xc: agree || !keys.length ? '' : keys[0] };   // flagged only when the claim-text reading reads it differently, not when it reads nothing
+  }
+  const raw = typeof h.unit === 'string' ? h.unit.trim().toLowerCase() : '';
+  if (!raw || raw.length > 24 || /\d/.test(raw) || NOT_A_UNIT.has(raw)) return null;
+  const unit = U.normUnit(raw);
+  if (!unit || U.junkUnit(unit.split(' ').pop())) return null;
+  const agree = reads.some(function (q) { return q.kind === 'qty' && q.key === num + ' ' + unit; });
+  const keys = reads.map(function (q) { return q.key; }).filter(Boolean);
+  return { unit: unit, xc: agree || !keys.length ? '' : keys[0] };
+}
+
 /**
  * Verify what the model proposed against the note's own text.
  * note = { title, cleaned }  (cleaned = cleanBody output)
  * Returns { accepted: [{claim, quote, kind, hooks, loop_text}], rejected: [{reason, claim}], hooksDropped }
  */
-function verifyBurrs(burrsIn, note) {
+function verifyBurrs(burrsIn, note, opts) {
+  const requireUnits = !opts || opts.requireUnits !== false;
   const title = squash(stripLinks(note.title)), body = squash(note.cleaned);
   const hays = [title, body];
   const units = segment(note.cleaned);
@@ -365,6 +404,14 @@ function verifyBurrs(burrsIn, note) {
       if (STRICT_HOOKS.indexOf(type) >= 0 && noteLower.indexOf(value.toLowerCase()) < 0) { hooksDropped++; continue; }
       const hook = { type: type, value: value };
       if (CAT_HOOKS.indexOf(type) >= 0) { const c = typeof h.cat === 'string' ? h.cat.trim().toLowerCase() : ''; hook.cat = CATEGORIES.indexOf(c) >= 0 ? c : (c ? 'other' : null); }
+      if (requireUnits && (type === 'time' || type === 'number') && /\d/.test(value)) {
+        const q = qualifyHook(type, value, claim, h);
+        if (!q) { hooksDropped++; continue; }
+        if (q.era) hook.era = q.era;
+        if (q.grain) hook.grain = q.grain;
+        if (q.unit) hook.unit = q.unit;
+        if (q.xc) hook.xc = q.xc;
+      }
       hooks.push(hook);
     }
 

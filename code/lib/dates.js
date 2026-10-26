@@ -47,6 +47,22 @@ function findDates(input) {
     out.push(item);
   };
 
+  // 0. a range of centuries: "the 1st and 4th century AD", "5th-3rd century BC"; both ends are kept
+  const crRe = new RegExp('(\\d{1,2})(?:st|nd|rd|th)\\s*(?:and|to|[-\\u2013\\u2014])\\s*(\\d{1,2})(?:st|nd|rd|th)\\s+century(?:\\s+(' + ERA + ')(?![A-Za-z]))?', 'gi');
+  let mr;
+  while ((mr = crRe.exec(t)) !== null) {
+    const a1 = parseInt(mr[1], 10), a2 = parseInt(mr[2], 10);
+    if (a1 < 1 || a2 < 1 || a1 > 21 || a2 > 21) continue;
+    const era = mr[3] ? eraOf(mr[3].toUpperCase()) : 'ad';
+    if (!free(mr.index, mr.index + mr[0].length)) continue;
+    const c = context(t, mr.index);
+    [a1, a2].forEach(function (n) {
+      const sp = centurySpan(n, era);
+      out.push({ text: mr[0], index: mr.index, end: mr.index + mr[0].length, grain: 'century', from: sp.from, to: sp.to, era: era, eraStated: !!mr[3], approx: c.approx, mod: c.mod, range: true });
+    });
+    used.push([mr.index, mr.index + mr[0].length]);
+  }
+
   // 1. centuries: "the 7th century", "5th century BC", "seventh century", "early 7th century"
   const cRe = new RegExp('(?:\\b(early|mid|late)[-\\s]+)?(?:(\\d{1,2})(?:st|nd|rd|th)|\\b(' + ORD_WORDS.join('|') + '))\\s+century(?:\\s+(' + ERA + ')(?![A-Za-z]))?', 'gi');
   let m;
