@@ -116,3 +116,14 @@ test('units: words that follow a number but are not units are not read as units'
   assert.strictEqual(L.normUnit('dialysis'), 'dialysis');
   assert.strictEqual(L.normUnit('census'), 'census');
 });
+
+test('variantKey: roman numerals and short ordinary words are not folded together', () => {
+  assert.notStrictEqual(L.variantKey('World War II'), L.variantKey('World War I'));
+  assert.notStrictEqual(L.variantKey('world war ii'), L.variantKey('world war i'));
+  assert.notStrictEqual(L.variantKey('George III'), L.variantKey('George II'));
+  assert.notStrictEqual(L.variantKey('copper'), L.variantKey('cooper'));
+  assert.notStrictEqual(L.variantKey('wolf'), L.variantKey('Woolf'));
+  assert.strictEqual(L.variantKey('Thanjavur'), L.variantKey('Tanjavur'));
+  assert.strictEqual(L.variantKey('Saraswati'), L.variantKey('Sarasvati'));
+  assert.strictEqual(L.variantKeyV1('Mysore'), 'mysore');
+});

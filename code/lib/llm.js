@@ -145,6 +145,8 @@ function isModelFailure(provider, status) {
 
 async function withResolvedModel(provider, key, opts, send) {
   const cfg = PROVIDERS[provider];
+  // opts.model pins an exact model id (bake-offs, reproducing a past run): no resolver, no re-resolve; a failure is thrown as is.
+  if (opts.model) { log('info', 'LLM model pinned', { provider: provider, model: opts.model, label: opts.label }); return await send(opts.model); }
   let resolved = await resolveFor(provider, key);
   log('info', 'LLM model resolved', { provider: provider, model: resolved.id, via: resolved.source, label: opts.label });
   try {

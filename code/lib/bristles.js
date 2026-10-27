@@ -16,13 +16,26 @@ function foldKey(s) {
     .replace(/[^\p{L}\p{N} ]+/gu, ' ').replace(/\s+/g, ' ').trim();
 }
 
-// EXPERIMENTAL variant key for transliterated names (constitution decision 2, rules finalised after E1):
-// w->v, drop h after an aspirable stop (b d g j k p t), collapse doubled letters; digits untouched. Used only to report what it would merge.
+// Variant key for transliterated names (constitution decision 2; rules from E1 on nug-v6, 2026-10-27).
+// Folds spelling variants only: w->v, drop h after an aspirable stop (b d g j k p t), collapse doubled letters.
+// Candidate generation only: it never creates a link on its own, and nothing stores its output (computed at read time).
+// Guards, each from a failure seen in the E1 review of 151 merge groups:
+//   - roman numerals are never folded (the doubled-letter rule made World War II = I, George III = I);
+//   - a token is folded only if the folded form keeps >= VARIANT_MIN_LEN letters (copper/cooper, tiger/Tigger, thing/ting stay apart);
+//   - numbers and mixed tokens are never folded ("300" ~ "30" was a bug).
+const VARIANT_MIN_LEN = 6;
+const ROMAN = /^(?=[ivxlcdm])m{0,4}(cm|cd|d?c{0,3})(xc|xl|l?x{0,3})(ix|iv|v?i{0,3})$/;
+function foldToken(w) { return w.replace(/([bdgjkpt])h/g, '$1').replace(/w/g, 'v').replace(/(.)\1+/g, '$1'); }
 function variantKey(s) {
   return foldKey(s).split(' ').map(function (w) {
-    if (!/^\p{L}+$/u.test(w)) return w;   // numbers and mixed tokens are never folded (E1 preview: "300" ~ "30" was a bug)
-    return w.replace(/([bdgjkpt])h/g, '$1').replace(/w/g, 'v').replace(/(.)\1+/g, '$1');   // aspirates only: sh/ch stay
+    if (!/^\p{L}+$/u.test(w) || ROMAN.test(w)) return w;
+    const f = foldToken(w);
+    return f.length < VARIANT_MIN_LEN ? w : f;
   }).join(' ');
+}
+// The pre-E1 rule, kept only so the lab can compare old and new on real data.
+function variantKeyV1(s) {
+  return foldKey(s).split(' ').map(function (w) { return /^\p{L}+$/u.test(w) ? foldToken(w) : w; }).join(' ');
 }
 
 // Four-digit years 1000-2039 in running text (not parts of 12,000 or 3.1415; both ends of 1914-1918 count).
@@ -203,4 +216,4 @@ function tagDistance(a, b) {
   return 1 - inter / (a.size + b.size - inter);
 }
 
-module.exports = { findDates: D.findDates, normUnit, yearOfKey, quantityOfKey, STOP, foldKey, variantKey, yearsIn, qualifyNumber, datesIn, isYearKey, tokens, usableKey, titleKey, buildIdf, vectorOf, cosine, tagDistance };
+module.exports = { findDates: D.findDates, normUnit, yearOfKey, quantityOfKey, STOP, foldKey, variantKey, variantKeyV1, yearsIn, qualifyNumber, datesIn, isYearKey, tokens, usableKey, titleKey, buildIdf, vectorOf, cosine, tagDistance };

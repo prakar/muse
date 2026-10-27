@@ -118,7 +118,7 @@ function openDb() {
 // ---------------------------------------------------------------------------
 const PROVIDER_CONFIG = {
   grok:       { largeContext: true,  costPerMillionIn: 2.00, costPerMillionOut: 6.00,  budgetEstimate: 0.02  },   // per-model rates: MODEL_PRICES
-  gemini:     { largeContext: true,  costPerMillionIn: 0.075, costPerMillionOut: 0.30, budgetEstimate: 0.001 },
+  gemini:     { largeContext: true,  costPerMillionIn: 1.25, costPerMillionOut: 10.00, budgetEstimate: 0.003 },
   claude:     { largeContext: true,  costPerMillionIn: 3.00, costPerMillionOut: 15.00, budgetEstimate: 0.02  },
   openrouter: { largeContext: false, costPerMillionIn: 0,    costPerMillionOut: 0,     budgetEstimate: 0     },
 };
@@ -134,6 +134,15 @@ const MODEL_PRICES = {
   grok: [
     { match: /^grok-4\.(6|7)\b/,              in: 2.00, out: 6.00 },
     { match: /^grok-4\.3\b|^grok-4\.20|^grok-4$/, in: 1.25, out: 2.50 },
+  ],
+  gemini: [
+    // Order matters: the first match wins, so flash-lite must precede flash.
+    // flash: $0.30 / $2.50 per M. Checked 2026-10-27 against the Google bill (INR 3.73K over Oct 22-27 at about INR 95/USD = about $39,
+    // list-price recompute of the recorded tokens = $43.7; billing lags by hours). The old $0.075 / $0.30 under-recorded spend about 6x.
+    // lite and pro are published list prices (2025), not re-checked against a bill; re-verify when the resolver moves to them.
+    { match: /^gemini-2\.5-flash-lite\b/, in: 0.10, out: 0.40 },
+    { match: /^gemini-2\.5-flash\b/,      in: 0.30, out: 2.50 },
+    { match: /^gemini-2\.5-pro\b/,        in: 1.25, out: 10.00 },
   ],
 };
 const LONG_CONTEXT_TOKENS = { grok: 200000 };

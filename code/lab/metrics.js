@@ -21,4 +21,5 @@ function bootstrapCI(fn, pos, neg, n, seed) {
   const v = []; for (let i = 0; i < (n || 200); i++) v.push(fn(pick(pos), pick(neg)));
   v.sort((a, b) => a - b); return [v[Math.floor(v.length * 0.025)], v[Math.floor(v.length * 0.975)]];
 }
-module.exports = { auc, precisionAtK, recallAtK, bootstrapCI };
+function rng(seed) { let s = seed || 1; return () => (s = (s * 1664525 + 1013904223) % 4294967296) / 4294967296; }
+module.exports = { rng, auc, precisionAtK, recallAtK, bootstrapCI };

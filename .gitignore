@@ -34,3 +34,9 @@ bakeoff/node_modules/
 bakeoff/results-*.txt
 __pycache__/
 bakeoff/rust/target/
+code/lab/out/
+eval.db
+eval.db-*
+
+# Quiz files and anything extracted from them (others' content: Muse Constitution Decision 7): never commit
+backtest/

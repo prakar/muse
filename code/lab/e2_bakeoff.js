@@ -42,9 +42,14 @@ function buildPairs(burrs, dupes, opts) {
   return { pos: pos, rand: rand, hard: hard };
 }
 
-function summarise(name, scorePairs) {
+function summarise(name, scorePairs, mask) {
   const f = (pos, neg) => M.auc(pos, neg);
   const out = { model: name, n_pos: scorePairs.pos.length };
+  if (mask) {   // positives TF-IDF finds hard (paraphrase-like): the only place embeddings can add anything
+    const sub = scorePairs.pos.filter((_, i) => mask[i]);
+    out.n_pos_para = sub.length;
+    out.auc_para = sub.length >= 10 ? f(sub, scorePairs.hard) : NaN;
+  }
   ['rand', 'hard'].forEach(k => {
     out['auc_' + k] = f(scorePairs.pos, scorePairs[k]);
     out['ci_' + k] = M.bootstrapCI(f, scorePairs.pos, scorePairs[k], 200, 3);
@@ -69,20 +74,23 @@ async function main() {
   const toksAll = burrs.map(b => B.tokens(D.burrText(b))), idf = B.buildIdf(toksAll);
   const tv = new Map(burrs.map((b, i) => [b.id, B.vectorOf(toksAll[i], idf)]));
   const score = (pl, simf) => ({ pos: pl.pos.map(p => simf(p[0], p[1])), rand: pl.rand.map(p => simf(p[0], p[1])), hard: pl.hard.map(p => simf(p[0], p[1])) });
-  results.push(summarise('tfidf', score(pairs, (x, y) => B.cosine(tv.get(x), tv.get(y)))));
+  const tfSim = (x, y) => B.cosine(tv.get(x), tv.get(y)), thr = +arg('para-below', 0.85);
+  const mask = pairs.pos.map(p => tfSim(p[0], p[1]) < thr);   // "paraphrase-like" positives
+  console.log(`positives with TF-IDF cosine < ${thr}: ${mask.filter(Boolean).length} of ${pairs.pos.length} (exact/near-exact clones are trivial for any model)`);
+  results.push(summarise('tfidf', score(pairs, tfSim), mask));
   const cacheDir = path.join(__dirname, 'out', 'cache');
   for (const m of models) {
     try {
       const cache = new S.EmbedCache(cacheDir, m), r = await S.embedAll(ollamaBackend(m), texts, cache);
       console.log(`${m}: embedded ${r.embedded}, cached ${r.cached}`);
-      results.push(summarise(m, score(pairs, (x, y) => S.cosDense(r.vecs[idx.get(x)], r.vecs[idx.get(y)]))));
+      results.push(summarise(m, score(pairs, (x, y) => S.cosDense(r.vecs[idx.get(x)], r.vecs[idx.get(y)])), mask));
     } catch (e) { console.error(`${m}: skipped - ${e.message}`); }
   }
   const outDir = path.join(__dirname, 'out', version); fs.mkdirSync(outDir, { recursive: true });
   fs.writeFileSync(path.join(outDir, 'e2_results.json'), JSON.stringify({ version: version, ts: new Date().toISOString(), burrs: burrs.length, results: results }, null, 1));
   const fx = x => x.toFixed(3);
-  console.log('\nmodel\tAUC vs random\t[95% CI]\tAUC vs same-hook (hard)\t[95% CI]');
-  results.forEach(r => console.log(`${r.model}\t${fx(r.auc_rand)}\t[${fx(r.ci_rand[0])},${fx(r.ci_rand[1])}]\t${fx(r.auc_hard)}\t[${fx(r.ci_hard[0])},${fx(r.ci_hard[1])}]`));
+  console.log('\nmodel\tAUC vs random\t[95% CI]\tAUC vs same-hook (hard)\t[95% CI]\tparaphrase-like pos AUC (n)');
+  results.forEach(r => console.log(`${r.model}\t${fx(r.auc_rand)}\t[${fx(r.ci_rand[0])},${fx(r.ci_rand[1])}]\t${fx(r.auc_hard)}\t[${fx(r.ci_hard[0])},${fx(r.ci_hard[1])}]\t${fx(r.auc_para)} (${r.n_pos_para})`));
   console.log('\nwritten to ' + path.join(outDir, 'e2_results.json'));
 }
 module.exports = { buildPairs, summarise };
