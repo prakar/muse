@@ -61,6 +61,7 @@ const ITEM_LABELS = {
   burrs: [['good', 'Interesting fact', 'Faithful to its evidence and a fact you would gladly hold as a card.'], ['weak', 'Dull fact', 'True, but too trivial or vague to build on.'], ['junk', 'Wrong or not a fact', 'Not supported by the evidence, or not a fact at all.']],
   bristles: [['good handle', 'Use as a link', 'Specific and meaning the same wherever it appears.'], ['bad handle', 'Too generic to link', 'Correct, but too common or too vague to connect notes.'], ['noise', 'Not a real hook (a mistake)', 'An extraction artefact: a fragment, URL or stray number.']],
   sparks: [['spark', 'Worth a question', 'This pairing makes you want to write a question.'], ['held (keep juxtaposition)', 'Keep this pairing for later', 'Not a question yet, but keep the two together.'], ['dull', 'Dull', 'Valid, but uninteresting.'], ['trivial', 'Too obvious', 'Obvious or a coincidence.']],
+  wordplay: [['good lead-in', 'Usable as a lead-in', 'A quiz lead-in you would use.'], ['weak', 'Not worth a lead-in', 'Valid wordplay, but dull or accidental.']],
   slices: [['useful slice', 'Useful to browse', 'A year, quantity or word worth pulling every note for.'], ['noise', 'Not worth browsing', 'Too generic or accidental to be a slice.']],
   knots: [['homonym', 'Unrelated meanings', 'e.g. bank (river edge) and bank (money): nothing connects them.'], ['polyseme', 'Related meanings', 'e.g. mouth (body) and mouth (river): one grew out of the other.'], ['same sense', 'Same meaning', 'One meaning everywhere, so not a real knot.'], ['unsure', "Can't tell", '']]
 };
@@ -95,6 +96,32 @@ function recsForKey(key, e) {
 
 function jaccard(a, b) { let i = 0; a.forEach(function (x) { if (b.has(x)) i++; }); const u = a.size + b.size - i; return u ? i / u : 0; }
 function band(df) { return df === 1 ? 'single' : df <= 8 ? 'spark' : df <= 40 ? 'mid' : 'hub'; }
+
+
+// ---------- spark ranking (28 Oct 2026) ----------
+// The old score, rarity x tag distance, was flat: every two-note spark has the same rarity, tag distance is 1.00 for any pair of notes
+// that share no tag, and a missing distance (untagged notes) scored -1 and sank to the bottom although the author had judged many of those
+// "worth a question". The ranking is now a sum of small, readable parts. The weights are hand-set priors, to be refitted
+// (logistic regression on the author's judgements) once about 200 sparks are judged; `parts` is kept on each row so the viewer can say why.
+function sparkParts(r, nBOf, NN) {
+  const parts = {}, surface = String(r.surface || ''), words = surface.split(/\s+/).length, wp = r.wordplay;
+  parts.rare = +Math.min(1, r.rarity / Math.log(NN / 2)).toFixed(2);                                                  // 1 = shared by two notes
+  if (wp) parts.name = 0;
+  else parts.name = /^[A-Z]/.test(surface) ? (words > 1 ? 1 : 0.6) : (words > 1 ? 0.2 : -0.5);                       // proper multi-word name best; lowercase single word is a sense question
+  if (r.recs.indexOf('common-word') >= 0) parts.common = -1;
+  if (r.recs.indexOf('needs-category') >= 0) parts.needsCategory = -0.3;
+  parts.far = r.dist == null ? 0.5 : +r.dist.toFixed(2);                                                              // unknown distance is neutral, not bad
+  const nb = (r.burrs || []).map(function (b) { return nBOf.get(b.id) || 0; }), lens = (r.burrs || []).map(function (b) { return (b.claim || '').length; });
+  parts.rich = nb.length ? +Math.min(1, Math.min.apply(null, nb) / 5).toFixed(2) * 0.6 : 0;                           // both facts carry several hooks
+  parts.full = lens.length ? +Math.min(1, Math.min.apply(null, lens) / 120).toFixed(2) * 0.5 : 0;                     // very short facts are weak
+  if (r.clone) parts.restated = -0.5;
+  if (wp) parts.wordplay = wp.grade === 'A' ? 0.8 : 0.2;
+  const score = Object.keys(parts).reduce(function (s, k) { return s + (k === 'rare' ? 1.5 * parts[k] : parts[k]); }, 0);
+  return { score: +score.toFixed(3), parts: parts };
+}
+function whyRanked(parts) {
+  return Object.keys(parts).filter(function (k) { return k !== 'rare' && k !== 'far' && parts[k] !== 0; }).map(function (k) { return k + (parts[k] > 0 ? ' +' : ' ') + (+parts[k]).toFixed(1); }).concat(['distance ' + parts.far]).join(', ');
+}
 
 function build(db, version, opts) {
   opts = opts || {};
@@ -226,6 +253,87 @@ function build(db, version, opts) {
   sparkOut.sort(function (a, b) { return b.score - a.score; });
   sparkRows.length = 0; sparkOut.forEach(function (r) { delete r._ns; sparkRows.push(r); });
 
+  // ----- wordplay: pairs of names joined by a wordplay relation become sparks; every edge is listed in the wordplay view.
+  // Read from wordplay_edges (built by npm run wordplay); absent table = no wordplay, nothing else changes. Grade C edges are listed, never sparks.
+  const wordplayRows = []; let wpState = 'table missing (run npm run wordplay -- --apply)';
+  let wpEdges = null; try { wpEdges = db.prepare('SELECT kind, a_name, b_name, a_notes, b_notes, grade, detail, fit FROM wordplay_edges').all(); } catch (e) { /* table not built */ }
+  if (wpEdges) {
+    wpState = 'ok';
+    const noteBurrs = new Map(); burrsRaw.forEach(function (b) { (noteBurrs.get(b.note_id) || noteBurrs.set(b.note_id, []).get(b.note_id)).push(b); });
+    const burrFor = function (nid, name) { const l = noteBurrs.get(nid) || [], n = String(name || '').toLowerCase(); return l.find(function (b) { return n && b.claim.toLowerCase().indexOf(n) >= 0; }) || l[0]; };
+    const ids = function (s) { try { return JSON.parse(s || '[]').filter(function (n) { return noteBurrs.has(n); }); } catch (e) { return []; } };
+    const seenPair = new Set();
+    wpEdges.sort(function (x, y) { return x.grade < y.grade ? -1 : x.grade > y.grade ? 1 : 0; });
+    wpEdges.forEach(function (e, i) {
+      const an = ids(e.a_notes), bn = ids(e.b_notes), det = e.detail ? JSON.parse(e.detail) : null;
+      const na = an[0], nb = bn.find(function (n) { return n !== na; });
+      const pair = na != null && nb != null, surface = e.b_name ? e.a_name + ' ~ ' + e.b_name : e.a_name;
+      const burrs = pair ? [burrFor(na, e.a_name), burrFor(nb, e.b_name)] : an.length ? [burrFor(na, e.a_name)] : [];
+      const notes = Array.from(new Set(an.concat(bn)));
+      let dist = null;
+      if (pair) { let s = 0, c = 0; an.slice(0, 3).forEach(function (x) { bn.slice(0, 3).forEach(function (y) { if (x === y) return; const d = L.tagDistance(noteTags.get(x), noteTags.get(y)); if (d != null) { s += d; c++; } }); }); dist = c ? s / c : null; }
+      const id = 'wp:' + e.kind + ':' + e.a_name + '|' + (e.b_name || '');
+      wordplayRows.push({ id: id, kind: e.kind, grade: e.grade, a: e.a_name, b: e.b_name, surface: surface, pair: pair, nNotes: notes.length, fit: e.fit, detail: det && det.items ? det.items.slice(0, 8).map(function (x) { return x.name; }) : det && det.names ? det.names.slice(0, 8) : null,
+        dist: dist, an: an.slice(0, 12), bn: bn.slice(0, 12), burrs: burrs.filter(Boolean).map(brief), recs: [], types: ['wordplay', e.kind], _s: (e.kind + ' ' + surface).toLowerCase() });
+      const pk = [e.a_name, e.b_name].map(function (x) { return String(x).toLowerCase(); }).sort().join('|');   // one spark per pair of names, whichever detector found it first (best grade sorts first)
+      if (pair && e.grade !== 'C' && !seenPair.has(pk) && burrs[0] && burrs[1]) {
+        seenPair.add(pk);
+        const df = new Set(an.concat(bn)).size;
+        sparkRows.push({ id: id, surface: surface, types: ['wordplay', e.kind], df: df, rarity: Math.log(NN / df), dist: dist, cos: 0, clone: false, score: dist == null ? -1 : Math.log(NN / df) * dist,
+          recs: [], burrs: burrs.map(brief), wordplay: { kind: e.kind, grade: e.grade, fit: e.fit }, also: [], _s: (e.kind + ' ' + surface).toLowerCase() });
+      }
+    });
+    wordplayRows.sort(function (a, b) { return (a.grade < b.grade ? -1 : a.grade > b.grade ? 1 : 0) || b.nNotes - a.nNotes; });
+  }
+
+  const nBOf = new Map(burrRows.map(function (r) { return [r.id, r.nB]; }));
+  sparkRows.forEach(function (r) { r.score0 = r.score; const s = sparkParts(r, nBOf, NN); r.score = s.score; r.parts = s.parts; r.why = whyRanked(s.parts); });
+  sparkRows.sort(function (a, b) { return b.score - a.score || (a.id < b.id ? -1 : 1); });
+  // ----- Connect support: the facts that share one handle, each with a difficulty proxy (mean idf of its wording, handle words left out).
+  const diffOf = function (b, ex) {
+    const t = (toks.get(b.id) || []).filter(function (w) { return !L.STOP.has(w) && w.length >= 3 && !(ex && ex.has(w)); });
+    return t.length ? t.reduce(function (s, w) { return s + (idf.get(w) || 1); }, 0) / t.length : 0;
+  };
+  const noteBurrsAll = new Map(); burrsRaw.forEach(function (b) { (noteBurrsAll.get(b.note_id) || noteBurrsAll.set(b.note_id, []).get(b.note_id)).push(b); });
+  const burrWith = function (nid, name) { const l = noteBurrsAll.get(nid) || [], n = String(name || '').toLowerCase(); return l.find(function (b) { return n && b.claim.toLowerCase().indexOf(n) >= 0; }) || l[0]; };
+  // Other hooks a fact carries that join at least one more note (not years), rarest first: the "also about" pivots in the app.
+  const hooksOf = function (b) { return (bristles.get(b.id) || []).map(function (x) { return { id: x.key, label: x.surface, df: index.get(x.key).notes.size }; })
+    .filter(function (x) { return x.df >= 2 && x.df <= 40 && !L.isYearKey(x.id); }).sort(function (a, c) { return a.df - c.df; }).slice(0, 6); };
+  const itemOf = function (b, ex, extra) { return Object.assign({ id: b.id, noteId: b.note_id, note: noteTitle.get(b.note_id), claim: b.claim, quote: b.quote, diff: +diffOf(b, ex).toFixed(3), hooks: hooksOf(b) }, extra || {}); };
+  const wpById = new Map(wordplayRows.map(function (r) { return [r.id, r]; }));
+  const handle = function (id) {
+    if (wpById.has(id)) {
+      const r = wpById.get(id), items = [];
+      (r.an || []).slice(0, 4).forEach(function (n) { const b = burrWith(n, r.a); if (b) items.push(itemOf(b, new Set(L.tokens(r.a)), { side: 'a', name: r.a })); });
+      (r.bn || []).filter(function (n) { return (r.an || []).indexOf(n) < 0; }).slice(0, 4).forEach(function (n) { const b = burrWith(n, r.b); if (b) items.push(itemOf(b, new Set(L.tokens(r.b)), { side: 'b', name: r.b })); });
+      return { id: id, kind: 'wordplay', wordplay: r.kind, grade: r.grade, a: r.a, b: r.b, surface: r.surface, items: items };
+    }
+    const e = index.get(id); if (!e) return null;
+    const ex = new Set(id.split(' '));
+    return { id: id, kind: 'hook', surface: e.surface, types: Array.from(e.types), df: e.notes.size, items: pickPerNote(e).map(function (b) { return itemOf(b, ex); }) };
+  };
+  const suggest = function (q, limit) {
+    const raw = String(q || '').toLowerCase().trim(); if (raw.length < 2) return [];
+    // "Berlin ~ Merlin", "berlin - merlin", "berlin vs merlin" or just "berlin": every part must appear in a wordplay pair; a plain query also matches hooks.
+    const parts = raw.split(/\s*(?:~|\u2013|\u2014|\s-\s|\/|\bvs\.?\b|\band\b)\s*/).filter(function (x) { return x.length >= 2; }), s = parts[0] || raw;
+    const wp = wordplayRows.filter(function (r) { return r.pair && r.grade !== 'C' && parts.every(function (x) { return r._s.indexOf(x) >= 0; }); }).sort(function (a, b) { return (a.grade < b.grade ? -1 : a.grade > b.grade ? 1 : 0) || b.nNotes - a.nNotes; })
+      .slice(0, 8).map(function (r) { return { id: r.id, label: r.surface, kind: 'wordplay', df: r.nNotes, sub: 'wordplay: ' + r.kind + ', grade ' + r.grade, a: r.a, b: r.b, wp: r.kind, grade: r.grade }; });
+    const hooks = [];
+    if (parts.length < 2) index.forEach(function (e, key) { const df = e.notes.size; if (df < 2 || df > 40 || L.isYearKey(key)) return; if (key.indexOf(s) < 0 && String(e.surface).toLowerCase().indexOf(s) < 0) return;
+      hooks.push({ id: key, label: e.surface, kind: 'hook', df: df, starts: key.indexOf(s) === 0 ? 0 : 1 }); });
+    hooks.sort(function (a, b) { return a.starts - b.starts || a.df - b.df || a.label.length - b.label.length; });
+    return wp.concat(hooks.slice(0, (limit || 14) - wp.length));
+  };
+  // Browse wordplay pairs by kind (best grade, then most notes first).
+  const wordplayPairs = function (kind, limit) {
+    return wordplayRows.filter(function (r) { return r.pair && r.grade !== 'C' && (!kind || r.kind === kind); }).sort(function (a, b) { return (a.grade < b.grade ? -1 : a.grade > b.grade ? 1 : 0) || b.nNotes - a.nNotes; })
+      .slice(0, limit || 60).map(function (r) { return { id: r.id, label: r.surface, kind: 'wordplay', df: r.nNotes, sub: r.kind + ', grade ' + r.grade, a: r.a, b: r.b, wp: r.kind, grade: r.grade }; });
+  };
+  const wordplayKinds = function () {
+    const m = {}; wordplayRows.forEach(function (r) { if (r.pair && r.grade !== 'C') m[r.kind] = (m[r.kind] || 0) + 1; });
+    return Object.keys(m).sort(function (a, b) { return m[b] - m[a]; }).map(function (k) { return { kind: k, n: m[k] }; });
+  };
+
   const detail = function (view, id) {
     if (view !== 'bristles') return null;
     const e = index.get(id); if (!e) return null;
@@ -234,9 +342,9 @@ function build(db, version, opts) {
   const counts = {};
   [['burrs', burrRows], ['bristles', bristleRows], ['sparks', sparkRows], ['knots', knotRows]].forEach(function (p) {
     p[1].forEach(function (r) { r.recs.forEach(function (t) { (counts[t] = counts[t] || {})[p[0]] = ((counts[t] || {})[p[0]] || 0) + 1; }); }); });
-  return { version: version, notes: NN, burrs: burrRows, bristles: bristleRows, sparks: sparkRows, knots: knotRows, slices: sliceRows, timeline: timeline, coarse: coarse, quantities: quantities, excluded: excluded, detail: detail, recCounts: counts,
+  return { version: version, notes: NN, burrs: burrRows, bristles: bristleRows, sparks: sparkRows, knots: knotRows, slices: sliceRows, wordplay: wordplayRows, wordplayState: wpState, handle: handle, suggest: suggest, wordplayPairs: wordplayPairs, wordplayKinds: wordplayKinds, timeline: timeline, coarse: coarse, quantities: quantities, excluded: excluded, detail: detail, recCounts: counts,
     kinds: Array.from(new Set(burrRows.map(function (r) { return r.kind; }))).sort(),
-    types: Array.from(new Set([].concat.apply([], bristleRows.map(function (r) { return r.types; })))).sort() };
+    types: Array.from(new Set([].concat.apply([], bristleRows.map(function (r) { return r.types; })).concat(wordplayRows.length ? ['wordplay'] : []))).sort() };
 }
 
-module.exports = { sparkExclusion, build, REC, ITEM_LABELS, recsForKey, DURATION, REL, DEAD_END };
+module.exports = { sparkParts, sparkExclusion, build, REC, ITEM_LABELS, recsForKey, DURATION, REL, DEAD_END };

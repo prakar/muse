@@ -1,0 +1,32 @@
+/* Design tokens: the only place raw colours, sizes and timings are chosen. Everything else refers to these. */
+:root {
+  color-scheme: light dark;
+  --bg: #f6f4ee; --surface: #fffdf8; --surface-2: #f0ece1; --text: #1c1b18; --text-2: #5d5a50; --text-3: #8a867a;
+  --line: #e2ddcf; --line-strong: #cfc8b6; --accent: #9a3f12; --accent-contrast: #fffdf8; --accent-soft: #f6e3d3; --focus: #1f6fd1;
+  --hard: #9a3f12; --medium: #8a6a12; --easy: #2f6b3a; --danger: #a3262a;
+  --shadow-1: 0 1px 2px rgb(40 30 10 / .06), 0 1px 1px rgb(40 30 10 / .04);
+  --shadow-2: 0 6px 20px rgb(40 30 10 / .12), 0 2px 6px rgb(40 30 10 / .06);
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-read: "Iowan Old Style", "Charter", "Palatino Linotype", Georgia, serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --fs-0: .75rem; --fs-1: .8125rem; --fs-2: .9375rem; --fs-3: 1.0625rem; --fs-4: 1.3125rem; --fs-5: 1.75rem;
+  --s-1: .25rem; --s-2: .5rem; --s-3: .75rem; --s-4: 1rem; --s-5: 1.5rem; --s-6: 2rem; --s-7: 3rem;
+  --r-1: 6px; --r-2: 10px; --r-3: 16px; --r-pill: 999px;
+  --t-fast: 90ms; --t-med: 180ms; --ease: cubic-bezier(.2, .7, .2, 1);
+  --z-drawer: 30; --z-toast: 50; --z-pop: 40;
+  --sidebar-w: 14rem; --drawer-w: min(34rem, 44vw);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #131311; --surface: #1c1c19; --surface-2: #252420; --text: #ecebe4; --text-2: #aaa699; --text-3: #7d7a6f;
+    --line: #2f2e29; --line-strong: #46443c; --accent: #e8986a; --accent-contrast: #1c1208; --accent-soft: #3b2a1e; --focus: #6aa6f0;
+    --hard: #e8986a; --medium: #dcbc5e; --easy: #86c48e; --danger: #f08a8c;
+    --shadow-1: 0 1px 2px rgb(0 0 0 / .4); --shadow-2: 0 8px 28px rgb(0 0 0 / .55);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #131311; --surface: #1c1c19; --surface-2: #252420; --text: #ecebe4; --text-2: #aaa699; --text-3: #7d7a6f;
+  --line: #2f2e29; --line-strong: #46443c; --accent: #e8986a; --accent-contrast: #1c1208; --accent-soft: #3b2a1e; --focus: #6aa6f0;
+  --hard: #e8986a; --medium: #dcbc5e; --easy: #86c48e; --danger: #f08a8c;
+  --shadow-1: 0 1px 2px rgb(0 0 0 / .4); --shadow-2: 0 8px 28px rgb(0 0 0 / .55);
+}

@@ -101,5 +101,5 @@ async function main() {
   console.log('\nclass\tprecision\trecall\tn_truth\tn_judged'); ['yes', 'none', 'held'].forEach(c => console.log(`${c}\t${f(rep.per_class[c].precision)}\t\t${f(rep.per_class[c].recall)}\t${rep.per_class[c].n_truth}\t${rep.per_class[c].n_pred}`));
   console.log('\nwritten to ' + path.join(outDir, `judge_${J.PROMPT_VERSION}_${stance}.json`));
 }
-module.exports = { judgeRows, report, JsonlCache, memCache };
+module.exports = { judgeRows, report, JsonlCache, memCache, labRate };
 if (require.main === module) main().catch(e => { console.error(e); process.exit(1); });

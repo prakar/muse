@@ -1,0 +1,1605 @@
+{
+  "generated_from": [
+    "QUARRY - Heuristics Commons",
+    "QUARRY - Heuristics Illustrations",
+    "code/data/heuristic_overlay.json"
+  ],
+  "assessed": "2026-10-28 against the nug-v6 prompt and schema (code/lib/burrs.js) and the measurements in code/lab/out/nug-v6/heuristic_gap.json",
+  "relations": [
+    "caused-by",
+    "explained-by",
+    "chosen-because",
+    "named-after",
+    "renamed-from",
+    "derived-from",
+    "inspired-by",
+    "commemorates",
+    "persists-as",
+    "applied-from",
+    "contested-explanation"
+  ],
+  "gaps": {
+    "G1": {
+      "title": "Day-level date and date role",
+      "fix": "Deterministic scan of the claim text for day and month dates with a role cue (born, died, founded, opened, released and similar), stored beside the year hook. No model change."
+    },
+    "G2": {
+      "title": "No typed relations between claims",
+      "fix": "Nuggetizer emits relation hooks from the draft vocabulary, each with a target string copied from the note and verified by code (route a, prompt v7); the judge also names the link class (route b)."
+    },
+    "G3": {
+      "title": "Loose hooks are not joinable",
+      "fix": "Canonicalise set, former-role, mechanism and uniqueness phrases into classes (embedding clustering with a deterministic join on the class id, or a closed vocabulary); try on a sample before any re-extraction."
+    },
+    "G4": {
+      "title": "String layer not built",
+      "fix": "Deterministic detectors over titles, entity values and answers (checklist H3). No extraction change."
+    },
+    "G5": {
+      "title": "News peg comes from the author",
+      "fix": "The author marks a note or burr as a news peg; the perishable flag is a different thing."
+    },
+    "G6": {
+      "title": "Pattern and aside kinds are almost never emitted",
+      "fix": "Deterministic list and table detector for pattern burrs; a prompt change or second pass for asides; look at the vault's real list notes first."
+    }
+  },
+  "rows": [
+    {
+      "id": 1,
+      "group": "A",
+      "name": "Chain with pivot",
+      "tag": "LLM",
+      "route": "relation",
+      "v6": "missing",
+      "gaps": [
+        "G2"
+      ],
+      "join_on": [
+        "entity"
+      ],
+      "rel": [
+        "caused-by",
+        "named-after"
+      ],
+      "detector": "judge",
+      "note": "Each hop is a cause or a name that hands off to the next; chains need typed edges to be walked.",
+      "fragments": 2,
+      "conf": [
+        "H",
+        "H"
+      ]
+    },
+    {
+      "id": 2,
+      "group": "A",
+      "name": "Ripple",
+      "tag": "SQL",
+      "route": "join",
+      "v6": "partial",
+      "gaps": [
+        "G2"
+      ],
+      "join_on": [
+        "entity"
+      ],
+      "rel": [
+        "caused-by"
+      ],
+      "detector": "sql",
+      "note": "Several effects of one event: join on the event entity; caused-by gives the direction.",
+      "fragments": 1,
+      "conf": [
+        "M"
+      ]
+    },
+    {
+      "id": 3,
+      "group": "A",
+      "name": "Same-moment coincidence",
+      "tag": "SQL",
+      "route": "join",
+      "v6": "missing",
+      "gaps": [
+        "G1"
+      ],
+      "join_on": [
+        "date"
+      ],
+      "rel": [],
+      "detector": "sql",
+      "note": "Time hooks are years and decades; the same day needs a day-level date read from the claim.",
+      "fragments": 2,
+      "conf": [
+        "H",
+        "H"
+      ]
+    },
+    {
+      "id": 4,
+      "group": "A",
+      "name": "Parallel instances",
+      "tag": "LLM",
+      "route": "join",
+      "v6": "partial",
+      "gaps": [
+        "G3"
+      ],
+      "join_on": [
+        "set",
+        "former-role"
+      ],
+      "rel": [],
+      "detector": "judge",
+      "note": "Same role in different places: set or former-role hooks exist but rarely match exactly.",
+      "fragments": 2,
+      "conf": [
+        "M",
+        "M"
+      ]
+    },
+    {
+      "id": 5,
+      "group": "A",
+      "name": "Clone-of",
+      "tag": "LLM",
+      "route": "relation",
+      "v6": "missing",
+      "gaps": [
+        "G2"
+      ],
+      "join_on": [
+        "entity"
+      ],
+      "rel": [
+        "derived-from"
+      ],
+      "detector": "judge",
+      "note": "A local version of a foreign original.",
+      "fragments": 1,
+      "conf": [
+        "H"
+      ]
+    },
+    {
+      "id": 6,
+      "group": "A",
+      "name": "Echo / lineage / homage chain",
+      "tag": "LLM",
+      "route": "relation",
+      "v6": "missing",
+      "gaps": [
+        "G2"
+      ],
+      "join_on": [
+        "entity"
+      ],
+      "rel": [
+        "inspired-by",
+        "derived-from"
+      ],
+      "detector": "judge",
+      "note": "Imitation or transmission hops, walked backwards.",
+      "fragments": 3,
+      "conf": [
+        "H",
+        "H",
+        "M"
+      ]
+    },
+    {
+      "id": 7,
+      "group": "A",
+      "name": "Namesake split",
+      "tag": "SQL",
+      "route": "join",
+      "v6": "covered",
+      "gaps": [],
+      "join_on": [
+        "entity"
+      ],
+      "rel": [],
+      "detector": "sql",
+      "note": "Same name, different category: entity hooks carry a category since nug-v5.",
+      "fragments": 2,
+      "conf": [
+        "H",
+        "H"
+      ]
+    },
+    {
+      "id": 8,
+      "group": "A",
+      "name": "Name borrowed across places or eras",
+      "tag": "LLM",
+      "route": "relation",
+      "v6": "missing",
+      "gaps": [
+        "G2"
+      ],
+      "join_on": [
+        "entity",
+        "place"
+      ],
+      "rel": [
+        "named-after"
+      ],
+      "detector": "judge",
+      "note": "A name that travelled; both ends are entity or place hooks but the direction is untyped.",
+      "fragments": 2,
+      "conf": [
+        "H",
+        "H"
+      ]
+    },
+    {
+      "id": 9,
+      "group": "A",
+      "name": "Why-here / chosen-because",
+      "tag": "LLM",
+      "route": "relation",
+      "v6": "partial",
+      "gaps": [
+        "G2"
+      ],
+      "join_on": [
+        "entity",
+        "place"
+      ],
+      "rel": [
+        "chosen-because",
+        "caused-by"
+      ],
+      "detector": "judge",
+      "note": "The open-question field captures some why-questions but links nothing.",
+      "fragments": 2,
+      "conf": [
+        "H",
+        "M"
+      ]
+    },
+    {
+      "id": 10,
+      "group": "A",
+      "name": "Persists-as (afterlife)",
+      "tag": "LLM",
+      "route": "relation",
+      "v6": "missing",
+      "gaps": [
+        "G2"
+      ],
+      "join_on": [
+        "entity"
+      ],
+      "rel": [
+        "persists-as"
+      ],
+      "detector": "judge",
+      "note": "How something survives in a changed form.",
+      "fragments": 2,
+      "conf": [
+        "H",
+        "H"
+      ]
+    },
+    {
+      "id": 11,
+      "group": "A",
+      "name": "Legend explains practice (aetiology)",
+      "tag": "LLM",
+      "route": "relation",
+      "v6": "missing",
+      "gaps": [
+        "G2"
+      ],
+      "join_on": [
+        "entity"
+      ],
+      "rel": [
+        "explained-by"
+      ],
+      "detector": "judge",
+      "note": "A story that accounts for a practice or object.",
+      "fragments": 2,
+      "conf": [
+        "H",
+        "H"
+      ]
+    },
+    {
+      "id": 12,
+      "group": "A",
+      "name": "Old text, new headline",
+      "tag": "USER",
+      "route": "author",
+      "v6": "na",
+      "gaps": [
+        "G5"
+      ],
+      "join_on": [],
+      "rel": [],
+      "detector": "author",
+      "note": "Needs a news peg from the author; the perishable flag is not one.",
+      "fragments": 2,
+      "conf": [
+        "H",
+        "L"
+      ]
+    },
+    {
+      "id": 13,
+      "group": "A",
+      "name": "Knowledge import",
+      "tag": "LLM",
+      "route": "relation",
+      "v6": "missing",
+      "gaps": [
+        "G2"
+      ],
+      "join_on": [
+        "entity",
+        "place"
+      ],
+      "rel": [
+        "applied-from"
+      ],
+      "detector": "judge",
+      "note": "A solution studied in one place and used in another.",
+      "fragments": 1,
+      "conf": [
+        "H"
+      ]
+    },
+    {
+      "id": 14,
+      "group": "A",
+      "name": "Constraint becomes signature",
+      "tag": "LLM",
+      "route": "relation",
+      "v6": "missing",
+      "gaps": [
+        "G2"
+      ],
+      "join_on": [
+        "entity"
+      ],
+      "rel": [
+        "caused-by",
+        "chosen-because"
+      ],
+      "detector": "judge",
+      "note": "A limit, accident or choice yields a famous trait.",
+      "fragments": 3,
+      "conf": [
+        "H",
+        "H",
+        "M"
+      ]
+    },
+    {
+      "id": 15,
+      "group": "A",
+      "name": "Neglected discovery with a reason",
+      "tag": "LLM",
+      "route": "relation",
+      "v6": "missing",
+      "gaps": [
+        "G2"
+      ],
+      "join_on": [
+        "entity"
+      ],
+      "rel": [
+        "caused-by"
+      ],
+      "detector": "judge",
+      "note": "The reason a discovery was ignored is the hook.",
+      "fragments": 1,
+      "conf": [
+        "H"
+      ]
+    },
+    {
+      "id": 16,
+      "group": "A",
+      "name": "Commemoration channels",
+      "tag": "SQL",
+      "route": "join",
+      "v6": "partial",
+      "gaps": [
+        "G2"
+      ],
+      "join_on": [
+        "entity"
+      ],
+      "rel": [
+        "commemorates"
+      ],
+      "detector": "sql",
+      "note": "Join on the honoured figure; the channel (currency, mountain, award) needs the commemorates relation.",
+      "fragments": 2,
+      "conf": [
+        "H",
+        "H"
+      ]
+    },
+    {
+      "id": 17,
+      "group": "A",
+      "name": "Rehabilitation",
+      "tag": "LLM",
+      "route": "judge",
+      "v6": "partial",
+      "gaps": [],
+      "join_on": [
+        "entity",
+        "time"
+      ],
+      "rel": [],
+      "detector": "judge",
+      "note": "Two dated claims about one entity with opposite standing; the judge names the class.",
+      "fragments": 1,
+      "conf": [
+        "M"
+      ]
+    },
+    {
+      "id": 18,
+      "group": "A",
+      "name": "Trigger event",
+      "tag": "LLM",
+      "route": "relation",
+      "v6": "missing",
+      "gaps": [
+        "G2"
+      ],
+      "join_on": [
+        "entity",
+        "time"
+      ],
+      "rel": [
+        "caused-by"
+      ],
+      "detector": "judge",
+      "note": "A small act igniting a large consequence.",
+      "fragments": 2,
+      "conf": [
+        "H",
+        "M"
+      ]
+    },
+    {
+      "id": 19,
+      "group": "A",
+      "name": "Cause cascade",
+      "tag": "LLM",
+      "route": "relation",
+      "v6": "missing",
+      "gaps": [
+        "G2"
+      ],
+      "join_on": [
+        "entity"
+      ],
+      "rel": [
+        "caused-by"
+      ],
+      "detector": "judge",
+      "note": "Multi-step; needs chained caused-by edges.",
+      "fragments": 1,
+      "conf": [
+        "H"
+      ]
+    },
+    {
+      "id": 20,
+      "group": "A",
+      "name": "Bio-cultural mechanism",
+      "tag": "LLM",
+      "route": "relation",
+      "v6": "missing",
+      "gaps": [
+        "G2"
+      ],
+      "join_on": [
+        "entity",
+        "mechanism"
+      ],
+      "rel": [
+        "explained-by",
+        "caused-by"
+      ],
+      "detector": "judge",
+      "note": "A biological property shaping a social or economic pattern.",
+      "fragments": 2,
+      "conf": [
+        "H",
+        "M"
+      ]
+    },
+    {
+      "id": 21,
+      "group": "A",
+      "name": "Mechanism reuse",
+      "tag": "LLM",
+      "route": "join",
+      "v6": "partial",
+      "gaps": [
+        "G3"
+      ],
+      "join_on": [
+        "mechanism"
+      ],
+      "rel": [],
+      "detector": "sql",
+      "note": "The mechanism hook exists but is a free phrase; only named processes match.",
+      "fragments": 3,
+      "conf": [
+        "M",
+        "M",
+        "L"
+      ]
+    },
+    {
+      "id": 22,
+      "group": "A",
+      "name": "Shape explains function",
+      "tag": "LLM",
+      "route": "relation",
+      "v6": "missing",
+      "gaps": [
+        "G2"
+      ],
+      "join_on": [
+        "entity",
+        "mechanism"
+      ],
+      "rel": [
+        "explained-by"
+      ],
+      "detector": "judge",
+      "note": "A geometry or engineering reason.",
+      "fragments": 2,
+      "conf": [
+        "H",
+        "H"
+      ]
+    },
+    {
+      "id": 23,
+      "group": "A",
+      "name": "Design against nature",
+      "tag": "LLM",
+      "route": "judge",
+      "v6": "partial",
+      "gaps": [],
+      "join_on": [
+        "material"
+      ],
+      "rel": [],
+      "detector": "judge",
+      "note": "Thin example; a label for the judge only until the author rules on it.",
+      "fragments": 1,
+      "conf": [
+        "L"
+      ]
+    },
+    {
+      "id": 24,
+      "group": "A",
+      "name": "Human-uniqueness boundary",
+      "tag": "LLM",
+      "route": "judge",
+      "v6": "partial",
+      "gaps": [
+        "G3"
+      ],
+      "join_on": [
+        "uniqueness"
+      ],
+      "rel": [],
+      "detector": "judge",
+      "note": "A behaviour once thought unique, found elsewhere; the uniqueness hook is a free phrase.",
+      "fragments": 1,
+      "conf": [
+        "H"
+      ]
+    },
+    {
+      "id": 25,
+      "group": "A",
+      "name": "Institutional quirk",
+      "tag": "LLM",
+      "route": "judge",
+      "v6": "partial",
+      "gaps": [],
+      "join_on": [
+        "entity"
+      ],
+      "rel": [],
+      "detector": "judge",
+      "note": "A surprising rule or protocol; recognised by the judge on a shared entity.",
+      "fragments": 1,
+      "conf": [
+        "H"
+      ]
+    },
+    {
+      "id": 26,
+      "group": "A",
+      "name": "Fiction-embedded real thing",
+      "tag": "SQL",
+      "route": "join",
+      "v6": "covered",
+      "gaps": [],
+      "join_on": [
+        "entity"
+      ],
+      "rel": [],
+      "detector": "sql",
+      "note": "A real place or person shared with a work of fiction; entity categories (work, person, place) help.",
+      "fragments": 3,
+      "conf": [
+        "M",
+        "H",
+        "H"
+      ]
+    },
+    {
+      "id": 27,
+      "group": "A",
+      "name": "Myth propagated by art / claim provenance",
+      "tag": "LLM",
+      "route": "relation",
+      "v6": "missing",
+      "gaps": [
+        "G2"
+      ],
+      "join_on": [
+        "entity"
+      ],
+      "rel": [
+        "contested-explanation",
+        "derived-from"
+      ],
+      "detector": "judge",
+      "note": "Where a belief first appeared; burrs carry no source-of-claim field.",
+      "fragments": 3,
+      "conf": [
+        "H",
+        "M",
+        "L"
+      ]
+    },
+    {
+      "id": 28,
+      "group": "A",
+      "name": "Contested or dual explanation",
+      "tag": "LLM",
+      "route": "relation",
+      "v6": "missing",
+      "gaps": [
+        "G2"
+      ],
+      "join_on": [
+        "entity",
+        "etymon"
+      ],
+      "rel": [
+        "contested-explanation"
+      ],
+      "detector": "judge",
+      "note": "Two explanations plus a confidence flag; alternatives are in the design but not in the v6 burr.",
+      "fragments": 3,
+      "conf": [
+        "H",
+        "M",
+        "H"
+      ]
+    },
+    {
+      "id": 29,
+      "group": "A",
+      "name": "Anomaly in a corpus",
+      "tag": "SQL if counts are stored",
+      "route": "join",
+      "v6": "missing",
+      "gaps": [
+        "G6"
+      ],
+      "join_on": [
+        "set"
+      ],
+      "rel": [],
+      "detector": "sql",
+      "note": "Needs counts stored for lists; pattern burrs are almost absent.",
+      "fragments": 1,
+      "conf": [
+        "M"
+      ]
+    },
+    {
+      "id": 30,
+      "group": "A",
+      "name": "Named exception in a free form",
+      "tag": "LLM",
+      "route": "judge",
+      "v6": "partial",
+      "gaps": [],
+      "join_on": [
+        "entity"
+      ],
+      "rel": [],
+      "detector": "judge",
+      "note": "A fixed element inside a fluid form; recognised on a shared entity.",
+      "fragments": 1,
+      "conf": [
+        "H"
+      ]
+    },
+    {
+      "id": 31,
+      "group": "A",
+      "name": "Behind-the-scenes decision",
+      "tag": "LLM",
+      "route": "judge",
+      "v6": "partial",
+      "gaps": [],
+      "join_on": [
+        "entity",
+        "work"
+      ],
+      "rel": [
+        "chosen-because"
+      ],
+      "detector": "judge",
+      "note": "A production choice and its consequence.",
+      "fragments": 1,
+      "conf": [
+        "H"
+      ]
+    },
+    {
+      "id": 32,
+      "group": "A",
+      "name": "Counterfactual pivot",
+      "tag": "LLM",
+      "route": "judge",
+      "v6": "partial",
+      "gaps": [],
+      "join_on": [
+        "entity",
+        "event"
+      ],
+      "rel": [],
+      "detector": "judge",
+      "note": "An explicit what-if; rare in notes, recognised on a shared event.",
+      "fragments": 2,
+      "conf": [
+        "H",
+        "H"
+      ]
+    },
+    {
+      "id": 33,
+      "group": "A",
+      "name": "Perspective shift",
+      "tag": "LLM",
+      "route": "judge",
+      "v6": "na",
+      "gaps": [],
+      "join_on": [],
+      "rel": [],
+      "detector": "judge",
+      "note": "Weak example; judge label only until the author rules on it.",
+      "fragments": 2,
+      "conf": [
+        "L",
+        "L"
+      ]
+    },
+    {
+      "id": 34,
+      "group": "A",
+      "name": "Decision with ethics",
+      "tag": "LLM",
+      "route": "judge",
+      "v6": "partial",
+      "gaps": [],
+      "join_on": [
+        "entity"
+      ],
+      "rel": [
+        "chosen-because"
+      ],
+      "detector": "judge",
+      "note": "A choice with moral weight.",
+      "fragments": 3,
+      "conf": [
+        "M",
+        "M",
+        "H"
+      ]
+    },
+    {
+      "id": 35,
+      "group": "A",
+      "name": "Small physical detail carrying weight",
+      "tag": "LLM",
+      "route": "judge",
+      "v6": "partial",
+      "gaps": [],
+      "join_on": [
+        "entity",
+        "material"
+      ],
+      "rel": [],
+      "detector": "judge",
+      "note": "A small physical detail that carries the story.",
+      "fragments": 3,
+      "conf": [
+        "M",
+        "H",
+        "M"
+      ]
+    },
+    {
+      "id": 36,
+      "group": "A",
+      "name": "Uniqueness claims",
+      "tag": "SQL",
+      "route": "join",
+      "v6": "partial",
+      "gaps": [
+        "G3"
+      ],
+      "join_on": [
+        "uniqueness"
+      ],
+      "rel": [],
+      "detector": "sql",
+      "note": "First, only, extreme: the uniqueness hook is a free phrase, so exact joins almost never fire.",
+      "fragments": 3,
+      "conf": [
+        "H",
+        "H",
+        "H"
+      ]
+    },
+    {
+      "id": 37,
+      "group": "A",
+      "name": "Series pattern",
+      "tag": "SQL/LLM",
+      "route": "join",
+      "v6": "missing",
+      "gaps": [
+        "G6"
+      ],
+      "join_on": [
+        "set"
+      ],
+      "rel": [],
+      "detector": "sql",
+      "note": "Streak, gap or count in a list or table; needs pattern burrs from a deterministic list and table detector.",
+      "fragments": 3,
+      "conf": [
+        "M",
+        "M",
+        "H"
+      ]
+    },
+    {
+      "id": 38,
+      "group": "A",
+      "name": "Material x occasion",
+      "tag": "SQL",
+      "route": "join",
+      "v6": "covered",
+      "gaps": [],
+      "join_on": [
+        "material",
+        "event"
+      ],
+      "rel": [],
+      "detector": "sql",
+      "note": "Material hooks are the most joinable type; pair with an event entity.",
+      "fragments": 2,
+      "conf": [
+        "H",
+        "M"
+      ]
+    },
+    {
+      "id": 39,
+      "group": "A",
+      "name": "Lesser-known achievement",
+      "tag": "LLM",
+      "route": "judge",
+      "v6": "na",
+      "gaps": [],
+      "join_on": [
+        "entity"
+      ],
+      "rel": [],
+      "detector": "judge",
+      "note": "A little-known achievement of a well-known person.",
+      "fragments": 1,
+      "conf": [
+        "M"
+      ]
+    },
+    {
+      "id": 40,
+      "group": "A",
+      "name": "Hidden kinship, shared school, shared epithet",
+      "tag": "SQL",
+      "route": "join",
+      "v6": "partial",
+      "gaps": [
+        "G3"
+      ],
+      "join_on": [
+        "set",
+        "former-role",
+        "entity"
+      ],
+      "rel": [],
+      "detector": "sql",
+      "note": "Shared school, kinship or epithet; the set and former-role phrases rarely match.",
+      "fragments": 4,
+      "conf": [
+        "H",
+        "L",
+        "M",
+        "L"
+      ]
+    },
+    {
+      "id": 41,
+      "group": "A",
+      "name": "Internal duality",
+      "tag": "LLM",
+      "route": "judge",
+      "v6": "partial",
+      "gaps": [],
+      "join_on": [
+        "entity"
+      ],
+      "rel": [],
+      "detector": "judge",
+      "note": "One entity with two contrasting properties.",
+      "fragments": 1,
+      "conf": [
+        "H"
+      ]
+    },
+    {
+      "id": 42,
+      "group": "A",
+      "name": "Analogy bridge",
+      "tag": "LLM",
+      "route": "judge",
+      "v6": "na",
+      "gaps": [],
+      "join_on": [],
+      "rel": [],
+      "detector": "judge",
+      "note": "An unrelated domain's convention used as the explanation; judge only.",
+      "fragments": 1,
+      "conf": [
+        "H"
+      ]
+    },
+    {
+      "id": 43,
+      "group": "A",
+      "name": "The incidental aside",
+      "tag": "LLM",
+      "route": "judge",
+      "v6": "partial",
+      "gaps": [
+        "G6"
+      ],
+      "join_on": [
+        "entity"
+      ],
+      "rel": [],
+      "detector": "judge",
+      "note": "The aside kind exists but is almost never emitted.",
+      "fragments": 2,
+      "conf": [
+        "H",
+        "M"
+      ]
+    },
+    {
+      "id": 44,
+      "group": "A",
+      "name": "Visual resemblance joke",
+      "tag": "USER",
+      "route": "author",
+      "v6": "na",
+      "gaps": [],
+      "join_on": [],
+      "rel": [],
+      "detector": "author",
+      "note": "Looks-like pairings need images or the author's eye.",
+      "fragments": 2,
+      "conf": [
+        "H",
+        "H"
+      ]
+    },
+    {
+      "id": 45,
+      "group": "B",
+      "name": "Etymology unveil",
+      "tag": "LLM",
+      "route": "join",
+      "v6": "covered",
+      "gaps": [],
+      "join_on": [
+        "etymon"
+      ],
+      "rel": [],
+      "detector": "sql",
+      "note": "Etymon hooks and the etymology kind carry it.",
+      "fragments": 4,
+      "conf": [
+        "H",
+        "H",
+        "H",
+        "H"
+      ]
+    },
+    {
+      "id": 46,
+      "group": "B",
+      "name": "Name as description",
+      "tag": "LLM",
+      "route": "judge",
+      "v6": "partial",
+      "gaps": [],
+      "join_on": [
+        "etymon"
+      ],
+      "rel": [],
+      "detector": "judge",
+      "note": "The literal meaning of a name; an etymon hook, with the judge naming the class.",
+      "fragments": 2,
+      "conf": [
+        "H",
+        "M"
+      ]
+    },
+    {
+      "id": 47,
+      "group": "B",
+      "name": "Number, colour or material inside a name",
+      "tag": "SQL",
+      "route": "string",
+      "v6": "covered",
+      "gaps": [
+        "G4"
+      ],
+      "join_on": [
+        "entity"
+      ],
+      "rel": [],
+      "detector": "str",
+      "note": "A digit, colour or material word inside an entity value.",
+      "fragments": 2,
+      "conf": [
+        "H",
+        "H"
+      ]
+    },
+    {
+      "id": 48,
+      "group": "B",
+      "name": "Polysemy / homonym collision",
+      "tag": "SQL",
+      "route": "join",
+      "v6": "covered",
+      "gaps": [],
+      "join_on": [
+        "homonym",
+        "entity"
+      ],
+      "rel": [],
+      "detector": "sql",
+      "note": "Homonym hooks plus entity categories; knots keep the collisions.",
+      "fragments": 2,
+      "conf": [
+        "H",
+        "H"
+      ]
+    },
+    {
+      "id": 49,
+      "group": "B",
+      "name": "Near-homophone or one-letter-off pair",
+      "tag": "STR",
+      "route": "string",
+      "v6": "covered",
+      "gaps": [
+        "G4"
+      ],
+      "join_on": [
+        "entity"
+      ],
+      "rel": [],
+      "detector": "str",
+      "note": "One-letter-off pairs over titles and entity values.",
+      "fragments": 1,
+      "conf": [
+        "H"
+      ]
+    },
+    {
+      "id": 50,
+      "group": "B",
+      "name": "Shared morpheme across paired names",
+      "tag": "STR",
+      "route": "string",
+      "v6": "covered",
+      "gaps": [
+        "G4"
+      ],
+      "join_on": [
+        "entity",
+        "place"
+      ],
+      "rel": [],
+      "detector": "str",
+      "note": "A shared morpheme across paired names.",
+      "fragments": 1,
+      "conf": [
+        "H"
+      ]
+    },
+    {
+      "id": 51,
+      "group": "B",
+      "name": "Backronym, initials-as-name, pun-title, idiom-pun, rhyme-derived title",
+      "tag": "STR/LLM",
+      "route": "string",
+      "v6": "covered",
+      "gaps": [
+        "G4"
+      ],
+      "join_on": [
+        "entity"
+      ],
+      "rel": [],
+      "detector": "str",
+      "note": "Initials, pun titles and backronyms over titles and answers.",
+      "fragments": 3,
+      "conf": [
+        "M",
+        "M",
+        "M"
+      ]
+    },
+    {
+      "id": 52,
+      "group": "B",
+      "name": "Eponym and its reversal or change",
+      "tag": "LLM",
+      "route": "relation",
+      "v6": "missing",
+      "gaps": [
+        "G2"
+      ],
+      "join_on": [
+        "entity"
+      ],
+      "rel": [
+        "named-after"
+      ],
+      "detector": "judge",
+      "note": "The named person is not the original author.",
+      "fragments": 2,
+      "conf": [
+        "H",
+        "H"
+      ]
+    },
+    {
+      "id": 53,
+      "group": "B",
+      "name": "Term migration",
+      "tag": "LLM",
+      "route": "judge",
+      "v6": "partial",
+      "gaps": [],
+      "join_on": [
+        "etymon",
+        "time"
+      ],
+      "rel": [],
+      "detector": "judge",
+      "note": "A word that changed domain over time.",
+      "fragments": 1,
+      "conf": [
+        "M"
+      ]
+    },
+    {
+      "id": 54,
+      "group": "B",
+      "name": "Name from a habit or deed",
+      "tag": "LLM",
+      "route": "relation",
+      "v6": "missing",
+      "gaps": [
+        "G2"
+      ],
+      "join_on": [
+        "etymon",
+        "entity"
+      ],
+      "rel": [
+        "named-after",
+        "explained-by"
+      ],
+      "detector": "judge",
+      "note": "A name from a habit or deed.",
+      "fragments": 1,
+      "conf": [
+        "M"
+      ]
+    },
+    {
+      "id": 55,
+      "group": "B",
+      "name": "\"Not named for X\"",
+      "tag": "LLM",
+      "route": "relation",
+      "v6": "missing",
+      "gaps": [
+        "G2"
+      ],
+      "join_on": [
+        "entity"
+      ],
+      "rel": [
+        "contested-explanation"
+      ],
+      "detector": "judge",
+      "note": "The expected source is explicitly ruled out.",
+      "fragments": 1,
+      "conf": [
+        "H"
+      ]
+    },
+    {
+      "id": 56,
+      "group": "B",
+      "name": "Logo or brand hiding a story",
+      "tag": "LLM",
+      "route": "relation",
+      "v6": "missing",
+      "gaps": [
+        "G2"
+      ],
+      "join_on": [
+        "entity"
+      ],
+      "rel": [
+        "explained-by",
+        "derived-from"
+      ],
+      "detector": "judge",
+      "note": "A symbol with a backstory.",
+      "fragments": 2,
+      "conf": [
+        "H",
+        "M"
+      ]
+    },
+    {
+      "id": 57,
+      "group": "B",
+      "name": "Renaming",
+      "tag": "SQL",
+      "route": "join",
+      "v6": "partial",
+      "gaps": [
+        "G2"
+      ],
+      "join_on": [
+        "entity"
+      ],
+      "rel": [
+        "renamed-from"
+      ],
+      "detector": "sql",
+      "note": "Old and new names are both entities; the rename direction is untyped.",
+      "fragments": 2,
+      "conf": [
+        "M",
+        "M"
+      ]
+    },
+    {
+      "id": 58,
+      "group": "C",
+      "name": "Cryptic composition",
+      "tag": "STR",
+      "route": "string",
+      "v6": "covered",
+      "gaps": [
+        "G4"
+      ],
+      "join_on": [
+        "entity"
+      ],
+      "rel": [],
+      "detector": "str",
+      "note": "Letters that concatenate, interleave or hide a word, over answers and titles.",
+      "fragments": 2,
+      "conf": [
+        "M",
+        "L"
+      ]
+    },
+    {
+      "id": 59,
+      "group": "C",
+      "name": "Shared phrase across logos or entities",
+      "tag": "STR",
+      "route": "string",
+      "v6": "covered",
+      "gaps": [
+        "G4"
+      ],
+      "join_on": [
+        "entity"
+      ],
+      "rel": [],
+      "detector": "str",
+      "note": "One phrase used by unrelated entities.",
+      "fragments": 1,
+      "conf": [
+        "H"
+      ]
+    },
+    {
+      "id": 60,
+      "group": "C",
+      "name": "Digit, date or homophone wordplay",
+      "tag": "STR",
+      "route": "string",
+      "v6": "covered",
+      "gaps": [
+        "G4"
+      ],
+      "join_on": [
+        "entity",
+        "number"
+      ],
+      "rel": [],
+      "detector": "str",
+      "note": "Digits or dates recomposed into a title.",
+      "fragments": 1,
+      "conf": [
+        "H"
+      ]
+    },
+    {
+      "id": 61,
+      "group": "D",
+      "name": "Connect",
+      "tag": "SQL",
+      "route": "card",
+      "v6": "partial",
+      "gaps": [
+        "G3"
+      ],
+      "join_on": [
+        "set",
+        "former-role",
+        "homonym"
+      ],
+      "rel": [],
+      "detector": "sql",
+      "note": "Many clues, one link; lateral sets and former roles are the free-phrase hooks that do not match.",
+      "fragments": 3,
+      "conf": [
+        "H",
+        "M",
+        "M"
+      ]
+    },
+    {
+      "id": 62,
+      "group": "D",
+      "name": "Reveal-last theme",
+      "tag": "SQL",
+      "route": "card",
+      "v6": "partial",
+      "gaps": [
+        "G3"
+      ],
+      "join_on": [
+        "set",
+        "entity"
+      ],
+      "rel": [],
+      "detector": "sql",
+      "note": "Independent items and a withheld theme; the same hooks as Connect.",
+      "fragments": 2,
+      "conf": [
+        "H",
+        "M"
+      ]
+    },
+    {
+      "id": 63,
+      "group": "D",
+      "name": "Superlative-list pair",
+      "tag": "SQL",
+      "route": "join",
+      "v6": "partial",
+      "gaps": [
+        "G3"
+      ],
+      "join_on": [
+        "uniqueness"
+      ],
+      "rel": [],
+      "detector": "sql",
+      "note": "What it is plus the list it tops; the uniqueness phrase must match.",
+      "fragments": 2,
+      "conf": [
+        "H",
+        "H"
+      ]
+    },
+    {
+      "id": 64,
+      "group": "D",
+      "name": "Dual-path hint",
+      "tag": "LLM",
+      "route": "card",
+      "v6": "na",
+      "gaps": [],
+      "join_on": [],
+      "rel": [],
+      "detector": "judge",
+      "note": "A description plus a cross-domain nudge; a card shape.",
+      "fragments": 2,
+      "conf": [
+        "M",
+        "H"
+      ]
+    },
+    {
+      "id": 65,
+      "group": "D",
+      "name": "Ladder of obscurity",
+      "tag": "LLM",
+      "route": "card",
+      "v6": "na",
+      "gaps": [],
+      "join_on": [],
+      "rel": [],
+      "detector": "none",
+      "note": "Weak example; clues ordered hard to easy is a presentation order.",
+      "fragments": 1,
+      "conf": [
+        "L"
+      ]
+    },
+    {
+      "id": 66,
+      "group": "D",
+      "name": "Split answers",
+      "tag": "LLM",
+      "route": "card",
+      "v6": "na",
+      "gaps": [],
+      "join_on": [],
+      "rel": [],
+      "detector": "none",
+      "note": "Two or three sub-answers; a card shape.",
+      "fragments": 2,
+      "conf": [
+        "H",
+        "H"
+      ]
+    },
+    {
+      "id": 67,
+      "group": "D",
+      "name": "Set-level spine",
+      "tag": "USER",
+      "route": "author",
+      "v6": "na",
+      "gaps": [],
+      "join_on": [],
+      "rel": [],
+      "detector": "author",
+      "note": "A whole set organised by a theme; the author's choice.",
+      "fragments": 2,
+      "conf": [
+        "H",
+        "M"
+      ]
+    },
+    {
+      "id": 68,
+      "group": "D",
+      "name": "Breadth sweep versus deep multi-hop",
+      "tag": "USER",
+      "route": "author",
+      "v6": "na",
+      "gaps": [],
+      "join_on": [],
+      "rel": [],
+      "detector": "author",
+      "note": "A cross-set observation, not a per-question one.",
+      "fragments": 1,
+      "conf": [
+        "M"
+      ]
+    },
+    {
+      "id": 69,
+      "group": "D",
+      "name": "Cryptic round format",
+      "tag": "STR",
+      "route": "card",
+      "v6": "na",
+      "gaps": [
+        "G4"
+      ],
+      "join_on": [],
+      "rel": [],
+      "detector": "str",
+      "note": "Round-level format of heuristic 58.",
+      "fragments": 1,
+      "conf": [
+        "M"
+      ]
+    },
+    {
+      "id": 70,
+      "group": "D",
+      "name": "Scratchpad state",
+      "tag": "LLM",
+      "route": "card",
+      "v6": "na",
+      "gaps": [],
+      "join_on": [],
+      "rel": [],
+      "detector": "none",
+      "note": "The target spark-card shape: raw related facts plus is there a question in this.",
+      "fragments": 1,
+      "conf": [
+        "H"
+      ]
+    },
+    {
+      "id": 71,
+      "group": "D",
+      "name": "Media-dependent items",
+      "tag": "USER",
+      "route": "author",
+      "v6": "na",
+      "gaps": [],
+      "join_on": [],
+      "rel": [],
+      "detector": "author",
+      "note": "Needs an image, audio or video; out of scope for a text vault.",
+      "fragments": 3,
+      "conf": [
+        "H",
+        "H",
+        "H"
+      ]
+    }
+  ]
+}

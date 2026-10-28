@@ -9,8 +9,12 @@
     "index": "node --no-warnings code/indexer.js --diff",
     "nuggetize": "node --no-warnings code/nuggetizer.js",
     "dedupe": "node --no-warnings code/dedupe.js",
+    "wordplay": "node --no-warnings code/wordplay.js",
     "muse": "node --no-warnings code/muse_view.js",
+    "muse:app": "node --no-warnings code/muse_app.js",
     "muse:report": "node --no-warnings code/muse_scratch.js",
+    "heuristics": "node --no-warnings code/heuristics_build.js",
+    "heuristics:check": "node --no-warnings code/heuristics_build.js --check",
     "test": "node --no-warnings --test test/*.test.js"
   },
   "license": "MIT",

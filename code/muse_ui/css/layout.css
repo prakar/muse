@@ -1,0 +1,26 @@
+.shell { display: grid; grid-template-columns: var(--sidebar-w) minmax(0, 1fr); min-height: 100vh; }
+.shell[data-drawer="open"] { grid-template-columns: var(--sidebar-w) minmax(0, 1fr) var(--drawer-w); }
+.side { border-right: 1px solid var(--line); padding: var(--s-5) var(--s-3); position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto; }
+.side__brand { font-size: var(--fs-4); font-weight: 700; padding: 0 var(--s-3); }
+.side__sub { font-size: var(--fs-0); color: var(--text-3); padding: 0 var(--s-3) var(--s-4); }
+.mode { display: block; padding: var(--s-2) var(--s-3); border-radius: var(--r-2); font-size: var(--fs-1); }
+.mode small { display: block; color: var(--text-3); font-size: var(--fs-0); line-height: 1.3; }
+a.mode:hover { background: var(--surface-2); }
+.mode[aria-current="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 650; }
+.mode[aria-disabled="true"] { color: var(--text-3); cursor: default; }
+.main { min-width: 0; display: flex; flex-direction: column; }
+.top { justify-items: stretch; position: sticky; top: 0; z-index: 10; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--s-4); align-items: center; padding: var(--s-3) var(--s-5);
+  background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+.content { padding: var(--s-4) var(--s-5) var(--s-7); max-width: 74rem; width: 100%; }
+.content > .crumbs { margin-bottom: var(--s-2); }
+.content:focus { outline: none; }
+.drawer { position: sticky; top: 0; height: 100vh; border-left: 1px solid var(--line); background: var(--surface); display: flex; flex-direction: column; z-index: var(--z-drawer); animation: drawer-in var(--t-med) var(--ease); }
+@keyframes drawer-in { from { opacity: 0; transform: translateX(16px); } }
+@media (max-width: 1100px) {
+  .shell, .shell[data-drawer="open"] { grid-template-columns: var(--sidebar-w) minmax(0, 1fr); }
+  .drawer { position: fixed; right: 0; top: 0; width: min(36rem, 92vw); box-shadow: var(--shadow-2); }
+}
+@media (max-width: 760px) {
+  .shell, .shell[data-drawer="open"] { grid-template-columns: minmax(0, 1fr); } .side { display: none; }
+  .content { padding: var(--s-4); }
+}

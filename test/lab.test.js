@@ -185,3 +185,18 @@ test('quiz_backtest: pairs are same-item positives vs cross-item negatives; scor
   assert.strictEqual(p.pos.length, 2); assert.ok(p.rand.every(([x, y]) => x.note_id !== y.note_id));
   const s = QB.scoreAll(burrs, p); assert.ok(s.shared_hooks.auc_vs_random > 0.5);
 });
+
+const { isBoilerplate } = require('../code/lab/boiler'), VJ = require('../code/lab/vault_judge');
+test('boiler: header/meta claims are dropped, real facts kept', () => {
+  assert.ok(isBoilerplate('ASIASWEEP occurred in 2013.')); assert.ok(isBoilerplate('ASIASWEEP 2013 is a quiz item.')); assert.ok(isBoilerplate(''));
+  assert.ok(!isBoilerplate('Roman emperor Vespasian slapped a tariff on India in 69 AD.')); assert.ok(!isBoilerplate('Kerosene burnt cleaner and brighter than firewood.'));
+});
+test('vault_judge: handles need 2..max notes, one burr per note, hubs and dupes and boilerplate skipped', () => {
+  const h = v => [{ type: 'entity', value: v }], mk = (id, note, claim, v) => ({ id: id, note_id: note, claim: claim, hooks: h(v) });
+  const burrs = [mk(1, 'a', 'Harappa was excavated in 1921 by Daya Ram Sahni.', 'Harappa'), mk(2, 'b', 'Harappan seals show a unicorn like animal.', 'Harappa'), mk(3, 'b', 'Harappa had a great bath at its citadel.', 'Harappa'),
+    mk(4, 'c', 'Quokkas became a selfie craze on Rottnest in 2015.', 'Quokka'), mk(5, 'd', 'Quokka is a Noongar word for the animal.', 'Quokka'), mk(6, 'e', 'Quokka is a quiz item.', 'Quokka'), mk(7, 'f', 'Sitar has about eighteen to twenty one strings.', 'sitar')];
+  const hs = VJ.buildHandles(burrs, { maxNotes: 5, skip: new Set([5]) });
+  assert.deepStrictEqual(hs.map(x => x.id), ['h:harappa']);
+  assert.strictEqual(hs[0].input.burrs.length, 2); assert.deepStrictEqual(hs[0].input.burr_ids, hs[0].input.burrs.map((_, i) => hs[0].input.burr_ids[i]));
+  assert.strictEqual(VJ.buildHandles(burrs, { maxNotes: 1 }).length, 0);
+});

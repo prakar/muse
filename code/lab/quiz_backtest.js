@@ -6,7 +6,7 @@
 //   node code/lab/quiz_backtest.js build [--dry-run] [--max-usd 0.30] [--model M] [--limit N]
 //   node code/lab/quiz_backtest.js score [--seed 7]
 const fs = require('node:fs'), path = require('node:path');
-const B = require('../lib/burrs'), BR = require('../lib/bristles'), Bud = require('../lib/budget'), S = require('./sim'), M = require('./metrics'), { JsonlCache } = require('./judge');
+const { isBoilerplate } = require('./boiler'), B = require('../lib/burrs'), BR = require('../lib/bristles'), Bud = require('../lib/budget'), S = require('./sim'), M = require('./metrics'), { JsonlCache } = require('./judge');
 const DIR = path.join(__dirname, '..', '..', 'backtest');
 
 function loadItems(dir) {
@@ -38,7 +38,7 @@ async function build(items, deps, opts) {
     const parsed = B.parseModelJson(hit.text);
     if (!parsed.ok) { out.push({ id: it.id, error: parsed.error }); continue; }
     const v = B.verifyBurrs(parsed.burrs, note);
-    v.accepted.forEach((b, i) => out.push({ id: it.id + '/' + i, note_id: it.id, source: it.source, claim: b.claim, kind: b.kind, hooks: b.hooks || [], triple: /\(triple\)/i.test(it.question) }));
+    v.accepted.filter(b => !isBoilerplate(b.claim)).forEach((b, i) => out.push({ id: it.id + '/' + i, note_id: it.id, source: it.source, claim: b.claim, kind: b.kind, hooks: b.hooks || [], triple: /\(triple\)/i.test(it.question) }));
   }
   return { burrs: out.filter(b => b.claim), problems: out.filter(b => !b.claim), spent: spent };
 }

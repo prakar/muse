@@ -40,3 +40,6 @@ eval.db-*
 
 # Quiz files and anything extracted from them (others' content: Muse Constitution Decision 7): never commit
 backtest/
+
+# Muse app: the author's own marks
+muse-marks*.jsonl

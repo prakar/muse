@@ -52,7 +52,8 @@ var META = null, S = { view: 'findings', sort: {}, dir: {}, page: 0, f: {} };
 var COLS = {
   burrs: [['id','id','num'],['note','note'],['kind','kind'],['rank','rank','num'],['nB','bristles','num'],['bestDf','best join (notes)','num'],['band','join'],['claim','claim'],['recs','recommendations']],
   bristles: [['surface','surface'],['types','types'],['df','notes','num'],['nBurrs','burrs','num'],['rarity','rarity','num'],['band','band'],['recs','recommendations']],
-  sparks: [['surface','shared handle'],['also','also joined by'],['df','notes','num'],['rarity','rarity','num'],['dist','domain dist','num'],['cos','context cos','num'],['score','rarity×dist','num'],['recs','recommendations']],
+  sparks: [['surface','shared handle'],['also','also joined by'],['df','notes','num'],['rarity','rarity','num'],['dist','domain dist','num'],['cos','context cos','num'],['score','rank score','num'],['why','why ranked'],['recs','recommendations']],
+  wordplay: [['surface','wordplay'],['kind','kind'],['grade','grade'],['pair','joins two notes'],['nNotes','notes','num'],['fit','topic fit','num']],
   slices: [['surface','slice'],['why','kind of slice'],['types','types'],['df','notes','num']],
   knots: [['surface','surface'],['df','notes','num'],['cos','context cos','num'],['dist','domain dist','num'],['cls','class'],['recs','recommendations']]
 };
@@ -83,7 +84,7 @@ function init() {
     META = m;
     document.getElementById('sub').textContent = m.version + ' · ' + m.totals.burrs + ' burrs from ' + m.notes + ' notes · ' + m.totals.bristles + ' bristle keys · ' + m.totals.sparks + ' spark candidates · ' + m.totals.slices + ' slices · ' + m.totals.knots + ' knot candidates · ' + m.judged + ' judgements saved (muse-judgements.jsonl)';
     var tabs = document.getElementById('tabs');
-    ['findings','burrs','bristles','sparks','slices','knots'].forEach(function (v) {
+    ['findings','burrs','bristles','sparks','wordplay','slices','knots'].forEach(function (v) {
       tabs.appendChild(h('button', { id: 'tab-' + v, onclick: function () { show(v); } }, [TABNAME[v] || v]));
     });
     show('findings');
@@ -124,6 +125,7 @@ function table() {
   if (v === 'burrs' || v === 'bristles' || v === 'sparks' || v === 'knots' || v === 'slices') bar.appendChild(sel(META.types, f.type, function (x) { f.type = x; reload(); }, 'any bristle type'));
   if (v === 'burrs') { bar.appendChild(sel(META.kinds, f.kind, function (x) { f.kind = x; reload(); }, 'any kind')); bar.appendChild(sel([['none','no join'],['any','joins (2-40 notes)'],['spark','joins (2-8 notes)']], f.band, function (x) { f.band = x; reload(); }, 'any join level')); }
   if (v === 'bristles') bar.appendChild(sel([['single','single note'],['spark','2-8 notes'],['mid','9-40 notes'],['hub','>40 notes']], f.band, function (x) { f.band = x; reload(); }, 'any band'));
+  if (v === 'wordplay') { bar.appendChild(sel(META.wpKinds || [], f.kind, function (x) { f.kind = x; reload(); }, 'any kind of wordplay')); bar.appendChild(sel([['A','A: nearly all genuine'],['B','B: mostly genuine'],['C','C: rough']], f.grade, function (x) { f.grade = x; reload(); }, 'any grade')); }
   if (v === 'knots') bar.appendChild(sel(['collision','same-sense','undecided'], f.cls, function (x) { f.cls = x; reload(); }, 'any class'));
   bar.appendChild(sel([['_unjudged','not yet judged']].concat(itemLabels(v).map(function (l) { return [l[0], l[1]]; })), f.j, function (x) { f.j = x; reload(); }, 'any judgement'));
   bar.appendChild(h('button', { class: 'b', onclick: function () { show(v); } }, ['clear']));
@@ -263,6 +265,7 @@ function fillDetail(v, r, box, tr) {
     box.appendChild(h('div', { class: 'mute' }, ['loading burrs…']));
     api('/api/detail?view=bristles&id=' + encodeURIComponent(r.id)).then(function (bs) { box.firstChild.remove(); box.insertBefore(h('div', {}, bs.map(burrBlock)), box.firstChild); });
   } else {
+    if (r.detail) box.appendChild(h('div', { class: 'mute' }, ['names: ' + r.detail.join(', ')]));
     box.appendChild(h('div', {}, r.burrs.map(burrBlock)));
   }
   var note = h('input', { type: 'text', placeholder: 'your note (optional: why, or what surprised you)', value: r.jnote || '' });
@@ -281,7 +284,7 @@ function fillDetail(v, r, box, tr) {
     box.appendChild(rr);
   });
   var jr = h('div', { class: 'jr' });
-  jr.appendChild(h('span', { class: 'mute' }, ['This ' + ({ burrs: 'fact', bristles: 'hook', sparks: 'pairing', slices: 'slice', knots: 'word' }[v] || 'row') + ':']));
+  jr.appendChild(h('span', { class: 'mute' }, ['This ' + ({ burrs: 'fact', bristles: 'hook', sparks: 'pairing', slices: 'slice', wordplay: 'wordplay', knots: 'word' }[v] || 'row') + ':']));
   itemLabels(v).forEach(function (l) {
     jr.appendChild(h('button', { class: 'b' + (r.j === l[0] ? ' on' : ''), title: l[2] || '', onclick: function () {
       fetch('/api/judge', { method: 'POST', body: JSON.stringify({ view: v, id: r.id, label: l[0], note: note.value }) }).then(function () {
