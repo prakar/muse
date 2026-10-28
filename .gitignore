@@ -43,3 +43,7 @@ backtest/
 
 # Muse app: the author's own marks
 muse-marks*.jsonl
+
+# macOS / SQLite scratch
+.DS_Store
+*.db-journal
