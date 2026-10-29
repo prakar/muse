@@ -8,6 +8,8 @@
  */
 const path = require('path'), os = require('os');
 const { DatabaseSync } = require('node:sqlite');
+const Core = require('./lib/search_core'), SV = require('./lib/search_vectors'), SE = require('./lib/search_embed'), SC = require('./lib/search_cache'), { createRewriter } = require('./lib/search_rewrite'), { createSearchService } = require('./lib/search_service');
+const LLM = require('./lib/llm'), Bud = require('./lib/budget');
 const M = require('./lib/muse_model'), K = require('./lib/marks'), { createServer } = require('./lib/muse_server'), { createNoteStore } = require('./lib/note_store');
 
 const args = process.argv.slice(2), opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : d; };
@@ -20,5 +22,16 @@ const db = new DatabaseSync(DB, { readOnly: true }), t0 = Date.now();
 const model = M.build(db, VERSION, { showDupes: !!process.env.MUSE_SHOW_DUPES });
 console.log('Ready in ' + (Date.now() - t0) + ' ms: ' + model.burrs.length + ' burrs, ' + model.sparks.length + ' sparks, ' + model.wordplay.length + ' wordplay edges (' + model.wordplayState + ')');
 
-createServer({ model, marks: K.open(MARKS_FILE, VERSION), notes: createNoteStore(db, { vaultRoot: process.env.MUSE_VAULT_ROOT || path.join(os.homedir(), 'md-vaults', 'knowledge') }), version: VERSION, uiRoot: path.join(__dirname, 'muse_ui') })
+// Search. Words always work. "Search by meaning" needs the vector index (node code/search_build.js), an embedding server (Ollama) and, for new questions, one cheap LLM call.
+// MUSE_MEANING=off removes the meaning leg entirely; the in-page switch only turns it off per search. Every missing piece is reported on the search page, never hidden.
+const EMBED_MODEL = process.env.MUSE_EMBED_MODEL || 'embeddinggemma', MEANING = process.env.MUSE_MEANING !== 'off';
+const searchBurrs = model.burrs.map(b => ({ id: b.id, noteId: b.noteId, claim: b.claim, quote: b.quote, note: b.note })), byId = new Map(searchBurrs.map(b => [b.id, b]));
+const vectors = MEANING ? SV.load(HOME, EMBED_MODEL, id => { const b = byId.get(id); return b ? SE.docText(EMBED_MODEL, b) : undefined; }) : null;
+const cache = SC.open(process.env.MUSE_CACHE || path.join(HOME, 'muse-cache.db'));
+const search = createSearchService({ burrs: searchBurrs, words: Core.buildWordIndex(searchBurrs), vectors,
+  embedder: MEANING ? SE.ollamaEmbedder({ url: process.env.OLLAMA_URL || 'http://127.0.0.1:11434', model: EMBED_MODEL }) : null,
+  rewriter: MEANING ? createRewriter({ cache, callLLM: LLM.callLLM, hasKey: LLM.hasKey, priceFor: Bud.priceFor, breaker: SE.createBreaker(), config: { provider: 'gemini', maxUsdPerDay: process.env.MUSE_REWRITE_MAX_USD_DAY ? +process.env.MUSE_REWRITE_MAX_USD_DAY : 0.25 } }) : null, cache });
+console.log('Search: words ready (' + searchBurrs.length + ' facts); meaning ' + (!MEANING ? 'switched off (MUSE_MEANING=off)' : vectors ? vectors.count + ' vectors' + (vectors.stale || vectors.gone ? ' (' + vectors.stale + ' out of date, ' + vectors.gone + ' gone: rerun search_build.js)' : '') : 'index not built yet (run: node --no-warnings code/search_build.js)'));
+
+createServer({ model, marks: K.open(MARKS_FILE, VERSION), notes: createNoteStore(db, { vaultRoot: process.env.MUSE_VAULT_ROOT || path.join(os.homedir(), 'md-vaults', 'knowledge') }), version: VERSION, search, uiRoot: path.join(__dirname, 'muse_ui') })
   .listen(PORT, '127.0.0.1', () => console.log('Open http://localhost:' + PORT + '   (marks are saved to ' + MARKS_FILE + ')'));

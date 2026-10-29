@@ -1,0 +1,18 @@
+/* Search page: the form with its "Search by meaning" switch, the confidence banner, and notices. */
+.searchpage { display: flex; flex-wrap: wrap; gap: var(--s-3); align-items: center; }
+.searchpage__input { flex: 1 1 18rem; min-width: 0; padding: var(--s-2) var(--s-3); border: 1px solid var(--line-strong); border-radius: var(--r-2); background: var(--surface); color: var(--text); font: inherit; }
+.hint { font-size: var(--fs-1); color: var(--text-3); max-width: 46rem; }
+.switch { display: inline-flex; align-items: center; gap: var(--s-2); padding: var(--s-1) var(--s-2); border: 0; background: none; color: var(--text); font: inherit; cursor: pointer; }
+.switch__track { width: 2.25rem; height: 1.3rem; border-radius: var(--r-pill); background: var(--line-strong); position: relative; transition: background var(--t-med) var(--ease); }
+.switch__thumb { position: absolute; top: .15rem; left: .15rem; width: 1rem; height: 1rem; border-radius: 50%; background: var(--surface); transition: transform var(--t-med) var(--ease); }
+.switch[aria-checked="true"] .switch__track { background: var(--accent); }
+.switch[aria-checked="true"] .switch__thumb { transform: translateX(.95rem); }
+.switch:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-1); }
+.banner { padding: var(--s-3) var(--s-4); border-radius: var(--r-2); background: var(--surface-2); border-left: 4px solid var(--text-3); margin: var(--s-4) 0; }
+.banner--likely { border-left-color: var(--easy); } .banner--weak { border-left-color: var(--medium); } .banner--nothing { border-left-color: var(--danger); } .banner--unrated { border-left-color: var(--text-3); }
+.understood { color: var(--text-2); font-size: var(--fs-1); margin: var(--s-2) 0; }
+.notice { font-size: var(--fs-1); margin: var(--s-2) 0; } .notice--warn { color: var(--danger); } .notice--info { color: var(--text-2); }
+.folded > summary { cursor: pointer; color: var(--text-2); margin: var(--s-3) 0; }
+.disclaimer { border-left: 4px solid var(--text-3); background: var(--surface-2); padding: var(--s-3) var(--s-4); border-radius: var(--r-2); color: var(--text-2); font-size: var(--fs-1); margin: var(--s-4) 0; max-width: 52rem; }
+.badge--basis { background: var(--accent-soft); color: var(--accent); }
+.understood > summary { cursor: pointer; }

@@ -6,6 +6,7 @@ import { kindLabel } from './kinds.mjs';
 // ctx.surface: the title of the open set; ctx.hidden: true in reveal-last mode, so the trail does not give the answer away.
 export function trail(route, ctx = {}) {
   const root = { label: 'Connect', href: build('home') };
+  if (route.name === 'search') return [root, { label: 'Search' }];
   if (route.name === 'basket') return [root, { label: 'Basket' }];
   if (route.name === 'wordplay') return [root, { label: kindLabel(route.params.kind) }];
   if (route.name === 'set') {

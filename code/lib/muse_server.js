@@ -12,7 +12,7 @@ const MODES = [['connect', 'Connect', 'Facts that share a handle, hard to easy',
   ['slice', 'Slice', 'Everything touching a year, week or day', false], ['shelf', 'Shelf', 'Etymology and other typed shelves', false], ['loops', 'Loops', "The vault's unanswered why?", false],
   ['drift', 'Drift', 'One unprompted spark a day', false], ['wander', 'Wander', 'A random walk over words with several meanings', false]];
 
-function createServer({ model, marks, notes, version, uiRoot }) {
+function createServer({ model, marks, notes, version, uiRoot, search = null }) {
   const root = path.resolve(uiRoot);
   const send = (res, code, type, body) => { res.writeHead(code, Object.assign({ 'Content-Type': type }, SECURITY)); res.end(body); };
   const json = (res, o, code) => send(res, code || 200, 'application/json; charset=utf-8', JSON.stringify(o));
@@ -35,7 +35,7 @@ function createServer({ model, marks, notes, version, uiRoot }) {
     if (!u.pathname.startsWith('/api/')) return req.method === 'GET' ? serveStatic(res, u.pathname) : send(res, 405, MIME['.txt'], 'method not allowed');
 
     if (u.pathname === '/api/meta') return json(res, { version, notes: model.notes, burrs: model.burrs.length, sparks: model.sparks.length, wordplay: model.wordplay.length,
-      wordplayState: model.wordplayState, wordplayKinds: model.wordplayKinds(), marks: marks.counts(), modes: MODES });
+      wordplayState: model.wordplayState, wordplayKinds: model.wordplayKinds(), marks: marks.counts(), modes: MODES, search: search ? search.status().meaning : null });
     if (u.pathname === '/api/suggest') return json(res, { items: withMarks(model.suggest(q.get('q') || '', 40), all).slice(0, 14) });
     if (u.pathname === '/api/wordplay') {
       const list = withMarks(model.wordplayPairs(q.get('kind') || '', 1e6), all), size = PAGE_SIZES.includes(+q.get('size')) ? +q.get('size') : 24;
@@ -66,6 +66,13 @@ function createServer({ model, marks, notes, version, uiRoot }) {
         catch (e) { return json(res, { error: e.message }, 400); }
         json(res, { ok: true, mark: marks.get(b.handle, item) || null, marks: marks.counts() });
       });
+    }
+    if (u.pathname === '/api/search/status') return json(res, search ? search.status() : { meaning: { ready: false }, disabled: true });
+    if (u.pathname === '/api/search') {
+      // A cross-site page can make a browser send a plain GET here, and a search can spend money (one cheap rewrite). A custom header cannot ride a cross-site simple request.
+      if (!search) return json(res, { error: 'Search is not set up on this server.' }, 503);
+      if (req.headers['x-muse'] !== '1') return json(res, { error: 'missing X-Muse header' }, 403);
+      return search.search({ q: q.get('q'), meaning: q.get('meaning') !== '0' }).then(r => json(res, r), e => json(res, { error: e.message }, e.code === 'bad_request' ? 400 : 500));
     }
     json(res, { error: 'not found' }, 404);
   });

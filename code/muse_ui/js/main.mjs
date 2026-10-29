@@ -13,8 +13,10 @@ import { homeView } from './views/home.mjs';
 import { listView } from './views/list.mjs';
 import { setView } from './views/set.mjs';
 import { basketView } from './views/basket.mjs';
+import { searchView, searchHref } from './views/search.mjs';
+import { getPref } from './prefs.mjs';
 
-const VIEWS = { home: homeView, wordplay: listView, set: setView, basket: basketView };
+const VIEWS = { home: homeView, wordplay: listView, set: setView, basket: basketView, search: searchView };
 const store = createStore({ meta: null, marks: { use: 0, dull: 0, 'wrong-sense': 0 } });
 let route = null, seq = 0, screenCtx = {};
 
@@ -72,7 +74,7 @@ async function boot() {
     meta.modes.map(([key, label, blurb, live]) => live
       ? h('a', { class: 'mode', href: build('home'), 'data-nav': key, 'aria-current': 'true' }, label, h('small', { text: blurb }))
       : h('div', { class: 'mode', 'aria-disabled': 'true' }, label, h('small', { text: 'planned · ' + blurb }))));
-  const top = h('header', { class: 'top' }, Search({ api, onPick: it => go(build('set', { id: it.id })) }), basketBtn);
+  const top = h('header', { class: 'top' }, Search({ api, onPick: it => go(build('set', { id: it.id })), onSubmit: q => go(searchHref(q, getPref('meaning', true))) }), basketBtn);
   mount(shell, side, h('div', { class: 'main' }, top, content), drawerHost);
   document.body.append(shell);
   window.addEventListener('hashchange', onHash);

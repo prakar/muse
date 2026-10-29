@@ -14,7 +14,7 @@ async function request(url, init, key) {
   } finally { if (key && inflight.get(key)?.signal === signal) inflight.delete(key); }
 }
 const qs = o => { const p = new URLSearchParams(Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== '' && v !== false).map(([k, v]) => [k, v === true ? '1' : v])).toString(); return p ? '?' + p : ''; };
-const get = (path, params = {}, key) => request(path + qs(params), {}, key);
+const get = (path, params = {}, key, headers) => request(path + qs(params), headers ? { headers } : {}, key);
 const post = (path, body) => request(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
 export const api = {
@@ -24,6 +24,8 @@ export const api = {
   set: (id, { n, o, r, h }) => get('/api/connect', { id, n, order: o, reveal: r, hidden: h }, 'set'),
   note: (id, at) => get('/api/note', { id, at }, 'note'),
   noteByTitle: title => get('/api/note', { title }, 'note'),
+  search: (q, meaning) => get('/api/search', { q, meaning: meaning ? '1' : '0' }, 'search', { 'X-Muse': '1' }),
+  searchStatus: () => get('/api/search/status'),
   kept: () => get('/api/kept', {}, 'kept'),
   mark: body => post('/api/mark', body)
 };

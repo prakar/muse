@@ -51,3 +51,7 @@ muse-marks*.jsonl
 # macOS / SQLite scratch
 .DS_Store
 *.db-journal
+
+# Muse search: derived index and the question cache (questions are stored as typed)
+search-vectors-*
+muse-cache.db*
