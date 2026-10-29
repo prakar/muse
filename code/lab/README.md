@@ -13,3 +13,5 @@ Only `data.js` knows the burrs schema. Swapping nug-v5 -> v6 -> v7 changes one f
 - sim.js     TF-IDF baseline + embedding backend interface + sha(text)+model disk cache
              (unchanged claims are never re-embedded across versions)
 Outputs go to lab/out/<version>/ (gitignored).
+
+- long_notes.js  head-versus-tail extraction on the largest notes (calls the LLM; `--dry-run` first; see STATUS.md, Roadmap track A)

@@ -1,0 +1,187 @@
+{
+ "source": "Author grades 29 Oct 2026, given in chat. One grade per query = best of the top-5 keyword hits (0 unrelated, 1 related, 2 answers it). Whether the vault holds an answer when grade is 0 is NOT yet known.",
+ "engine": "search_baseline.js FTS5 BM25 OR of content words, top 5",
+ "grades": [
+  {
+   "id": 1,
+   "query": "Were women overlooked for science awards despite doing significant original research?",
+   "best_top5": 1,
+   "vault_has": "partial"
+  },
+  {
+   "id": 2,
+   "query": "How was air conditioning done before compressors and electricity?",
+   "best_top5": 0,
+   "vault_has": "present"
+  },
+  {
+   "id": 3,
+   "query": "How much protein does Quinoa have per 100 grams?",
+   "best_top5": 0,
+   "vault_has": "partial"
+  },
+  {
+   "id": 4,
+   "query": "Is james bond always a british actor",
+   "best_top5": 0,
+   "vault_has": "absent"
+  },
+  {
+   "id": 5,
+   "query": "Does anti anxiety medication cause side effects?",
+   "best_top5": 1,
+   "vault_has": "partial"
+  },
+  {
+   "id": 6,
+   "query": "Is hydrogen combustion engine possible to make",
+   "best_top5": 0,
+   "vault_has": "absent"
+  },
+  {
+   "id": 7,
+   "query": "Did Napolean get lucky or unlucky in his siege on Russia",
+   "best_top5": 0,
+   "vault_has": "absent"
+  },
+  {
+   "id": 8,
+   "query": "What is the case if any for the Jewish holocaust being a misreported episode",
+   "best_top5": 1,
+   "vault_has": "partial"
+  },
+  {
+   "id": 9,
+   "query": "Do eastern and western political conservatives have anything in common",
+   "best_top5": 0,
+   "vault_has": "absent"
+  },
+  {
+   "id": 10,
+   "query": "If keratin is not growing how does hair grow",
+   "best_top5": 0,
+   "vault_has": "absent"
+  },
+  {
+   "id": 11,
+   "query": "What is the wavelength of gravity waves",
+   "best_top5": 0,
+   "vault_has": "partial"
+  },
+  {
+   "id": 12,
+   "query": "Can broadcast spectrum be used as the carrier for mobile comunication",
+   "best_top5": 0,
+   "vault_has": "absent"
+  },
+  {
+   "id": 13,
+   "query": "What devices today owe their existence to the Mother of all Demos?",
+   "best_top5": 0,
+   "vault_has": "partial"
+  },
+  {
+   "id": 14,
+   "query": "What is the difference between teej and hariyali teej?",
+   "best_top5": 0,
+   "vault_has": "absent"
+  },
+  {
+   "id": 15,
+   "query": "How can i extract water from air at a domestic scale",
+   "best_top5": 2,
+   "vault_has": "present"
+  },
+  {
+   "id": 16,
+   "query": "How many regions are called \"land between two rivers\"?",
+   "best_top5": 0,
+   "vault_has": "absent"
+  },
+  {
+   "id": 17,
+   "query": "Is there a reference for axis mundi that can be shown on a modern map",
+   "best_top5": 2,
+   "vault_has": "present"
+  },
+  {
+   "id": 18,
+   "query": "Is the pyramid of cheops referred to in the old testament",
+   "best_top5": 0,
+   "vault_has": "partial"
+  },
+  {
+   "id": 19,
+   "query": "Did a frenchman do an experiment predating faraday but got a false negative and called it off",
+   "best_top5": 0,
+   "vault_has": "absent"
+  },
+  {
+   "id": 20,
+   "query": "What is reverse benchmarking",
+   "best_top5": 0,
+   "vault_has": "absent"
+  },
+  {
+   "id": 21,
+   "query": "What is the bitrate or digital bandwidth equivalent of human vision",
+   "best_top5": 0,
+   "vault_has": "absent"
+  },
+  {
+   "id": 22,
+   "query": "Did Vallabh Bhai Patel ill treat any kingdoms or principality into joining the Indian union",
+   "best_top5": 0,
+   "vault_has": "present"
+  },
+  {
+   "id": 23,
+   "query": "Which is the most common exothermic reaction",
+   "best_top5": 1,
+   "vault_has": "absent"
+  },
+  {
+   "id": 24,
+   "query": "Why did br Ambedkar travel to the USA",
+   "best_top5": 0,
+   "vault_has": "absent"
+  },
+  {
+   "id": 25,
+   "query": "Why are texas and taxes anagrams",
+   "best_top5": 0,
+   "vault_has": "absent"
+  },
+  {
+   "id": 26,
+   "query": "What's the most effective way of cooling using water evaporation",
+   "best_top5": 1,
+   "vault_has": "present"
+  },
+  {
+   "id": 27,
+   "query": "Does electricity travel at the speed of light",
+   "best_top5": 0,
+   "vault_has": "absent"
+  },
+  {
+   "id": 28,
+   "query": "Was thomas Edison on the spectrum",
+   "best_top5": 0,
+   "vault_has": "absent"
+  },
+  {
+   "id": 29,
+   "query": "Is Elon Musk on the spectrum",
+   "best_top5": 0,
+   "vault_has": "absent"
+  },
+  {
+   "id": 30,
+   "query": "Does Narendra Modi call himself hermit, aka fakeer",
+   "best_top5": 0,
+   "vault_has": "absent"
+  }
+ ],
+ "vault_has_note": "Assigned by Claude from a full-text regex sweep of all 6,900 knowledge-vault notes on 29 Oct 2026 (headless, no LLM). present = notes plainly answering/bearing on it; partial = on-topic notes but no direct answer (or only a passing mention); absent = nothing found. Regex-based, so 'absent' means 'not found by a broad variant sweep', and the author should overrule any."
+}

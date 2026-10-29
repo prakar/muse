@@ -1,0 +1,26 @@
+{
+  "source": "The author, 29 Oct 2026, 23:27-23:34 IST: 13 fresh questions written after the first 30 and after the thresholds in lab/verdict.js were fixed, so they validate (not tune) those thresholds. First 6 he expected the vault to know, last 7 he expected it not to answer. vault_has was then checked by Claude with a full-text sweep of the knowledge vault: present = notes plainly cover it; partial = the topic or a passing mention is there but not a direct answer; absent = nothing found.",
+  "queries": [
+    "how does the kurgan hypothesis feature in the steppe origin theory of humans?",
+    "Which work by a physicist began the field of molecular biology?",
+    "What kind of ore is halite?",
+    "Complete the name of the book, \"Guns, GErms, and _____\"?",
+    "which denomination of christianity is said to be responsible for the rise of capitalism",
+    "against whom was the great wall of china built?",
+    "why is rust programming gaining popularity ?",
+    "in what way did adi shankara define \"maya\"?",
+    "what is the battle of collachel famous for?",
+    "CAn IC 555 be used as an astable multivibrator?",
+    "WHo directed the movie \"Alien 3\"?",
+    "Does the TV series \"Hannibal\" depart from the original work by Thomas Harris?",
+    "Who made the world's first commercial quantum computer"
+  ],
+  "vault_has": ["present", "present", "partial", "partial", "present", "present", "absent", "absent", "absent", "absent", "absent", "absent", "absent"],
+  "notes": {
+    "3": "halite appears in 14 notes (Zechstein Sea, Boulby); the question's premise (halite as an 'ore') is odd.",
+    "4": "'Guns, Germs, and Steel' appears once, inside the note 'Scientific studies of history'.",
+    "8": "'He maye Notuswara' glosses Maya as 'illusory force' but is not Shankara's definition.",
+    "9": "Colachel appears once, as the site of an indigo factory, nothing on the battle.",
+    "13": "One podcast note says commercial quantum computers were 'sold' without naming a maker."
+  }
+}
