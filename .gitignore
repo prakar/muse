@@ -47,3 +47,7 @@ muse-marks*.jsonl
 # macOS / SQLite scratch
 .DS_Store
 *.db-journal
+
+# macOS / SQLite scratch
+.DS_Store
+*.db-journal
