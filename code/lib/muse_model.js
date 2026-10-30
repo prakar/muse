@@ -157,6 +157,7 @@ function build(db, version, opts) {
     });
     L.findDates(b.claim).forEach(function (f) { if (f.grain === 'century') coarse.push({ from: f.from, to: f.to, g: 'century', stated: f.eraStated, b: b.id }); });   // centuries: coarse dates, kept apart from the year timeline
     L.datesIn(b.claim).forEach(function (q) { note(q.key); add('time', q.surface, q.key, 'year'); });
+    L.daysIn(b.claim).forEach(function (d) { if (d.clip) return; add('day', d.surface, d.key, 'day', d.role || ''); if (d.full) add('day', d.surface + ' ' + d.year, d.full, 'day', d.role || ''); });   // G1: a day-level date ("march 14") joins across years; the role (born, died, founded...) rides in `cat`
     const t = toks.get(b.id); let nT = 0;
     for (let n = 6; n >= 1 && nT < 4; n--) for (let i = 0; i + n <= t.length && nT < 4; i++) {
       const k = t.slice(i, i + n).join(' ');
@@ -312,6 +313,73 @@ function build(db, version, opts) {
     const ex = new Set(id.split(' '));
     return { id: id, kind: 'hook', surface: e.surface, types: Array.from(e.types), df: e.notes.size, items: pickPerNote(e).map(function (b) { return itemOf(b, ex); }) };
   };
+  // Stick: hold one fact, see what clings. Every hook the fact carries that joins other notes (2 to 60 notes), grouped by type, rarest first,
+  // each with up to 5 facts from OTHER notes. Hooks in more than 60 notes are named but not expanded (too common to be a link). Null for an unknown or hidden fact.
+  const STICK_MAX_DF = 60, STICK_PER_HOOK = 5;
+  const stick = function (burrId) {
+    const b = byId.get(burrId); if (!b) return null;
+    const held = itemOf(b, new Set()), groups = new Map(), common = [];
+    (bristles.get(b.id) || []).forEach(function (x) {
+      const e = index.get(x.key); if (!e) return; const df = e.notes.size;
+      if (df < 2) return;
+      if (df > STICK_MAX_DF) { common.push({ id: x.key, label: x.surface, df: df, type: x.type }); return; }
+      const ex = new Set(x.key.split(' ')), held0 = noteTags.get(b.note_id);
+      // Facts from notes far from the held fact's subject come first (tag distance 0 to 1; null when either note has no tags, which sorts last).
+      const others = pickPerNote(e).filter(function (o) { return o.note_id !== b.note_id; }).map(function (o) { return { o: o, d: L.tagDistance(held0, noteTags.get(o.note_id)) }; })
+        .sort(function (p, q) { return (q.d == null ? -1 : q.d) - (p.d == null ? -1 : p.d) || p.o.id - q.o.id; });
+      if (!others.length) return;
+      const g = groups.get(x.type) || groups.set(x.type, []).get(x.type);
+      if (!g.some(function (h) { return h.id === x.key; })) g.push({ id: x.key, label: x.surface, df: df, items: others.slice(0, STICK_PER_HOOK).map(function (p) { return itemOf(p.o, ex, { dist: p.d == null ? null : +p.d.toFixed(2), far: p.d != null && p.d >= 0.9 }); }), more: Math.max(0, others.length - STICK_PER_HOOK) });
+    });
+    const out = Array.from(groups.entries()).map(function (kv) { return { type: kv[0], hooks: kv[1].sort(function (a, c) { return a.df - c.df; }) }; })
+      .sort(function (a, c) { return c.hooks.length - a.hooks.length || (a.type < c.type ? -1 : 1); });
+    return { burr: held, groups: out, clings: out.reduce(function (s, g) { return s + g.hooks.length; }, 0), common: common };
+  };
+  // Shelves for Stick: every fact sits on exactly one of veins (3+ hooks), grip (1 or 2), lone (none); loops is a cross-cut (facts with an unanswered "why").
+  // A hook is one the fact shares with 2 to 60 notes. Shuffled shelves (grip, lone) use a seed so paging is stable and a new seed gives a fresh handful;
+  // they skip fragments (under 30 characters or under 5 words), which Reflection will deal with properly.
+  let shelfCache = null;
+  const shelfIndex = function () {
+    if (shelfCache) return shelfCache;
+    const c = { veins: [], grip: [], lone: [], loops: [] };
+    burrRows.forEach(function (r) {
+      const hs = r.bristles.filter(function (x) { return x.df >= 2 && x.df <= 60; }), n = new Set(hs.map(function (x) { return x.k; })).size;
+      const e = { r: r, n: n, types: Array.from(new Set(hs.map(function (x) { return x.t; }))), hs: hs };
+      (n >= 3 ? c.veins : n >= 1 ? c.grip : c.lone).push(e); if (r.loop) c.loops.push(e);
+    });
+    c.veins.sort(function (a, b) { return b.n - a.n || b.types.length - a.types.length || a.r.id - b.r.id; });
+    shelfCache = c; return c;
+  };
+  const rng = function (seed) { let t = (seed >>> 0) + 0x6D2B79F5; return function () { t = (t + 0x6D2B79F5) >>> 0; let x = Math.imul(t ^ (t >>> 15), 1 | t); x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x; return ((x ^ (x >>> 14)) >>> 0) / 4294967296; }; };
+  const isFragment = function (claim) { const c = String(claim || '').trim(); return c.length < 30 || c.split(/\s+/).length < 5; };
+  const seenLive = new Set(), seedSnap = new Map();     // facts already shown on a shuffled shelf (this run); each seed freezes its own view so paging stays stable
+  const shelf = function (name, o) {
+    o = o || {}; const idx = shelfIndex(), all = idx[name]; if (!all) return null;
+    const size = [12, 24, 48].indexOf(o.size) >= 0 ? o.size : 12, hooked = name !== 'lone';
+    let list = all, hiddenFragments = 0;
+    if (o.type && hooked) list = list.filter(function (e) { return e.types.indexOf(o.type) >= 0; });
+    const typeCounts = {}; if (hooked) all.forEach(function (e) { e.types.forEach(function (t) { typeCounts[t] = (typeCounts[t] || 0) + 1; }); });
+    if (name === 'grip' || name === 'lone') {
+      const kept = list.filter(function (e) { return !isFragment(e.r.claim); }); hiddenFragments = list.length - kept.length; list = kept;
+      const sk = name + ':' + (o.seed == null ? 1 : o.seed); if (!seedSnap.has(sk)) seedSnap.set(sk, new Set(seenLive)); const snap = seedSnap.get(sk);
+      const mix = function (arr) { const rnd = rng(o.seed == null ? 1 : o.seed), a = arr.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)), t = a[i]; a[i] = a[j]; a[j] = t; } return a; };
+      list = mix(list.filter(function (e) { return !snap.has(e.r.id); })).concat(mix(list.filter(function (e) { return snap.has(e.r.id); })));   // unseen first; seen ones only after those run out
+    }
+    const pages = Math.max(1, Math.ceil(list.length / size)), page = Math.min(Math.max(o.page || 1, 1), pages);
+    const pageRows = list.slice((page - 1) * size, page * size); if (name === 'grip' || name === 'lone') pageRows.forEach(function (e) { seenLive.add(e.r.id); });
+    const items = pageRows.map(function (e) {
+      const r = e.r; return { id: r.id, noteId: r.noteId, note: r.note, claim: r.claim, quote: r.quote, loop: r.loop || null, nHooks: e.n, types: e.types,
+        hooks: e.hs.slice().sort(function (a, b) { return a.df - b.df; }).filter(function (x, i, arr) { return arr.findIndex(function (y) { return y.k === x.k; }) === i; }).slice(0, 4).map(function (x) { return { label: x.s, type: x.t, df: x.df }; }) };
+    });
+    return { name: name, total: list.length, page: page, pages: pages, size: size, items: items, hiddenFragments: hiddenFragments, typeCounts: typeCounts,
+      shelves: { veins: idx.veins.length, grip: idx.grip.length, lone: idx.lone.length, loops: idx.loops.length } };
+  };
+  // A random fact that has at least `min` hooks to cling to, for "Surprise me".
+  const stickRandom = function (min, pick) {
+    const pool = burrRows.filter(function (r) { return r.nB >= min && r.band !== 'none'; }); if (!pool.length) return null;
+    for (let i = 0; i < 40; i++) { const r = pool[Math.floor((((pick ? pick() : Math.random()) + i * 0.6180339887) % 1) * pool.length)], s = stick(r.id); if (s && s.clings >= min) return s; }
+    return null;
+  };
   const suggest = function (q, limit) {
     const raw = String(q || '').toLowerCase().trim(); if (raw.length < 2) return [];
     // "Berlin ~ Merlin", "berlin - merlin", "berlin vs merlin" or just "berlin": every part must appear in a wordplay pair; a plain query also matches hooks.
@@ -342,7 +410,7 @@ function build(db, version, opts) {
   const counts = {};
   [['burrs', burrRows], ['bristles', bristleRows], ['sparks', sparkRows], ['knots', knotRows]].forEach(function (p) {
     p[1].forEach(function (r) { r.recs.forEach(function (t) { (counts[t] = counts[t] || {})[p[0]] = ((counts[t] || {})[p[0]] || 0) + 1; }); }); });
-  return { version: version, notes: NN, burrs: burrRows, bristles: bristleRows, sparks: sparkRows, knots: knotRows, slices: sliceRows, wordplay: wordplayRows, wordplayState: wpState, handle: handle, suggest: suggest, wordplayPairs: wordplayPairs, wordplayKinds: wordplayKinds, timeline: timeline, coarse: coarse, quantities: quantities, excluded: excluded, detail: detail, recCounts: counts,
+  return { version: version, notes: NN, burrs: burrRows, bristles: bristleRows, sparks: sparkRows, knots: knotRows, slices: sliceRows, wordplay: wordplayRows, wordplayState: wpState, handle: handle, stick: stick, stickRandom: stickRandom, shelf: shelf, suggest: suggest, wordplayPairs: wordplayPairs, wordplayKinds: wordplayKinds, timeline: timeline, coarse: coarse, quantities: quantities, excluded: excluded, detail: detail, recCounts: counts,
     kinds: Array.from(new Set(burrRows.map(function (r) { return r.kind; }))).sort(),
     types: Array.from(new Set([].concat.apply([], bristleRows.map(function (r) { return r.types; })).concat(wordplayRows.length ? ['wordplay'] : []))).sort() };
 }

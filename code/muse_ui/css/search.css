@@ -16,3 +16,24 @@
 .disclaimer { border-left: 4px solid var(--text-3); background: var(--surface-2); padding: var(--s-3) var(--s-4); border-radius: var(--r-2); color: var(--text-2); font-size: var(--fs-1); margin: var(--s-4) 0; max-width: 52rem; }
 .badge--basis { background: var(--accent-soft); color: var(--accent); }
 .understood > summary { cursor: pointer; }
+
+/* Stick */
+.held { background: var(--surface); border: 1px solid var(--accent); border-radius: var(--r-2); padding: var(--s-4); margin: var(--s-4) 0; box-shadow: var(--shadow-1); }
+.hook { margin: var(--s-4) 0; }
+.hook h3 { font-size: var(--fs-3); margin-bottom: var(--s-2); }
+.hook h3 a { color: var(--text); } .hook h3 small { color: var(--text-3); font-weight: 400; }
+
+/* Stick shelves and tray */
+.shelves { display: flex; flex-wrap: wrap; gap: var(--s-2); margin: var(--s-4) 0 var(--s-2); border-bottom: 1px solid var(--line); }
+.shelf { display: inline-flex; gap: var(--s-2); align-items: baseline; padding: var(--s-2) var(--s-3); border-bottom: 2px solid transparent; color: var(--text-2); }
+.shelf small { color: var(--text-3); } .shelf[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+.shelf__blurb { color: var(--text-2); margin: var(--s-2) 0 var(--s-4); }
+.fact--lone { border-style: dashed; } .fact__loop { color: var(--text-2); font-style: italic; }
+.chip--static { cursor: default; }
+.chips .chip[aria-current="true"] { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+.tray { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-2); padding: var(--s-3) var(--s-4); margin: var(--s-4) 0; }
+.tray h2 { font-size: var(--fs-3); } .tray h2 small { color: var(--text-3); margin-left: var(--s-2); }
+.tray__list { list-style: none; padding: 0; margin: var(--s-2) 0; display: grid; gap: var(--s-2); }
+.tray__gap { color: var(--text-3); display: flex; gap: var(--s-2); align-items: center; }
+.tray__link { flex: 1; min-width: 0; padding: var(--s-1) var(--s-2); border: 1px dashed var(--line-strong); border-radius: var(--r-1); background: var(--surface); color: var(--text); font: inherit; }
+.badge--far { background: var(--accent-soft); color: var(--accent); }

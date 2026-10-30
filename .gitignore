@@ -55,3 +55,8 @@ muse-marks*.jsonl
 # Muse search: derived index and the question cache (questions are stored as typed)
 search-vectors-*
 muse-cache.db*
+
+# Lab scratch copy of vault.db (made for the retrieval pilot)
+eval.db
+muse-events.jsonl
+muse-tray.json

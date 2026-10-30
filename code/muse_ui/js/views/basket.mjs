@@ -10,7 +10,7 @@ export async function basketView({ api, nav, actions }) {
   const facts = items.filter(i => i.item != null), sets = items.filter(i => i.item == null);
   const factNode = (k, n) => {
     const it = { id: k.item, rank: n + 1, note: k.note, noteId: k.noteId, claim: k.claim, quote: k.quote, mark: 'use' };
-    const el = Fact({ it, locked: false,
+    const el = Fact({ it, locked: false, ctx: { from: 'basket' },
       onKeep: async () => { await actions.toggle(k.handle, k.item, 'use', 'use', { via: 'basket' }); el.remove(); nav.refresh();
         toast({ text: 'Removed from basket.', action: { label: 'Undo', onClick: async () => { await actions.send(k.handle, k.item, 'use', { via: 'basket' }); nav.refresh(); } } }); },
       onNote: () => nav.openNote(k.noteId, k.item),

@@ -34,7 +34,7 @@ export async function searchView({ route, api, nav }) {
     h('div', { class: 'fact__top' }, h('span', { class: 'fact__n', text: String(n + 1) }), h('span', { class: 'fact__note', text: it.note || '' }),
       it.basis ? h('span', { class: 'badge badge--basis', title: 'The confidence rating above is based on this fact: the closest to your question', text: 'best match' }) : null, h('span', { class: 'badge', title: 'How this fact was found', text: viaLabel(it.via) }), it.sim != null ? h('span', { class: 'badge', title: 'Closeness of this fact to the rewritten question (0 to 1)', text: 'closeness ' + it.sim.toFixed(2) }) : null),
     h('p', { class: 'fact__claim', text: it.claim }), it.quote ? h('p', { class: 'fact__quote', text: '“' + it.quote + '”' }) : null,
-    h('div', { class: 'fact__actions' }, Button({ label: 'Full note', ic: 'note', size: 'sm', onClick: () => nav.openNote(it.noteId, it.burrId) })));
+    h('div', { class: 'fact__actions' }, Button({ label: 'Grab', ic: 'link', size: 'sm', title: 'Grab this fact as your stick and see what clings to it', href: build('stick', {}, { id: it.burrId, from: 'search' }) }), Button({ label: 'Full note', ic: 'note', size: 'sm', onClick: () => nav.openNote(it.noteId, it.burrId) })));
   const list = h('ol', { class: 'facts' }, r.results.map(card));
   const banner = r.band ? h('div', { class: 'banner banner--' + r.band, role: 'status' }, h('strong', { text: BAND_TITLE[r.band] }),
     r.band === 'unrated' ? h('span', { text: '. No confidence rating, because the AI rewrite step did not run for this question.' })

@@ -13,10 +13,11 @@ import { homeView } from './views/home.mjs';
 import { listView } from './views/list.mjs';
 import { setView } from './views/set.mjs';
 import { basketView } from './views/basket.mjs';
+import { stickView } from './views/stick.mjs';
 import { searchView, searchHref } from './views/search.mjs';
 import { getPref } from './prefs.mjs';
 
-const VIEWS = { home: homeView, wordplay: listView, set: setView, basket: basketView, search: searchView };
+const VIEWS = { home: homeView, wordplay: listView, set: setView, basket: basketView, search: searchView, stick: stickView };
 const store = createStore({ meta: null, marks: { use: 0, dull: 0, 'wrong-sense': 0 } });
 let route = null, seq = 0, screenCtx = {};
 
@@ -51,6 +52,7 @@ async function render(r, { keepScroll = false } = {}) {
     const pagerNow = content.querySelector('.pager');
     if (keepScroll) { pagerTop !== undefined && pagerNow ? window.scrollBy(0, pagerNow.getBoundingClientRect().top - pagerTop) : window.scrollTo(0, y); } else { window.scrollTo(0, 0); content.focus({ preventScroll: true }); }
     basketBtn.setAttribute('aria-current', String(r.name === 'basket'));
+    document.querySelectorAll('[data-nav]').forEach(a => a.setAttribute('aria-current', String(a.dataset.nav === (r.name === 'stick' ? 'stick' : 'connect'))));
     out.after?.();
   } catch (e) {
     if (mine !== seq || e.name === 'AbortError') return;
@@ -72,7 +74,7 @@ async function boot() {
   const side = h('nav', { class: 'side', 'aria-label': 'Modes' }, h('div', { class: 'side__brand', text: 'Muse' }),
     h('div', { class: 'side__sub', text: `${meta.version} · ${meta.notes} notes · ${meta.burrs} facts` }),
     meta.modes.map(([key, label, blurb, live]) => live
-      ? h('a', { class: 'mode', href: build('home'), 'data-nav': key, 'aria-current': 'true' }, label, h('small', { text: blurb }))
+      ? h('a', { class: 'mode', href: build(key === 'stick' ? 'stick' : 'home'), 'data-nav': key, 'aria-current': String(key === 'connect') }, label, h('small', { text: blurb }))
       : h('div', { class: 'mode', 'aria-disabled': 'true' }, label, h('small', { text: 'planned · ' + blurb }))));
   const top = h('header', { class: 'top' }, Search({ api, onPick: it => go(build('set', { id: it.id })), onSubmit: q => go(searchHref(q, getPref('meaning', true))) }), basketBtn);
   mount(shell, side, h('div', { class: 'main' }, top, content), drawerHost);

@@ -26,6 +26,12 @@ export const api = {
   noteByTitle: title => get('/api/note', { title }, 'note'),
   search: (q, meaning) => get('/api/search', { q, meaning: meaning ? '1' : '0' }, 'search', { 'X-Muse': '1' }),
   searchStatus: () => get('/api/search/status'),
+  stick: id => get('/api/stick', { id }, 'stick'),
+  event: body => fetch('/api/event', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), keepalive: true }).catch(() => {}),
+  tray: () => get('/api/tray'),
+  saveTray: body => request('/api/tray', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), keepalive: true }),
+  shelf: o => get('/api/shelf', o, 'shelf'),
+  stickRandom: () => get('/api/stick', { random: true }),
   kept: () => get('/api/kept', {}, 'kept'),
   mark: body => post('/api/mark', body)
 };

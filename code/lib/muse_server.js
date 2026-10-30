@@ -8,11 +8,11 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=u
 const SECURITY = { 'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
   'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Cache-Control': 'no-store' };
 const PAGE_SIZES = [12, 24, 48, 96];
-const MODES = [['connect', 'Connect', 'Facts that share a handle, hard to easy', true], ['stick', 'Stick', 'Hold one fact, see what clings', false], ['thread', 'Thread', 'Follow a chain, hook by hook', false],
+const MODES = [['connect', 'Connect', 'Facts that share a handle, hard to easy', true], ['stick', 'Stick', 'Hold one fact, see what clings', true], ['thread', 'Thread', 'Follow a chain, hook by hook', false],
   ['slice', 'Slice', 'Everything touching a year, week or day', false], ['shelf', 'Shelf', 'Etymology and other typed shelves', false], ['loops', 'Loops', "The vault's unanswered why?", false],
   ['drift', 'Drift', 'One unprompted spark a day', false], ['wander', 'Wander', 'A random walk over words with several meanings', false]];
 
-function createServer({ model, marks, notes, version, uiRoot, search = null }) {
+function createServer({ model, marks, notes, version, uiRoot, search = null, events = null, trayStore = null }) {
   const root = path.resolve(uiRoot);
   const send = (res, code, type, body) => { res.writeHead(code, Object.assign({ 'Content-Type': type }, SECURITY)); res.end(body); };
   const json = (res, o, code) => send(res, code || 200, 'application/json; charset=utf-8', JSON.stringify(o));
@@ -57,6 +57,25 @@ function createServer({ model, marks, notes, version, uiRoot, search = null }) {
         .filter(Boolean).reverse();
       return json(res, { items: out, marks: marks.counts() });
     }
+    if (u.pathname === '/api/tray') {
+      if (!trayStore) return json(res, { error: 'saving is not set up' }, 503);
+      if (req.method !== 'POST') return json(res, trayStore.load());
+      if (!/application\/json/.test(req.headers['content-type'] || '')) return json(res, { error: 'json only' }, 415);
+      return readBody(req, b => {
+        const ok = b && Array.isArray(b.items) && b.items.length <= 50 && b.items.every(i => i && Number.isInteger(i.id) && typeof i.note === 'string' && i.note.length <= 300 && typeof i.claim === 'string' && i.claim.length <= 1000 && (i.noteId == null || Number.isInteger(i.noteId)))
+          && b.links && typeof b.links === 'object' && Object.keys(b.links).length <= 100 && Object.entries(b.links).every(([k, v]) => /^\d+>\d+$/.test(k) && typeof v === 'string' && v.length <= 200);
+        if (!ok) return json(res, { error: 'bad tray' }, 400);
+        trayStore.save({ items: b.items.map(i => ({ id: i.id, noteId: i.noteId == null ? null : i.noteId, note: i.note, claim: i.claim })), links: b.links }); json(res, { ok: true });
+      });
+    }
+    if (u.pathname === '/api/event' && req.method === 'POST') {
+      // Where a fact came from (which shelf, search, a cling) when it was grabbed or picked up, so a month on you can see which routes led to questions. Counts only; no query text.
+      if (!/application\/json/.test(req.headers['content-type'] || '')) return json(res, { error: 'json only' }, 415);
+      return readBody(req, b => {
+        if (!events || !b || !['hold', 'pick', 'unpick'].includes(b.kind) || !Number.isInteger(b.id) || typeof b.from !== 'string' || b.from.length > 24) return json(res, { error: 'bad event' }, 400);
+        events.append({ ts: new Date().toISOString(), kind: b.kind, id: b.id, from: b.from.replace(/[^\w-]/g, '') }); json(res, { ok: true });
+      });
+    }
     if (u.pathname === '/api/mark' && req.method === 'POST') {
       if (!/application\/json/.test(req.headers['content-type'] || '')) return json(res, { error: 'json only' }, 415);
       return readBody(req, b => {
@@ -66,6 +85,16 @@ function createServer({ model, marks, notes, version, uiRoot, search = null }) {
         catch (e) { return json(res, { error: e.message }, 400); }
         json(res, { ok: true, mark: marks.get(b.handle, item) || null, marks: marks.counts() });
       });
+    }
+    if (u.pathname === '/api/shelf') {
+      const r = model.shelf(q.get('name') || 'veins', { type: q.get('type') || '', page: parseInt(q.get('page'), 10) || 1, size: parseInt(q.get('size'), 10) || 12, seed: parseInt(q.get('seed'), 10) || 1 });
+      return r ? json(res, r) : json(res, { error: 'unknown shelf' }, 404);
+    }
+    if (u.pathname === '/api/stick') {
+      const s = q.get('random') === '1' ? model.stickRandom(3) : /^\d+$/.test(q.get('id') || '') ? model.stick(parseInt(q.get('id'), 10)) : null;
+      if (!s) return json(res, { error: 'That fact is not available.' }, 404);
+      s.groups.forEach(g => g.hooks.forEach(hk => { hk.items = hk.items.map(i => Object.assign({}, i, { mark: marks.get(hk.id, i.id) || null })).filter(i => all || (i.mark !== 'dull' && i.mark !== 'wrong-sense')); }));
+      return json(res, s);
     }
     if (u.pathname === '/api/search/status') return json(res, search ? search.status() : { meaning: { ready: false }, disabled: true });
     if (u.pathname === '/api/search') {

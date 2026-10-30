@@ -1,5 +1,6 @@
 import { h } from '../dom.mjs';
 import { Button } from './button.mjs';
+import { build } from '../router.mjs';
 
 // One fact (a burr) with everything you can do to it: keep it, read its whole note, mark it dull or the wrong sense, pivot on its other hooks.
 // `locked` withholds "Full note" while the handle is hidden, because the note title would give the answer away.
@@ -15,7 +16,7 @@ export function Fact({ it, locked, ctx = {}, onMark, onKeep, onNote, hookHref, e
     h('p', { class: 'fact__claim', text: it.claim }),
     it.quote ? h('p', { class: 'fact__quote', text: '“' + it.quote + '”' }) : null,
     it.hooks?.length && hookHref ? h('div', { class: 'fact__hooks' }, 'Also about', it.hooks.map(k => h('a', { class: 'chip', href: hookHref(k.id), title: `${k.df} notes`, text: k.label }))) : null,
-    h('div', { class: 'fact__actions' }, star, extra,
+    h('div', { class: 'fact__actions' }, star, extra, locked ? null : Button({ label: 'Grab', ic: 'link', size: 'sm', title: 'Grab this fact as your stick and see what clings to it', href: build('stick', {}, { id: it.id, from: ctx.from || 'connect' }) }),
       Button({ label: 'Full note', ic: 'note', size: 'sm', disabled: locked, title: locked ? 'Available once the handle is revealed' : 'Read the whole note beside this page', onClick: () => onNote(it) }),
       onMark ? [h('span', { class: 'spacer' }), mk('dull', 'Dull'), mk('wrong-sense', 'Wrong sense')] : null));
 }

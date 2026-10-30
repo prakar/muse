@@ -6,7 +6,7 @@
  * Wordplay appears once `npm run wordplay -- --apply` has been run. The interface is static files in code/muse_ui; the HTTP layer is lib/muse_server.js.
  * The inspection tool (judging burrs, hooks, sparks) stays in code/muse_view.js.
  */
-const path = require('path'), os = require('os');
+const path = require('path'), os = require('os'), fs = require('fs');
 const { DatabaseSync } = require('node:sqlite');
 const Core = require('./lib/search_core'), SV = require('./lib/search_vectors'), SE = require('./lib/search_embed'), SC = require('./lib/search_cache'), { createRewriter } = require('./lib/search_rewrite'), { createSearchService } = require('./lib/search_service');
 const LLM = require('./lib/llm'), Bud = require('./lib/budget');
@@ -15,6 +15,7 @@ const M = require('./lib/muse_model'), K = require('./lib/marks'), { createServe
 const args = process.argv.slice(2), opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : d; };
 const PORT = parseInt(opt('--port', '3005'), 10), VERSION = opt('--version', 'nug-v6');
 const HOME = process.env.QUARRY_HOME || path.join(__dirname, '..'), DB = process.env.QUARRY_DB || path.join(HOME, 'vault.db');
+const TRAY_FILE = process.env.MUSE_TRAY || path.join(HOME, 'muse-tray.json');
 const MARKS_FILE = process.env.MUSE_MARKS || path.join(HOME, 'muse-marks.jsonl');
 
 console.log('Building model from ' + DB + ' (' + VERSION + ') ...');
@@ -33,5 +34,5 @@ const search = createSearchService({ burrs: searchBurrs, words: Core.buildWordIn
   rewriter: MEANING ? createRewriter({ cache, callLLM: LLM.callLLM, hasKey: LLM.hasKey, priceFor: Bud.priceFor, breaker: SE.createBreaker(), config: { provider: 'gemini', maxUsdPerDay: process.env.MUSE_REWRITE_MAX_USD_DAY ? +process.env.MUSE_REWRITE_MAX_USD_DAY : 0.25 } }) : null, cache });
 console.log('Search: words ready (' + searchBurrs.length + ' facts); meaning ' + (!MEANING ? 'switched off (MUSE_MEANING=off)' : vectors ? vectors.count + ' vectors' + (vectors.stale || vectors.gone ? ' (' + vectors.stale + ' out of date, ' + vectors.gone + ' gone: rerun search_build.js)' : '') : 'index not built yet (run: node --no-warnings code/search_build.js)'));
 
-createServer({ model, marks: K.open(MARKS_FILE, VERSION), notes: createNoteStore(db, { vaultRoot: process.env.MUSE_VAULT_ROOT || path.join(os.homedir(), 'md-vaults', 'knowledge') }), version: VERSION, search, uiRoot: path.join(__dirname, 'muse_ui') })
+createServer({ model, marks: K.open(MARKS_FILE, VERSION), notes: createNoteStore(db, { vaultRoot: process.env.MUSE_VAULT_ROOT || path.join(os.homedir(), 'md-vaults', 'knowledge') }), version: VERSION, search, trayStore: { load: () => { try { return JSON.parse(fs.readFileSync(TRAY_FILE, 'utf8')); } catch (e) { return { items: [], links: {} }; } }, save: o => { fs.writeFileSync(TRAY_FILE + '.tmp', JSON.stringify(o)); fs.renameSync(TRAY_FILE + '.tmp', TRAY_FILE); } }, events: { append: o => fs.appendFile(path.join(HOME, 'muse-events.jsonl'), JSON.stringify(o) + '\n', () => {}) }, uiRoot: path.join(__dirname, 'muse_ui') })
   .listen(PORT, '127.0.0.1', () => console.log('Open http://localhost:' + PORT + '   (marks are saved to ' + MARKS_FILE + ')'));

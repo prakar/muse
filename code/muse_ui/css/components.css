@@ -52,13 +52,15 @@ a.pager__page:active { transform: translateY(1px); }
 .field { height: 2.125rem; padding: 0 var(--s-2); border: 1px solid var(--line-strong); border-radius: var(--r-2); background: var(--surface); }
 .field--num { width: 4.5rem; }
 /* Breadcrumbs */
-.crumbs ol { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-1); font-size: var(--fs-1); }
+.crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
+.crumbs__label { font-size: var(--fs-0); letter-spacing: .08em; text-transform: uppercase; color: var(--text-3); }
+.crumbs ol { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-pill); padding: .15rem .35rem; list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-1); font-size: var(--fs-1); }
 .crumbs li { display: inline-flex; align-items: center; gap: var(--s-1); color: var(--text-2); }
 .crumbs li + li::before { content: "›"; color: var(--text-3); margin-right: var(--s-1); }
 .crumbs a { padding: .15rem .5rem; border-radius: var(--r-1); }
 .crumbs a:hover { background: var(--surface-2); color: var(--accent); }
 .crumbs a:active { background: var(--line); }
-.crumbs [aria-current="page"] { color: var(--text); font-weight: 650; padding: .15rem .5rem; }
+.crumbs [aria-current="page"] { color: var(--accent); background: var(--accent-soft); border-radius: var(--r-pill); font-weight: 650; padding: .15rem .65rem; }
 /* Toast */
 .toasts { position: fixed; left: 50%; bottom: var(--s-5); transform: translateX(-50%); display: grid; gap: var(--s-2); z-index: var(--z-toast); }
 .toast { display: flex; align-items: center; gap: var(--s-4); padding: var(--s-3) var(--s-4); background: var(--text); color: var(--bg); border-radius: var(--r-2); box-shadow: var(--shadow-2); font-size: var(--fs-1); animation: toast-in var(--t-med) var(--ease); }

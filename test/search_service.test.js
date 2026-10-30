@@ -109,3 +109,64 @@ test('interface: the search route, the switch rule and the crumb', async () => {
   assert.strictEqual(build('search', {}, { q: 'a b', meaning: '' }), '#/search?q=a+b'); assert.deepStrictEqual(trail(parse('#/search?q=x')).map(x => x.label), ['Connect', 'Search']);
   { assert.strictEqual(S.wantsMeaning({ query: {} }, true), true); assert.strictEqual(S.wantsMeaning({ query: {} }, false), false); assert.strictEqual(S.wantsMeaning({ query: { meaning: 'off' } }, true), false); assert.strictEqual(S.SWITCH_LABEL, 'Search by meaning'); assert.strictEqual(S.viaLabel({ words: true, meaning: true }), 'words + meaning'); }
 });
+
+// ---- Stick
+test('Stick: real model API returns grouped clings from other notes; route validates input', async () => {
+  const { DatabaseSync } = require('node:sqlite'), M = require('../code/lib/muse_model'), dbFile = path.join(__dirname, '..', 'vault.db');
+  if (!fs.existsSync(dbFile)) return;                                  // the live vault is not in every checkout
+  const m = M.build(new DatabaseSync(dbFile, { readOnly: true }), 'nug-v6', {}), s = m.stickRandom(3, () => 0.5);
+  assert.ok(s && s.clings >= 3, 'a random fact with at least three hooks'); const held = s.burr;
+  s.groups.forEach(g => g.hooks.forEach(hk => { assert.ok(hk.df >= 2 && hk.df <= 60); hk.items.forEach(i => { assert.notStrictEqual(i.noteId, held.noteId, 'clings come from other notes'); assert.ok(i.claim); }); assert.ok(hk.items.length <= 5); }));
+  assert.strictEqual(m.stick(-1), null);
+  const stub = { stick: id => id === 7 ? { burr: { id: 7 }, groups: [{ type: 'place', hooks: [{ id: 'giza', label: 'Giza', df: 3, items: [{ id: 1, claim: 'a' }, { id: 2, claim: 'b' }], more: 0 }] }], clings: 1, common: [] } : null, stickRandom: () => null, burrs: [], notes: 1, sparks: [], wordplay: [], wordplayState: 'ok', wordplayKinds: () => [], handle: () => null, suggest: () => [] };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'st-')), marks = K.open(path.join(dir, 'm.jsonl'), 't'); marks.set('giza', 2, 'dull');
+  const srv = createServer({ model: stub, marks, notes: fakeNotes(), version: 't', uiRoot: path.join(__dirname, '..', 'code', 'muse_ui') }); await new Promise(r => srv.listen(0, '127.0.0.1', r)); const port = srv.address().port;
+  const get = p => new Promise(res => http.get({ host: '127.0.0.1', port, path: p, headers: { Host: 'localhost:' + port } }, r => { let b = ''; r.on('data', d => b += d); r.on('end', () => res({ status: r.statusCode, body: b })); }));
+  try {
+    const ok = await get('/api/stick?id=7'); assert.strictEqual(ok.status, 200); assert.deepStrictEqual(JSON.parse(ok.body).groups[0].hooks[0].items.map(i => i.id), [1], 'a fact marked dull is left out');
+    assert.strictEqual((await get('/api/stick?id=abc')).status, 404); assert.strictEqual((await get('/api/stick?id=8')).status, 404); assert.strictEqual((await get('/api/stick?random=1')).status, 404, 'no candidate: plain 404');
+  } finally { srv.close(); }
+  const { parse } = await import(pathToFileURL(path.join(__dirname, '..', 'code', 'muse_ui', 'js', 'router.mjs')).href), V = await import(pathToFileURL(path.join(__dirname, '..', 'code', 'muse_ui', 'js', 'views', 'stick.mjs')).href);
+  assert.strictEqual(parse('#/stick?id=7').name, 'stick'); assert.strictEqual(V.typeLabel('place'), 'Places'); assert.strictEqual(V.typeLabel('former-role'), 'Former roles'); assert.strictEqual(V.stickHref(7), '#/stick?id=7');
+});
+
+test('Stick shelves: every fact is on exactly one shelf, shuffles are stable per seed, fragments stay out, kinds filter', async () => {
+  const { DatabaseSync } = require('node:sqlite'), M = require('../code/lib/muse_model'), dbFile = path.join(__dirname, '..', 'vault.db');
+  if (!fs.existsSync(dbFile)) return;
+  const m = M.build(new DatabaseSync(dbFile, { readOnly: true }), 'nug-v6', {}), a = m.shelf('lone', { seed: 5 }), b = m.shelf('lone', { seed: 5 }), c = m.shelf('lone', { seed: 6 });
+  const sh = a.shelves; assert.strictEqual(sh.veins + sh.grip + sh.lone, m.burrs.length, 'veins + grip + lone cover every fact exactly once');
+  assert.deepStrictEqual(a.items.map(i => i.id), b.items.map(i => i.id), 'same seed, same page'); assert.notDeepStrictEqual(a.items.map(i => i.id), c.items.map(i => i.id), 'new seed, fresh handful');
+  a.items.forEach(i => { assert.ok(i.claim.length >= 30 && i.nHooks === 0); }); assert.strictEqual(m.shelf('nope'), null);
+  const v = m.shelf('veins', { type: 'place' }); assert.ok(v.total > 0 && v.items.every(i => i.types.includes('place') && i.nHooks >= 3));
+  assert.strictEqual(m.shelf('veins', { page: 99999 }).page, m.shelf('veins', {}).pages, 'page numbers are clamped');
+  const { tray } = await import(pathToFileURL(path.join(__dirname, '..', 'code', 'muse_ui', 'js', 'components', 'tray.mjs')).href);
+  tray.clear(); tray.toggle({ id: 1, note: 'N', claim: 'A' }); tray.toggle({ id: 2, note: 'M', claim: 'B' }); tray.setLink(1, 2, 'same place'); assert.strictEqual(tray.text(), '1. A  [N]\n   ↳ same place\n2. B  [M]'); assert.strictEqual(tray.toggle({ id: 1 }), false); tray.clear();
+});
+
+test('Stick: far-apart clings come first; shuffles skip what you have seen; events are recorded and validated', async () => {
+  const { DatabaseSync } = require('node:sqlite'), M = require('../code/lib/muse_model'), dbFile = path.join(__dirname, '..', 'vault.db');
+  if (!fs.existsSync(dbFile)) return;
+  const m = M.build(new DatabaseSync(dbFile, { readOnly: true }), 'nug-v6', {}), s = m.stickRandom(3, () => 0.2);
+  s.groups.forEach(g => g.hooks.forEach(hk => { const ds = hk.items.map(i => i.dist == null ? -1 : i.dist); assert.deepStrictEqual(ds, ds.slice().sort((a, b) => b - a), 'sorted far to near'); hk.items.forEach(i => assert.strictEqual(i.far, i.dist != null && i.dist >= 0.9)); }));
+  const p1 = m.shelf('lone', { seed: 11 }).items.map(i => i.id), again = m.shelf('lone', { seed: 11 }).items.map(i => i.id), fresh = m.shelf('lone', { seed: 12 }).items.map(i => i.id);
+  assert.deepStrictEqual(p1, again, 'same seed, same page, even after being seen'); assert.strictEqual(fresh.filter(id => p1.includes(id)).length, 0, 'a new shuffle never repeats what was just shown');
+  const logged = [], dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ev-')), srv = createServer({ model: fakeModel(), marks: K.open(path.join(dir, 'm.jsonl'), 't'), notes: fakeNotes(), version: 't', uiRoot: path.join(__dirname, '..', 'code', 'muse_ui'), events: { append: o => logged.push(o) } });
+  await new Promise(r => srv.listen(0, '127.0.0.1', r)); const port = srv.address().port;
+  const post = (body, type = 'application/json') => new Promise(res => { const rq = http.request({ host: '127.0.0.1', port, path: '/api/event', method: 'POST', headers: { Host: 'localhost:' + port, 'Content-Type': type } }, r => { r.resume(); r.on('end', () => res(r.statusCode)); }); rq.end(JSON.stringify(body)); });
+  try {
+    assert.strictEqual(await post({ kind: 'pick', id: 5, from: 'lone' }), 200); assert.strictEqual(logged[0].from, 'lone');
+    assert.strictEqual(await post({ kind: 'pick', id: 5, from: 'lone' }, 'text/plain'), 415); assert.strictEqual(await post({ kind: 'steal', id: 5, from: 'x' }), 400); assert.strictEqual(await post({ kind: 'hold', id: 'a', from: 'x' }), 400); assert.strictEqual(logged.length, 1);
+  } finally { srv.close(); }
+});
+
+test('Tray saving: the server validates and stores the tray; bad shapes and non-JSON are refused', async () => {
+  let saved = null; const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tr-')), srv = createServer({ model: fakeModel(), marks: K.open(path.join(dir, 'm.jsonl'), 't'), notes: fakeNotes(), version: 't', uiRoot: path.join(__dirname, '..', 'code', 'muse_ui'), trayStore: { load: () => saved || { items: [], links: {} }, save: o => { saved = o; } } });
+  await new Promise(r => srv.listen(0, '127.0.0.1', r)); const port = srv.address().port;
+  const call = (method, body, type = 'application/json') => new Promise(res => { const rq = http.request({ host: '127.0.0.1', port, path: '/api/tray', method, headers: { Host: 'localhost:' + port, 'Content-Type': type } }, r => { let b = ''; r.on('data', d => b += d); r.on('end', () => res({ status: r.statusCode, body: b })); }); rq.end(body === undefined ? undefined : JSON.stringify(body)); });
+  try {
+    const good = { items: [{ id: 1, noteId: 2, note: 'N', claim: 'A' }, { id: 3, noteId: null, note: 'M', claim: 'B' }], links: { '1>3': 'same place' } };
+    assert.strictEqual((await call('POST', good)).status, 200); assert.deepStrictEqual(JSON.parse((await call('GET')).body), good, 'what was saved is what comes back');
+    assert.strictEqual((await call('POST', good, 'text/plain')).status, 415); assert.strictEqual((await call('POST', { items: [{ id: 'x', note: '', claim: '' }], links: {} })).status, 400);
+    assert.strictEqual((await call('POST', { items: [], links: { 'a>b': 'x' } })).status, 400); assert.strictEqual((await call('POST', { items: Array(51).fill({ id: 1, note: 'n', claim: 'c' }), links: {} })).status, 400);
+  } finally { srv.close(); }
+});
