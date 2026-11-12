@@ -1,7 +1,7 @@
 # Quarry dev environment. mise applies this when you cd here (mise activate zsh).
 # Paths are relative to this file, so nothing here is machine-specific.
 [tools]
-node = "lts"
+node = "24"
 python = "3.11"
 rust = "stable"
 
