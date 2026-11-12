@@ -216,4 +216,5 @@ function tagDistance(a, b) {
   return 1 - inter / (a.size + b.size - inter);
 }
 
-module.exports = { findDates: D.findDates, normUnit, yearOfKey, quantityOfKey, STOP, foldKey, variantKey, variantKeyV1, yearsIn, qualifyNumber, datesIn, isYearKey, tokens, usableKey, titleKey, buildIdf, vectorOf, cosine, tagDistance };
+const DD = require('./daydates');
+module.exports = { findDates: D.findDates, daysIn: DD.findDays, normUnit, yearOfKey, quantityOfKey, STOP, foldKey, variantKey, variantKeyV1, yearsIn, qualifyNumber, datesIn, isYearKey, tokens, usableKey, titleKey, buildIdf, vectorOf, cosine, tagDistance };

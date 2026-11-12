@@ -22,23 +22,23 @@ test('router: build and parse round-trip, ids with odd characters, unknown route
   assert.deepStrictEqual(parse(h), { name: 'set', params: { id }, query: { from: 'anagram-pair', page: '3', r: '1' } });
   assert.strictEqual(build('home'), '#/'); assert.strictEqual(parse('').name, 'home'); assert.strictEqual(parse('#/nonsense/x').name, 'home');
   assert.strictEqual(parse('#/set').name, 'home', 'a set route without an id is not valid');
-  assert.deepStrictEqual(parse('#/wordplay/head-tail?page=2'), { name: 'wordplay', params: { kind: 'head-tail' }, query: { page: '2' } });
+  assert.deepStrictEqual(parse('#/wordplay/head-tail?wpage=2'), { name: 'home', params: {}, query: { wpage: '2', wp: 'head-tail' } });
   const a = parse(h), b = parse(withQuery(a, { note: '12', at: '7' }));
   assert.ok(sameScreen(a, b), 'opening a note keeps the same screen'); assert.ok(!sameScreen(a, parse(withQuery(a, { n: 8 }))));
 });
 
 test('breadcrumbs: every level links back to the state you left it in; reveal mode hides the handle', async () => {
   const { trail } = await load('crumbs.mjs'), { parse } = await load('router.mjs');
-  const r = parse('#/set/Arabs%20~%20Basra?from=anagram-pair&page=3&size=24');
+  const r = parse('#/set/Arabs%20~%20Basra?from=anagram-pair&wpage=3&wsize=48');
   const t = trail(r, { surface: 'Arabs ~ Basra' });
-  assert.deepStrictEqual(t.map(x => x.label), ['Connect', 'Anagram pairs', 'Arabs ~ Basra']);
-  assert.strictEqual(t[0].href, '#/'); assert.strictEqual(t[1].href, '#/wordplay/anagram-pair?page=3&size=24&sel=Arabs+%7E+Basra');
+  assert.deepStrictEqual(t.map(x => x.label), ['Home', 'Anagram pairs', 'Arabs ~ Basra']);
+  assert.strictEqual(t[0].href, '#/'); assert.strictEqual(t[1].href, '#/?wp=anagram-pair&wpage=3&wsize=48&sel=Arabs+%7E+Basra');
   assert.strictEqual(t[2].href, undefined, 'the current page is not a link');
   const hid = trail(r, { surface: 'Arabs ~ Basra', hidden: true });
   assert.strictEqual(hid[2].label, 'Hidden handle'); assert.ok(!/sel=/.test(hid[1].href));
-  assert.deepStrictEqual(trail(parse('#/set/mercury?from=basket'), { surface: 'Mercury' }).map(x => x.label), ['Connect', 'Basket', 'Mercury']);
-  assert.deepStrictEqual(trail(parse('#/set/mercury'), { surface: 'Mercury' }).map(x => x.label), ['Connect', 'Mercury']);
-  assert.deepStrictEqual(trail(parse('#/')).map(x => x.label), ['Connect']);
+  assert.deepStrictEqual(trail(parse('#/set/mercury?from=basket'), { surface: 'Mercury' }).map(x => x.label), ['Home', 'Starred', 'Mercury']);
+  assert.deepStrictEqual(trail(parse('#/set/mercury'), { surface: 'Mercury' }).map(x => x.label), ['Home', 'Mercury']);
+  assert.deepStrictEqual(trail(parse('#/')).map(x => x.label), ['Home']);
 });
 
 test('markdown: structure, nesting, safety and quote location', async () => {

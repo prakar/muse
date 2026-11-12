@@ -4,6 +4,9 @@ Quarry turns the author's Obsidian vault into a SQLite store of burrs (atomic cl
 
 Stance: deterministic first, local ML second, LLM last. The LLM proposes, deterministic code disposes.
 
+## Known limit (read before trusting coverage)
+The extractor reads only the first 6,000 characters of each note (`MAX_BODY_CHARS`, `code/lib/burrs.js`) and takes at most 6, 10 or 14 burrs per note. 24% of notes and about half of all characters are beyond it. Details and numbers: the warning at the top of the vault note `QUARRY - Muse Design`; the plan: `code/lab/STATUS.md`, section "Roadmap", track A.
+
 ## Read first
 - `code/lab/STATUS.md` (repo): current state and the execution checklist.
 - Design docs have ONE canonical home: the vault, at `/Users/prakar/md-vaults/tech-journalling/worklog/2026/` (index: `QUARRY MOC.md`). Edit them there only. Code state and the execution checklist have one home too: `code/lab/STATUS.md`. The claude.ai Project QUARRY holds pointer stubs under the old `claude/` names; never copy design text into the Project or the repo.
@@ -12,6 +15,7 @@ Stance: deterministic first, local ML second, LLM last. The LLM proposes, determ
 |---|---|---|
 | `muse-constitution.md` | vault `QUARRY - Muse Constitution.md` | Binding rules and decisions (Decision 7: quiz material) |
 | `muse-design.md` | vault `QUARRY - Muse Design.md` | Design; "The heuristics are the spec"; checklist H1-H7 |
+| `muse-search-design.md` | vault `QUARRY - Muse Search and Embeddings Design.md` | Search layers, nameable link, embeddings evidence, central embeddings server, degradation |
 | `quiz-corpus-lessons.md` | vault `QUARRY - Heuristics Commons.md` | The 71 link heuristics |
 | `heuristics-illustrations.md` | vault `QUARRY - Heuristics Illustrations.md` (tech-journalling only) | Source fragment per heuristic (other setters' quizzes) |
 | `quiz-backtest.md` | vault `QUARRY - Quiz Backtest.md` | Backtest findings and what is not yet done |

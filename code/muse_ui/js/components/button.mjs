@@ -2,12 +2,12 @@ import { h } from '../dom.mjs';
 import { icon } from '../icons.mjs';
 
 // One button for the whole app. `pressed` makes it a toggle that stays highlighted; `current` marks a selected link-style button.
-export function Button({ label, ic, variant = 'default', size, pressed, current, onClick, title, disabled, href, extra }) {
+export function Button({ label, ic, emoji, variant = 'default', size, pressed, current, onClick, title, disabled, href, extra }) {
   return h(href ? 'a' : 'button', {
     class: `btn btn--${variant}${size ? ' btn--' + size : ''}${label ? '' : ' btn--icon'}${extra ? ' ' + extra : ''}`,
     ...(href ? { href } : { type: 'button' }), title, 'aria-label': label ? null : title,
     'aria-pressed': pressed === undefined ? null : String(!!pressed), 'aria-current': current ? 'true' : null, disabled, onclick: onClick
-  }, ic && icon(ic), label && h('span', { text: label }));
+  }, emoji && h('span', { class: 'btn__emoji', 'aria-hidden': 'true', text: emoji }), ic && icon(ic), label && h('span', { text: label }));
 }
 export const setPressed = (el, on) => el.setAttribute('aria-pressed', String(!!on));
 

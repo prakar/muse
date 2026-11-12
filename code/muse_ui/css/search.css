@@ -30,10 +30,83 @@
 .shelf__blurb { color: var(--text-2); margin: var(--s-2) 0 var(--s-4); }
 .fact--lone { border-style: dashed; } .fact__loop { color: var(--text-2); font-style: italic; }
 .chip--static { cursor: default; }
-.chips .chip[aria-current="true"] { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+.chips .chip[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
 .tray { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-2); padding: var(--s-3) var(--s-4); margin: var(--s-4) 0; }
 .tray h2 { font-size: var(--fs-3); } .tray h2 small { color: var(--text-3); margin-left: var(--s-2); }
 .tray__list { list-style: none; padding: 0; margin: var(--s-2) 0; display: grid; gap: var(--s-2); }
 .tray__gap { color: var(--text-3); display: flex; gap: var(--s-2); align-items: center; }
 .tray__link { flex: 1; min-width: 0; padding: var(--s-1) var(--s-2); border: 1px dashed var(--line-strong); border-radius: var(--r-1); background: var(--surface); color: var(--text); font: inherit; }
 .badge--far { background: var(--accent-soft); color: var(--accent); }
+
+/* Help */
+.helpcards { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: var(--s-3); margin: var(--s-3) 0; }
+.helpcard { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-2); padding: var(--s-3) var(--s-4); }
+.helpcard h3 { font-size: var(--fs-4); color: var(--accent); } .helpcard__what { margin: var(--s-2) 0; }
+.helpcard dt { font-size: var(--fs-0); text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); margin-top: var(--s-2); } .helpcard dd { margin: 0; color: var(--text-2); font-size: var(--fs-1); }
+.recipe { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-2); padding: var(--s-2) var(--s-4); margin: var(--s-2) 0; }
+.recipe > summary { cursor: pointer; font-weight: 650; padding: var(--s-2) 0; } .recipe[open] > summary { color: var(--accent); }
+.recipe__steps { padding-left: 1.4rem; display: grid; gap: var(--s-2); margin: var(--s-2) 0; } .recipe__goal, .recipe__then { color: var(--text-2); }
+.helptable { width: 100%; border-collapse: collapse; font-size: var(--fs-1); margin: var(--s-2) 0; }
+.helptable th, .helptable td { text-align: left; padding: var(--s-2) var(--s-3); border-bottom: 1px solid var(--line); vertical-align: top; }
+.helptable thead th { color: var(--text-3); font-size: var(--fs-0); text-transform: uppercase; letter-spacing: .06em; } .helptable tbody th { font-weight: 650; white-space: nowrap; }
+.glossary dt { font-weight: 650; margin-top: var(--s-3); } .glossary dd { margin: 0; color: var(--text-2); max-width: 52rem; }
+
+/* Help contents (generated from the Muse map) */
+.toc ul { list-style: none; padding-left: var(--s-4); margin: var(--s-1) 0; display: grid; gap: var(--s-2); }
+.toc__tree { padding-left: 0; } .toc__blurb { color: var(--text-2); } .toc__open { font-size: var(--fs-1); }
+.toc__recipes { border-left: 2px solid var(--line); font-size: var(--fs-1); }
+
+/* Focus and the Collection panel */
+.btn__emoji { margin-right: .35em; font-style: normal; }
+.hint--focus { margin: var(--s-3) 0; max-width: 52rem; }
+.drawer .tray { border: 0; background: none; padding: var(--s-3) var(--s-4); margin: 0; }
+
+/* Header: the search box takes the room it needs (up to 48rem); Collection, Starred and Help sit small to its right */
+.top { grid-template-columns: auto minmax(0, 1fr) auto; }
+.top__brand { font-size: var(--fs-4); font-weight: 700; color: var(--accent); }
+.top__brand:hover { text-decoration: none; filter: brightness(1.15); }
+.top .search { max-width: 48rem; }
+.top__actions { display: flex; flex-wrap: nowrap; gap: var(--s-2); align-items: center; justify-self: end; }
+@media (max-width: 52rem) { .top { grid-template-columns: auto minmax(0, 1fr); } .top__actions { grid-column: 1 / -1; justify-self: start; flex-wrap: wrap; } }
+
+/* Home and Browse */
+.cols2 { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: var(--s-6); align-items: start; }
+@media (max-width: 62rem) { .cols2 { grid-template-columns: minmax(0, 1fr); } }
+.grid--shelves { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s-3); }
+@media (max-width: 40rem) { .grid--shelves { grid-template-columns: minmax(0, 1fr); } }
+.grid--wordplay { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-3); }
+.tile--shelf { display: flex; flex-direction: column; gap: var(--s-1); }
+.tile__big { font-size: var(--fs-5, 1.5rem); font-variant-numeric: tabular-nums; }
+.chips--also { margin-top: var(--s-3); align-items: center; }
+.chips__label { color: var(--text-3); font-size: var(--fs-0); }
+.chip--all[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+.shelf--dead { color: var(--text-3); } .shelf--dead strong { font-weight: 500; }
+.seg { display: inline-flex; gap: var(--s-2); align-items: center; flex-wrap: wrap; margin-right: var(--s-4); }
+.seg__label { color: var(--text-3); font-size: var(--fs-0); }
+.toolbar__h { margin: 0; font-size: var(--fs-3); }
+
+/* Home: two blocks of equal height that never move; the results sit below. */
+.deck { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: var(--s-4); align-items: stretch; margin-bottom: var(--s-4); }
+@media (max-width: 900px) { .deck { grid-template-columns: 1fr; } }
+.panel { display: flex; flex-direction: column; gap: var(--s-3); padding: var(--s-4); border: 1px solid var(--line); border-radius: var(--r-3, 12px); background: var(--surface); }
+.panel--on { border-color: var(--accent, #f08a5d); }
+.panel--idle { opacity: .72; }
+.panel--idle:hover, .panel--idle:focus-within { opacity: 1; }
+.panel__head { display: flex; align-items: baseline; gap: var(--s-3); flex-wrap: wrap; }
+.panel__head h2 { margin: 0; font-size: 1.1rem; }
+.panel__on { margin-left: auto; font-size: .75rem; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--accent, #f08a5d); color: var(--accent, #f08a5d); }
+.panel__hint { margin: auto 0 0; font-size: .8rem; color: var(--muted); }
+.panel .row { display: flex; align-items: center; gap: var(--s-3); flex-wrap: wrap; }
+.panel .row--top { align-items: flex-start; }
+.panel .row__label { min-width: 6.5rem; font-size: .75rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.panel .seg--joined { display: inline-flex; gap: 0; margin: 0; border: 1px solid var(--line-strong); border-radius: var(--r-2); overflow: hidden; }
+.panel .seg--joined .btn { border: 0; border-radius: 0; }
+.panel .seg--joined .btn + .btn { border-left: 1px solid var(--line); }
+.btn__n { margin-left: var(--s-2); opacity: .7; font-variant-numeric: tabular-nums; }
+.btn--dead { opacity: .5; }
+.tricks { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+.chips--tight { gap: var(--s-2); flex: 1 1 0; }
+.panel .btn[aria-pressed="true"]::before, .panel .btn[aria-current="true"]::before { display: none; }   /* the fill already says pressed; a dot too was doubling it */
+
+/* Results header: count, a one-line tip and the shuffle all on one line, so the first match shows above the fold. */
+.panel__tip { margin: 0; flex: 1 1 18rem; min-width: 0; } .panel__aside { margin-left: auto; display: inline-flex; align-items: center; gap: var(--s-3); }

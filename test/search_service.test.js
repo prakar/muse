@@ -106,7 +106,7 @@ test('interface: the search route, the switch rule and the crumb', async () => {
   const { parse, build } = await ui('router.mjs'), { trail } = await ui('crumbs.mjs');
   const S = await import(pathToFileURL(path.join(__dirname, '..', 'code', 'muse_ui', 'js', 'views', 'search.mjs')).href).catch(() => null);
   assert.deepStrictEqual(parse('#/search?q=halite&meaning=off'), { name: 'search', params: {}, query: { q: 'halite', meaning: 'off' } });
-  assert.strictEqual(build('search', {}, { q: 'a b', meaning: '' }), '#/search?q=a+b'); assert.deepStrictEqual(trail(parse('#/search?q=x')).map(x => x.label), ['Connect', 'Search']);
+  assert.strictEqual(build('search', {}, { q: 'a b', meaning: '' }), '#/search?q=a+b'); assert.deepStrictEqual(trail(parse('#/search?q=x')).map(x => x.label), ['Home', 'Search']);
   { assert.strictEqual(S.wantsMeaning({ query: {} }, true), true); assert.strictEqual(S.wantsMeaning({ query: {} }, false), false); assert.strictEqual(S.wantsMeaning({ query: { meaning: 'off' } }, true), false); assert.strictEqual(S.SWITCH_LABEL, 'Search by meaning'); assert.strictEqual(S.viaLabel({ words: true, meaning: true }), 'words + meaning'); }
 });
 
@@ -127,7 +127,7 @@ test('Stick: real model API returns grouped clings from other notes; route valid
     assert.strictEqual((await get('/api/stick?id=abc')).status, 404); assert.strictEqual((await get('/api/stick?id=8')).status, 404); assert.strictEqual((await get('/api/stick?random=1')).status, 404, 'no candidate: plain 404');
   } finally { srv.close(); }
   const { parse } = await import(pathToFileURL(path.join(__dirname, '..', 'code', 'muse_ui', 'js', 'router.mjs')).href), V = await import(pathToFileURL(path.join(__dirname, '..', 'code', 'muse_ui', 'js', 'views', 'stick.mjs')).href);
-  assert.strictEqual(parse('#/stick?id=7').name, 'stick'); assert.strictEqual(V.typeLabel('place'), 'Places'); assert.strictEqual(V.typeLabel('former-role'), 'Former roles'); assert.strictEqual(V.stickHref(7), '#/stick?id=7');
+  assert.strictEqual(parse('#/?focus=7').name, 'home'); assert.strictEqual(parse('#/stick?id=7').query.focus, '7'); assert.strictEqual(parse('#/stick').name, 'stick'); assert.strictEqual(V.typeLabel('place'), 'Places'); assert.strictEqual(V.typeLabel('former-role'), 'Former roles'); assert.strictEqual(V.stickHref(7), '#/?focus=7');
 });
 
 test('Stick shelves: every fact is on exactly one shelf, shuffles are stable per seed, fragments stay out, kinds filter', async () => {
@@ -169,4 +169,15 @@ test('Tray saving: the server validates and stores the tray; bad shapes and non-
     assert.strictEqual((await call('POST', good, 'text/plain')).status, 415); assert.strictEqual((await call('POST', { items: [{ id: 'x', note: '', claim: '' }], links: {} })).status, 400);
     assert.strictEqual((await call('POST', { items: [], links: { 'a>b': 'x' } })).status, 400); assert.strictEqual((await call('POST', { items: Array(51).fill({ id: 1, note: 'n', claim: 'c' }), links: {} })).status, 400);
   } finally { srv.close(); }
+});
+
+test('Help: every recipe is complete, every link is a real screen, and every button it names exists in the interface', async () => {
+  const base = path.join(__dirname, '..', 'code', 'muse_ui', 'js'), C = await import(pathToFileURL(path.join(base, 'help_content.mjs')).href), R = await import(pathToFileURL(path.join(base, 'router.mjs')).href);
+  assert.ok(C.RECIPES.length >= 8); const keys = new Set();
+  C.RECIPES.forEach(r => { assert.ok(r.key && !keys.has(r.key), 'unique key ' + r.key); keys.add(r.key); assert.ok(r.title && r.goal && r.start && r.start.t && r.steps.length >= 3, r.key + ' is complete'); });
+  const hrefs = C.RECIPES.flatMap(r => [r.start.href].concat(r.steps.map(s => s && s.href))).filter(Boolean);
+  hrefs.forEach(h => { const p = R.parse(h); assert.ok(h.startsWith('#/') && ['home','set','basket','search','stick','admin','help'].includes(p.name), h + ' is a real screen (got ' + p.name + ')'); });
+  assert.deepStrictEqual(C.WHICH.map(w => w.button), ['Focus', 'Collect', 'Star'].map(k => k)); // order: look, build, remember
+  // Which buttons exist is checked against the real UI source by the Muse map audit (test/muse_map.test.js), the one place that owns it.
+  const HV = await import(pathToFileURL(path.join(base, 'views', 'help.mjs')).href); assert.strictEqual(typeof HV.helpView, 'function'); assert.strictEqual(R.parse('#/help?r=know').name, 'help');
 });

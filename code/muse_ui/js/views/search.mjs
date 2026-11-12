@@ -1,7 +1,13 @@
+import { tidyQuote } from '../tidy.mjs';
+import { NoteLink, ClaimLink } from '../components/notelink.mjs';
 import { h } from '../dom.mjs';
 import { build } from '../router.mjs';
 import { Button } from '../components/button.mjs';
+import { FocusButton, FocusHint } from '../components/focus.mjs';
+import { StarButton } from '../components/star.mjs';
+import { CollectButton } from '../components/tray.mjs';
 import { getPref, setPref } from '../prefs.mjs';
+import { W } from '../words.mjs';
 
 // The search results page. It says how sure it is (a band over the matches), shows the evidence for every match, and says plainly when nothing close exists.
 export const SWITCH_LABEL = 'Search by meaning';
@@ -31,10 +37,10 @@ export async function searchView({ route, api, nav }) {
 
   const r = await api.search(q, meaning);
   const card = (it, n) => h('li', { class: 'fact', 'data-burr': it.burrId },
-    h('div', { class: 'fact__top' }, h('span', { class: 'fact__n', text: String(n + 1) }), h('span', { class: 'fact__note', text: it.note || '' }),
+    h('div', { class: 'fact__top' }, h('span', { class: 'fact__n', text: String(n + 1) }), NoteLink({ text: it.note || '', noteId: it.noteId, at: it.burrId }),
       it.basis ? h('span', { class: 'badge badge--basis', title: 'The confidence rating above is based on this fact: the closest to your question', text: 'best match' }) : null, h('span', { class: 'badge', title: 'How this fact was found', text: viaLabel(it.via) }), it.sim != null ? h('span', { class: 'badge', title: 'Closeness of this fact to the rewritten question (0 to 1)', text: 'closeness ' + it.sim.toFixed(2) }) : null),
-    h('p', { class: 'fact__claim', text: it.claim }), it.quote ? h('p', { class: 'fact__quote', text: '“' + it.quote + '”' }) : null,
-    h('div', { class: 'fact__actions' }, Button({ label: 'Grab', ic: 'link', size: 'sm', title: 'Grab this fact as your stick and see what clings to it', href: build('stick', {}, { id: it.burrId, from: 'search' }) }), Button({ label: 'Full note', ic: 'note', size: 'sm', onClick: () => nav.openNote(it.noteId, it.burrId) })));
+    ClaimLink({ text: it.claim, noteId: it.noteId, at: it.burrId }), it.quote ? h('p', { class: 'fact__quote', text: '“' + tidyQuote(it.quote) + '”' }) : null,
+    h('div', { class: 'fact__actions' }, StarButton({ id: it.burrId, note: it.note, starred: it.starred }, 'search'), CollectButton({ id: it.burrId, noteId: it.noteId, note: it.note, claim: it.claim }, 'search'), FocusButton({ id: it.burrId, from: 'search' })));
   const list = h('ol', { class: 'facts' }, r.results.map(card));
   const banner = r.band ? h('div', { class: 'banner banner--' + r.band, role: 'status' }, h('strong', { text: BAND_TITLE[r.band] }),
     r.band === 'unrated' ? h('span', { text: '. No confidence rating, because the AI rewrite step did not run for this question.' })
@@ -43,6 +49,6 @@ export async function searchView({ route, api, nav }) {
   const body = r.folded && r.results.length ? h('details', { class: 'folded' }, h('summary', { text: 'Show the nearest ' + r.results.length + ' facts anyway' }), list) : list;
   const read = r.understoodAs ? h('details', { class: 'understood' }, h('summary', { text: 'How Muse read your question' + (r.cachedRewrite === false ? ' (new question, cost $' + r.cost.toFixed(4) + ')' : '') }),
     h('p', { text: r.understoodAs }), h('p', { class: 'hint', text: 'An AI guess at what a matching note might say, used only to find facts. It is not an answer and it does not come from your notes; it may contain invented details.' })) : null;
-  const node = h('div', {}, head, banner, disclaimer, read, r.notices.map(n => h('p', { class: 'notice notice--' + n.kind, role: 'status', text: n.text })), r.results.length ? body : null);
+  const node = h('div', {}, head, banner, disclaimer, read, r.notices.map(n => h('p', { class: 'notice notice--' + n.kind, role: 'status', text: n.text })), r.results.length ? FocusHint() : null, r.results.length ? body : null);
   return { node, title: 'Search: ' + q };
 }

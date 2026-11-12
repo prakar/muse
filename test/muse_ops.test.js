@@ -1,0 +1,126 @@
+'use strict';
+const test = require('node:test'), assert = require('node:assert'), fs = require('node:fs'), os = require('node:os'), path = require('node:path');
+const { DatabaseSync } = require('node:sqlite');
+const Cat = require('../code/lib/ops_catalogue'), I = require('../code/lib/ops_internal'), { createJobs } = require('../code/lib/ops_jobs');
+
+function fixture() {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'muse-ops-')), dbPath = path.join(home, 'vault.db'), db = new DatabaseSync(dbPath);
+  db.exec(`CREATE TABLE vault_notes(id INTEGER PRIMARY KEY, filepath TEXT, title TEXT, source_url TEXT, word_count INTEGER, quarry_exclude INTEGER); CREATE TABLE nuggetize_status(note_id INTEGER, prompt_version TEXT, status TEXT); CREATE TABLE burrs(id INTEGER PRIMARY KEY, prompt_version TEXT);
+    CREATE TABLE schema_migrations(id INTEGER); CREATE TABLE wordplay_edges(id INTEGER); CREATE TABLE api_budget(cost_usd REAL);
+    INSERT INTO vault_notes VALUES (1,'a','A',NULL,50,0),(2,'b','B',NULL,60,0),(3,'c','C',NULL,70,0),(4,'d','D',NULL,500,0),(5,'e','E',NULL,80,1); INSERT INTO nuggetize_status VALUES (1,'nug-v6','ok'),(2,'nug-v6','empty'); INSERT INTO schema_migrations VALUES (14);`);
+  db.close(); const src = path.join(home, 'real'), dst = path.join(home, 'copy'); fs.mkdirSync(src); fs.mkdirSync(dst);
+  return { home, dbPath, version: 'nug-v6', src, dst, env: { HOME: home, MUSE_VAULT_SRC: src, VAULT_PATH: dst } };
+}
+const waitFor = async (fn, ms = 15000) => { const t = Date.now(); for (;;) { const v = fn(); if (v) return v; if (Date.now() - t > ms) throw new Error('timed out'); await new Promise(r => setTimeout(r, 100)); } };
+
+test('ops catalogue: every task is wired to a real script, and the safety rules are declared', () => {
+  const ids = Cat.TASKS.map(t => t.id); assert.strictEqual(new Set(ids).size, ids.length, 'ids are unique');
+  const areas = new Set(Cat.AREAS.map(a => a[0])), f = fixture();
+  Cat.TASKS.forEach(t => {
+    assert.ok(areas.has(t.area), t.id + ' has a known area'); assert.ok(t.title && t.does, t.id + ' says what it does');
+    assert.ok(['read-only', 'writes files', 'writes DB', 'spends money'].includes(t.effect), t.id + ' declares its effect');
+    if (t.needs) assert.ok(t.expectValue && t.dry, t.id + ' asks for confirmation only when it has a dry twin and a value to check');
+    if (t.effect === 'spends money') assert.ok(t.needs && t.backup && t.dry, t.id + ': paid tasks have a dry run, a backup and a typed confirmation');
+    if (t.effect === 'writes DB') assert.ok(t.backup || t.id === 'restore', t.id + ': tasks that write the database back it up first (restore does its own)');
+    const steps = Cat.plan(t.id, t.id === 'find-notes' ? { pattern: 'x' } : t.id === 'restore' ? { name: 'vault.db.bak-1' } : {}, { ctx: { home: f.home, dbPath: f.dbPath, version: f.version, env: f.env } }).steps;
+    steps.forEach(s => { if (s.script) assert.ok(fs.existsSync(path.join(__dirname, '..', 'code', s.script)), t.id + ' uses a script that exists: ' + s.script); });
+  });
+});
+
+const ctxOf = f => ({ home: f.home, dbPath: f.dbPath, version: f.version, env: f.env });
+const err = fn => { try { fn(); } catch (e) { return e; } return null; };
+
+test('ops plan: a task with a dry twin only dries unless told to go, and every input is checked', () => {
+  const f = fixture(), c = ctxOf(f);
+  const dry = Cat.plan('index', {}, { ctx: c }); assert.strictEqual(dry.dry, true); assert.ok(dry.steps.some(s => s.args.includes('--dry-run')) && !dry.steps.some(s => /backup/.test(s.args.join(' '))), 'a dry run neither writes nor backs up');
+  const real = Cat.plan('index', { mode: 'full' }, { go: true, ctx: c }); assert.strictEqual(real.dry, false);
+  assert.deepStrictEqual(real.steps.map(s => s.args[0]), ['_do', '--full'], 'a real run backs up first, then indexes'); assert.ok(real.steps[0].args.join(' ').includes('before-index'));
+  assert.match(err(() => Cat.plan('index', { mode: 'sideways' }, { ctx: c })).message, /one of diff, full/);
+  assert.match(err(() => Cat.plan('index', { colour: 'red' }, { ctx: c })).message, /no parameter colour/);
+  assert.match(err(() => Cat.plan('nuggetize', { limit: '2.5' }, { ctx: c })).message, /whole number/);
+  assert.match(err(() => Cat.plan('nuggetize', { limit: '999999' }, { ctx: c })).message, /between/);
+  assert.match(err(() => Cat.plan('nuggetize', { mode: 'note' }, { ctx: c })).message, /note id/);
+  assert.match(err(() => Cat.plan('status', {}, { go: true, ctx: c })).message, /no dry run/);
+  assert.match(err(() => Cat.plan('find-notes', {}, { ctx: c })).message, /required/);
+  assert.match(err(() => Cat.plan('backup', { reason: 'a b; rm -rf' }, { ctx: c })).message, /not allowed/);
+  assert.match(err(() => Cat.plan('nope', {}, { ctx: c })).message, /Unknown task/);
+});
+
+test('ops plan: a paid run needs the count the person saw, and is refused if the count has changed', () => {
+  const f = fixture(), c = ctxOf(f);   // 5 notes, 2 done: 3 pending
+  assert.strictEqual(I.pendingNotes(f.dbPath, f.version), 3);   // notes minus done; the run itself skips the excluded note and, by default, long ones
+  assert.strictEqual(I.candidates({ dbPath: f.dbPath, args: ['--all'], log() {} }), 2, 'the number to confirm is what the script would process: 3 and 4 (5 is excluded)');
+  assert.strictEqual(I.candidates({ dbPath: f.dbPath, args: [], log() {} }), 1, 'by default only short notes');
+  const e = err(() => Cat.plan('nuggetize', { mode: 'all' }, { go: true, ctx: c })); assert.ok(e && e.userError); assert.match(e.message, /affects 2/);
+  assert.match(err(() => Cat.plan('nuggetize', { mode: 'all' }, { go: true, expect: 4, ctx: c })).message, /affects 2/, 'a stale number is refused');
+  const ok = Cat.plan('nuggetize', { mode: 'all' }, { go: true, expect: 2, ctx: c }); assert.ok(ok.steps.some(s => s.args.includes('--all') && !s.args.includes('--dry-run')));
+  assert.ok(Cat.plan('nuggetize', { mode: 'limit', limit: 1 }, { go: true, expect: '1', ctx: c }), 'a limit below the count confirms against the limit');
+  assert.match(err(() => Cat.plan('refresh-process', {}, { go: true, ctx: c })).message, /affects 2/);
+  assert.ok(Cat.plan('refresh-process', {}, { go: true, expect: 2, ctx: c }).steps.length === 6, 'backup, count, extract, dedupe, wordplay, search');
+  assert.ok(Cat.plan('nuggetize', { mode: 'all' }, { ctx: c }).dry, 'asking without go never needs a number');
+});
+
+test('ops plan: the vault copy is never the real vault, never a git folder', () => {
+  const f = fixture(), c = ctxOf(f);
+  assert.match(err(() => Cat.plan('vault-sync', {}, { ctx: { ...c, env: { ...f.env, VAULT_PATH: f.src } } })).message, /real vault/);
+  fs.mkdirSync(path.join(f.dst, '.git')); assert.match(err(() => Cat.plan('vault-sync', {}, { ctx: c })).message, /\.git/);
+  fs.rmdirSync(path.join(f.dst, '.git')); assert.match(err(() => Cat.plan('vault-sync', {}, { ctx: { ...c, env: { ...f.env, VAULT_PATH: '' } } })).message, /VAULT_PATH is not set/);
+  const dry = Cat.plan('vault-sync', {}, { ctx: c }).steps[0]; assert.ok(dry.args.includes('-n') && dry.args.includes('--exclude') && dry.args.includes('.git'));
+});
+
+test('ops internal: backup, prune, restore and clean do what they say, and restore can itself be undone', () => {
+  const f = fixture(), log = []; const L = s => log.push(s), b = { home: f.home, dbPath: f.dbPath, log: L };
+  const n1 = I.backup({ ...b, reason: 'First One', now: new Date(2026, 9, 1, 10, 0, 0) }), n2 = I.backup({ ...b, reason: 'x', now: new Date(2026, 9, 2, 10, 0, 0) });
+  assert.match(n1, /^vault\.db\.bak-20261001-100000-firstone$/); fs.utimesSync(path.join(f.home, n1), new Date(2026, 9, 1), new Date(2026, 9, 1)); fs.utimesSync(path.join(f.home, n2), new Date(2026, 9, 2), new Date(2026, 9, 2));
+  assert.deepStrictEqual(I.prune({ ...b, keep: 1 }), [n1], 'a dry prune lists the oldest'); assert.ok(fs.existsSync(path.join(f.home, n1)), 'and deletes nothing');
+  I.prune({ ...b, keep: 1, go: true }); assert.ok(!fs.existsSync(path.join(f.home, n1)) && fs.existsSync(path.join(f.home, n2)));
+  const db = new DatabaseSync(f.dbPath); db.exec("INSERT INTO vault_notes VALUES (6,'f','F',NULL,10,0)"); db.close();
+  assert.strictEqual(I.restore({ ...b, name: n2 }), null, 'a dry restore changes nothing');
+  const saved = I.restore({ ...b, name: n2, go: true }); const chk = new DatabaseSync(f.dbPath, { readOnly: true });
+  assert.strictEqual(chk.prepare('SELECT COUNT(*) n FROM vault_notes').get().n, 5, 'the backup is back'); chk.close();
+  const old = new DatabaseSync(path.join(f.home, saved), { readOnly: true }); assert.strictEqual(old.prepare('SELECT COUNT(*) n FROM vault_notes').get().n, 6, 'the database it replaced is kept'); old.close();
+  assert.throws(() => I.restore({ ...b, name: '../vault.db' }), /Not a backup name/);
+  fs.writeFileSync(path.join(f.home, 'vault.db-journal.stale-1'), 'x'); assert.deepStrictEqual(I.clean({ ...b }), ['vault.db-journal.stale-1']); I.clean({ ...b, go: true });
+  assert.deepStrictEqual(I.leftovers(f.home), []);
+});
+
+test('ops jobs: a job runs detached, leaves a log and a state, and tasks in one group never overlap', async () => {
+  const f = fixture(), jobs = createJobs({ home: f.home, dbPath: f.dbPath, version: f.version, env: f.env });
+  const j = jobs.start('status', {}); assert.strictEqual(j.state, 'running');
+  const done = await waitFor(() => { const g = jobs.get(j.id); return g && g.state !== 'running' ? g : null; });
+  assert.strictEqual(done.state, 'done'); assert.match(jobs.tail(j.id), /Notes: 5\s+Facts \(nug-v6\): 0\s+Not yet processed: 3\s+Ready to process: 2/);
+  const b = jobs.start('backup', { reason: 'job' }); await waitFor(() => jobs.get(b.id).state !== 'running');
+  assert.strictEqual(jobs.get(b.id).state, 'done'); assert.strictEqual(I.listBackups(f.home).length, 1);
+  // a runner that is "running" blocks its group; a runner that vanished becomes "lost" and no longer blocks
+  const meta = { id: '20261031-120000-index', task: 'index', params: {}, go: true, dry: false, effect: 'writes DB', group: 'db', steps: [{ label: 'x' }], step: 0, state: 'running', pid: process.pid, started: new Date().toISOString(), finished: null, code: null };
+  fs.writeFileSync(path.join(f.home, 'logs', 'jobs', meta.id + '.json'), JSON.stringify(meta));
+  const clash = err(() => jobs.start('clean-leftovers', {})); assert.ok(clash && clash.userError && clash.conflict === meta.id, 'the second db task is refused'); assert.match(clash.message, /same data/);
+  assert.ok(jobs.start('status', {}), 'a read-only task is not blocked');
+  fs.writeFileSync(path.join(f.home, 'logs', 'jobs', meta.id + '.json'), JSON.stringify({ ...meta, pid: 2 ** 22 + 7, started: new Date(Date.now() - 60000).toISOString() }));
+  assert.strictEqual(jobs.get(meta.id).state, 'lost'); assert.ok(jobs.start('clean-leftovers', {}), 'a lost job no longer blocks');
+  assert.strictEqual(jobs.get('../../etc/passwd'), null, 'ids are checked');
+});
+
+test('ops endpoints: the same jobs over HTTP, behind the X-Muse header, with clear refusals', async () => {
+  const http = require('node:http'), { createServer } = require('../code/lib/muse_server'), K = require('../code/lib/marks'), { fakeModel, fakeNotes } = require('./helpers/muse_fake');
+  const f = fixture(), ops = createJobs({ home: f.home, dbPath: f.dbPath, version: f.version, env: f.env });
+  const srv = createServer({ model: fakeModel(), marks: K.open(path.join(f.home, 'm.jsonl'), 't'), notes: fakeNotes(), version: 't', uiRoot: path.join(__dirname, '..', 'code', 'muse_ui'), admin: { status: () => ({}), runDrift: async () => ({}) }, ops });
+  await new Promise(r => srv.listen(0, '127.0.0.1', r)); const port = srv.address().port;
+  const call = (p, method = 'GET', body = null, h = { 'X-Muse': '1' }) => new Promise(r => { const data = body ? JSON.stringify(body) : null;
+    const q = http.request({ port, path: p, method, headers: { Host: 'localhost:' + port, ...(data ? { 'Content-Type': 'application/json' } : {}), ...h } }, res => { let b = ''; res.on('data', d => b += d); res.on('end', () => r({ code: res.statusCode, body: JSON.parse(b) })); }); q.end(data); });
+  try {
+    assert.strictEqual((await call('/api/admin/ops', 'GET', null, {})).code, 403, 'no header, no access');
+    assert.strictEqual((await call('/api/admin/jobs', 'POST', { task: 'status' }, {})).code, 403);
+    const cat = await call('/api/admin/ops'); assert.strictEqual(cat.code, 200); assert.ok(cat.body.tasks.length >= 15 && cat.body.areas.length === 5); assert.strictEqual(cat.body.pending, 2);
+    assert.ok(cat.body.tasks.every(t => !('build' in t) && t.params.every(p => !('pattern' in p))), 'no functions or patterns leak');
+    const bad = await call('/api/admin/jobs', 'POST', { task: 'nuggetize', params: { mode: 'all' }, go: true }); assert.strictEqual(bad.code, 400); assert.match(bad.body.error, /affects 2/);
+    assert.strictEqual((await call('/api/admin/jobs', 'POST', { task: 'index', params: { mode: 'x' } })).code, 400);
+    assert.strictEqual((await call('/api/admin/jobs', 'POST', 'not an object')).code, 400);
+    const made = await call('/api/admin/jobs', 'POST', { task: 'status' }); assert.strictEqual(made.code, 201);
+    const id = made.body.job.id; await waitFor(() => ops.get(id).state !== 'running');
+    const one = await call('/api/admin/jobs/' + id + '?tail=50'); assert.strictEqual(one.body.job.state, 'done'); assert.match(one.body.log, /Ready to process: 2/);
+    assert.ok((await call('/api/admin/jobs')).body.jobs.some(j => j.id === id));
+    assert.strictEqual((await call('/api/admin/jobs/nosuchjob123')).code, 404);
+    assert.strictEqual((await call('/api/admin/jobs/nosuchjob123/cancel', 'POST', {})).code, 400);
+  } finally { srv.close(); }
+});

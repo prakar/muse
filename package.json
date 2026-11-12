@@ -12,6 +12,7 @@
     "wordplay": "node --no-warnings code/wordplay.js",
     "muse": "node --no-warnings code/muse_view.js",
     "muse:app": "node --no-warnings code/muse_app.js",
+    "ops": "node --no-warnings code/muse_ops.js",
     "muse:report": "node --no-warnings code/muse_scratch.js",
     "heuristics": "node --no-warnings code/heuristics_build.js",
     "heuristics:check": "node --no-warnings code/heuristics_build.js --check",

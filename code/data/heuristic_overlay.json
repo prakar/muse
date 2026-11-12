@@ -28,7 +28,7 @@
   "rows": {
     "1":  { "route": "relation", "v6": "missing", "gaps": ["G2"], "join_on": ["entity"], "rel": ["caused-by", "named-after"], "detector": "judge", "note": "Each hop is a cause or a name that hands off to the next; chains need typed edges to be walked." },
     "2":  { "route": "join", "v6": "partial", "gaps": ["G2"], "join_on": ["entity"], "rel": ["caused-by"], "detector": "sql", "note": "Several effects of one event: join on the event entity; caused-by gives the direction." },
-    "3":  { "route": "join", "v6": "missing", "gaps": ["G1"], "join_on": ["date"], "rel": [], "detector": "sql", "note": "Time hooks are years and decades; the same day needs a day-level date read from the claim." },
+    "3":  { "route": "join", "v6": "covered", "gaps": [], "join_on": ["date"], "rel": [], "detector": "sql", "note": "Day hooks (lib/daydates.js, 29 Oct): month-day key plus an exact-date key, role cue carried; web-clipping dates are skipped." },
     "4":  { "route": "join", "v6": "partial", "gaps": ["G3"], "join_on": ["set", "former-role"], "rel": [], "detector": "judge", "note": "Same role in different places: set or former-role hooks exist but rarely match exactly." },
     "5":  { "route": "relation", "v6": "missing", "gaps": ["G2"], "join_on": ["entity"], "rel": ["derived-from"], "detector": "judge", "note": "A local version of a foreign original." },
     "6":  { "route": "relation", "v6": "missing", "gaps": ["G2"], "join_on": ["entity"], "rel": ["inspired-by", "derived-from"], "detector": "judge", "note": "Imitation or transmission hops, walked backwards." },

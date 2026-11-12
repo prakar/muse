@@ -302,6 +302,8 @@ function build(db, version, opts) {
     .filter(function (x) { return x.df >= 2 && x.df <= 40 && !L.isYearKey(x.id); }).sort(function (a, c) { return a.df - c.df; }).slice(0, 6); };
   const itemOf = function (b, ex, extra) { return Object.assign({ id: b.id, noteId: b.note_id, note: noteTitle.get(b.note_id), claim: b.claim, quote: b.quote, diff: +diffOf(b, ex).toFixed(3), hooks: hooksOf(b) }, extra || {}); };
   const wpById = new Map(wordplayRows.map(function (r) { return [r.id, r]; }));
+  // One fact on its own (for a star that belongs to no handle). Null for an unknown fact.
+  const burrInfo = function (id) { const b = byId.get(id); return b ? itemOf(b, new Set()) : null; };
   const handle = function (id) {
     if (wpById.has(id)) {
       const r = wpById.get(id), items = [];
@@ -345,7 +347,7 @@ function build(db, version, opts) {
     burrRows.forEach(function (r) {
       const hs = r.bristles.filter(function (x) { return x.df >= 2 && x.df <= 60; }), n = new Set(hs.map(function (x) { return x.k; })).size;
       const e = { r: r, n: n, types: Array.from(new Set(hs.map(function (x) { return x.t; }))), hs: hs };
-      (n >= 3 ? c.veins : n >= 1 ? c.grip : c.lone).push(e); if (r.loop) c.loops.push(e);
+      e.sh = n >= 3 ? 'veins' : n >= 1 ? 'grip' : 'lone'; c[e.sh].push(e); if (r.loop) c.loops.push(e);
     });
     c.veins.sort(function (a, b) { return b.n - a.n || b.types.length - a.types.length || a.r.id - b.r.id; });
     shelfCache = c; return c;
@@ -353,26 +355,36 @@ function build(db, version, opts) {
   const rng = function (seed) { let t = (seed >>> 0) + 0x6D2B79F5; return function () { t = (t + 0x6D2B79F5) >>> 0; let x = Math.imul(t ^ (t >>> 15), 1 | t); x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x; return ((x ^ (x >>> 14)) >>> 0) / 4294967296; }; };
   const isFragment = function (claim) { const c = String(claim || '').trim(); return c.length < 30 || c.split(/\s+/).length < 5; };
   const seenLive = new Set(), seedSnap = new Map();     // facts already shown on a shuffled shelf (this run); each seed freezes its own view so paging stays stable
+  // shelf(name, o): name is veins, grip, lone, loops, or all (veins, then grip, then lone). Options: type (one kind, or several separated by commas), match ('any' of them, or 'every' one),
+  // loops (only facts with an unanswered why), only (a Set of fact ids, for "Yours"), page, size, seed. Lone facts have no kinds, so any kind filter leaves them out.
+  // The counts it returns are conditional on the other filters: typeCounts for the kind chips, shelves for the shelf tabs.
   const shelf = function (name, o) {
-    o = o || {}; const idx = shelfIndex(), all = idx[name]; if (!all) return null;
-    const size = [12, 24, 48].indexOf(o.size) >= 0 ? o.size : 12, hooked = name !== 'lone';
-    let list = all, hiddenFragments = 0;
-    if (o.type && hooked) list = list.filter(function (e) { return e.types.indexOf(o.type) >= 0; });
-    const typeCounts = {}; if (hooked) all.forEach(function (e) { e.types.forEach(function (t) { typeCounts[t] = (typeCounts[t] || 0) + 1; }); });
-    if (name === 'grip' || name === 'lone') {
-      const kept = list.filter(function (e) { return !isFragment(e.r.claim); }); hiddenFragments = list.length - kept.length; list = kept;
-      const sk = name + ':' + (o.seed == null ? 1 : o.seed); if (!seedSnap.has(sk)) seedSnap.set(sk, new Set(seenLive)); const snap = seedSnap.get(sk);
-      const mix = function (arr) { const rnd = rng(o.seed == null ? 1 : o.seed), a = arr.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)), t = a[i]; a[i] = a[j]; a[j] = t; } return a; };
-      list = mix(list.filter(function (e) { return !snap.has(e.r.id); })).concat(mix(list.filter(function (e) { return snap.has(e.r.id); })));   // unseen first; seen ones only after those run out
-    }
-    const pages = Math.max(1, Math.ceil(list.length / size)), page = Math.min(Math.max(o.page || 1, 1), pages);
-    const pageRows = list.slice((page - 1) * size, page * size); if (name === 'grip' || name === 'lone') pageRows.forEach(function (e) { seenLive.add(e.r.id); });
-    const items = pageRows.map(function (e) {
-      const r = e.r; return { id: r.id, noteId: r.noteId, note: r.note, claim: r.claim, quote: r.quote, loop: r.loop || null, nHooks: e.n, types: e.types,
-        hooks: e.hs.slice().sort(function (a, b) { return a.df - b.df; }).filter(function (x, i, arr) { return arr.findIndex(function (y) { return y.k === x.k; }) === i; }).slice(0, 4).map(function (x) { return { label: x.s, type: x.t, df: x.df }; }) };
+    o = o || {}; const idx = shelfIndex(); if (name !== 'all' && !idx[name]) return null;
+    const size = [12, 24, 48, 96].indexOf(o.size) >= 0 ? o.size : 12, types = String(o.type || '').split(',').filter(Boolean), every = o.match === 'every', only = o.only instanceof Set ? o.only : null;
+    const overlay = function (e) { return (!o.loops || e.r.loop) && (!only || only.has(e.r.id)); };
+    const kindOk = function (e) { return !types.length || (every ? types.every(function (t) { return e.types.indexOf(t) >= 0; }) : types.some(function (t) { return e.types.indexOf(t) >= 0; })); };
+    const typeCounts = {}; let list = [], hiddenFragments = 0; const counts = {};
+    ['veins', 'grip', 'lone'].forEach(function (sn) { counts[sn] = idx[sn].filter(overlay).filter(kindOk).length; });
+    counts.all = counts.veins + counts.grip + counts.lone; counts.loops = idx.loops.length;
+    (name === 'all' ? ['veins', 'grip', 'lone'] : [name]).forEach(function (sn) {
+      const base = idx[sn].filter(overlay);
+      if (sn !== 'lone') base.forEach(function (e) { e.types.forEach(function (t) { typeCounts[t] = (typeCounts[t] || 0) + 1; }); });
+      let part = base.filter(kindOk);
+      if (sn === 'grip' || sn === 'lone') {
+        const kept = only ? part : part.filter(function (e) { return !isFragment(e.r.claim); }); hiddenFragments += part.length - kept.length; part = kept;
+        const sk = sn + ':' + (o.seed == null ? 1 : o.seed); if (!seedSnap.has(sk)) seedSnap.set(sk, new Set(seenLive)); const snap = seedSnap.get(sk);
+        const mix = function (arr) { const rnd = rng(o.seed == null ? 1 : o.seed), a = arr.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)), t = a[i]; a[i] = a[j]; a[j] = t; } return a; };
+        part = mix(part.filter(function (e) { return !snap.has(e.r.id); })).concat(mix(part.filter(function (e) { return snap.has(e.r.id); })));   // unseen first; seen ones only after those run out
+      }
+      list = list.concat(part);
     });
-    return { name: name, total: list.length, page: page, pages: pages, size: size, items: items, hiddenFragments: hiddenFragments, typeCounts: typeCounts,
-      shelves: { veins: idx.veins.length, grip: idx.grip.length, lone: idx.lone.length, loops: idx.loops.length } };
+    const pages = Math.max(1, Math.ceil(list.length / size)), page = Math.min(Math.max(o.page || 1, 1), pages);
+    const pageRows = list.slice((page - 1) * size, page * size); pageRows.forEach(function (e) { if (e.sh !== 'veins') seenLive.add(e.r.id); });
+    const items = pageRows.map(function (e) {
+      const r = e.r; return { id: r.id, noteId: r.noteId, note: r.note, claim: r.claim, quote: r.quote, loop: r.loop || null, nHooks: e.n, types: e.types, shelf: e.sh,
+        hooks: e.hs.slice().sort(function (a, b) { return a.df - b.df; }).filter(function (x, i, arr) { return arr.findIndex(function (y) { return y.k === x.k; }) === i; }).slice(0, 4).map(function (x) { return { id: x.k, label: x.s, type: x.t, df: x.df }; }) };
+    });
+    return { name: name, total: list.length, page: page, pages: pages, size: size, items: items, hiddenFragments: hiddenFragments, typeCounts: typeCounts, shelves: counts };
   };
   // A random fact that has at least `min` hooks to cling to, for "Surprise me".
   const stickRandom = function (min, pick) {
@@ -410,7 +422,7 @@ function build(db, version, opts) {
   const counts = {};
   [['burrs', burrRows], ['bristles', bristleRows], ['sparks', sparkRows], ['knots', knotRows]].forEach(function (p) {
     p[1].forEach(function (r) { r.recs.forEach(function (t) { (counts[t] = counts[t] || {})[p[0]] = ((counts[t] || {})[p[0]] || 0) + 1; }); }); });
-  return { version: version, notes: NN, burrs: burrRows, bristles: bristleRows, sparks: sparkRows, knots: knotRows, slices: sliceRows, wordplay: wordplayRows, wordplayState: wpState, handle: handle, stick: stick, stickRandom: stickRandom, shelf: shelf, suggest: suggest, wordplayPairs: wordplayPairs, wordplayKinds: wordplayKinds, timeline: timeline, coarse: coarse, quantities: quantities, excluded: excluded, detail: detail, recCounts: counts,
+  return { version: version, notes: NN, burrs: burrRows, bristles: bristleRows, sparks: sparkRows, knots: knotRows, slices: sliceRows, wordplay: wordplayRows, wordplayState: wpState, handle: handle, stick: stick, burrInfo: burrInfo, stickRandom: stickRandom, shelf: shelf, suggest: suggest, wordplayPairs: wordplayPairs, wordplayKinds: wordplayKinds, timeline: timeline, coarse: coarse, quantities: quantities, excluded: excluded, detail: detail, recCounts: counts,
     kinds: Array.from(new Set(burrRows.map(function (r) { return r.kind; }))).sort(),
     types: Array.from(new Set([].concat.apply([], bristleRows.map(function (r) { return r.types; })).concat(wordplayRows.length ? ['wordplay'] : []))).sort() };
 }

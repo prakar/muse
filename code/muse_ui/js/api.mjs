@@ -33,5 +33,12 @@ export const api = {
   shelf: o => get('/api/shelf', o, 'shelf'),
   stickRandom: () => get('/api/stick', { random: true }),
   kept: () => get('/api/kept', {}, 'kept'),
-  mark: body => post('/api/mark', body)
+  mark: body => post('/api/mark', body),
+  adminStatus: () => get('/api/admin/status', {}, 'admin', { 'X-Muse': '1' }),
+  adminDrift: () => request('/api/admin/drift', { method: 'POST', headers: { 'X-Muse': '1' } }),
+  adminOps: () => get('/api/admin/ops', {}, 'ops', { 'X-Muse': '1' }),
+  adminJobs: () => get('/api/admin/jobs', {}, 'jobs', { 'X-Muse': '1' }),
+  adminJob: (id, tail) => get('/api/admin/jobs/' + encodeURIComponent(id), { tail }, null, { 'X-Muse': '1' }),
+  adminStart: body => request('/api/admin/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Muse': '1' }, body: JSON.stringify(body) }).then(r => r),
+  adminCancel: id => request('/api/admin/jobs/' + encodeURIComponent(id) + '/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Muse': '1' }, body: '{}' })
 };

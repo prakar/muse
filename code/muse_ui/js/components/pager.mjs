@@ -19,7 +19,7 @@ export function Pager({ page, pages, total, size, hrefFor, onSize, onGo }) {
       pageStops(page, pages).map(s => s === 'gap' ? h('span', { class: 'pager__gap', 'aria-hidden': 'true', text: '…' }) : link(s)),
       step(clampTo(page + 1), '›', 'Next page'), step(clampTo(page + FAST), '»', 'Forward 10 pages')),
     h('div', { class: 'pager__tools' },
-      h('span', { text: total ? `${from}–${to} of ${total}` : 'None' }),
+      h('span', { text: total ? `${from}–${to} of ${Number(total).toLocaleString('en-US')}` : 'None' }),
       h('form', { onsubmit: go, class: 'pager__tools' }, input, Button({ label: 'Go', size: 'sm' })),
       h('label', { class: 'pager__tools' }, 'Per page',
         h('select', { class: 'field', onchange: e => onSize(parseInt(e.target.value, 10)), 'aria-label': 'Items per page' }, PAGE_SIZES.map(n => h('option', { value: n, selected: n === size ? '' : null, text: String(n) }))))));

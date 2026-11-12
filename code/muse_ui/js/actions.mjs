@@ -1,6 +1,6 @@
 import { toast } from './components/toast.mjs';
 
-// Everything that changes a mark goes through here: one place that talks to the server, keeps the basket count in step, and offers Undo.
+// Everything that changes a mark goes through here: one place that talks to the server, keeps the starred count in step, and offers Undo.
 export function createActions({ api, store, refresh }) {
   const send = async (handle, item, mark, info) => { const r = await api.mark({ handle, item, mark, ctx: info }); store.set({ marks: r.marks }); return r.mark; };
   return {

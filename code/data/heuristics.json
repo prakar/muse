@@ -99,16 +99,14 @@
       "name": "Same-moment coincidence",
       "tag": "SQL",
       "route": "join",
-      "v6": "missing",
-      "gaps": [
-        "G1"
-      ],
+      "v6": "covered",
+      "gaps": [],
       "join_on": [
         "date"
       ],
       "rel": [],
       "detector": "sql",
-      "note": "Time hooks are years and decades; the same day needs a day-level date read from the claim.",
+      "note": "Day hooks (lib/daydates.js, 29 Oct): month-day key plus an exact-date key, role cue carried; web-clipping dates are skipped.",
       "fragments": 2,
       "conf": [
         "H",
