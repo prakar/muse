@@ -83,3 +83,14 @@ kbd { font: inherit; font-size: .8rem; border: 1px solid var(--line-strong); bor
 .jobs { border: 1px solid var(--line-strong); border-radius: var(--r-2); padding: var(--s-3); margin: var(--s-2) 0; } .job__head { margin: 0 0 var(--s-2); font-weight: 600; }
 .log { margin: 0; max-height: 18rem; overflow: auto; background: var(--surface-2); padding: var(--s-3); border-radius: var(--r-2); font: .8125rem/1.5 ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-word; }
 .jobs__list { list-style: none; padding: 0; margin: var(--s-2) 0; display: grid; gap: var(--s-1); } .jobs__list li { display: flex; gap: var(--s-3); align-items: center; flex-wrap: wrap; font-size: var(--fs-1); } .jobs__when { color: var(--text-3); } .jobs__state--failed, .jobs__state--lost { color: var(--bad, #b3261e); }
+/* Admin: status strip always in view, tasks in columns by purpose, the run's output beside them. Sticky offsets assume the top bar is about 4.05rem (78px) tall (--top-h). */
+.statusbar { position: sticky; top: calc(var(--top-h, 4.05rem) - 1px); z-index: 5; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-2); padding: var(--s-2) var(--s-4) var(--s-3); margin: 0 0 var(--s-4); box-shadow: 0 6px 10px -8px rgba(0, 0, 0, .35); }
+.statusbar__list { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-6); margin: 0; }
+.stat { display: grid; gap: 0; min-width: 6rem; } .stat dt { font-size: var(--fs-0); letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); } .stat dd { margin: 0; font-size: var(--fs-3, 1.15rem); font-weight: 600; } .stat__note { color: var(--text-3); }
+.admin__grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(17rem, 22rem); gap: var(--s-5); align-items: start; }
+.admin__h { font-size: var(--fs-2); margin: 0 0 var(--s-2); } .admin__h small { margin-left: var(--s-2); color: var(--text-3); font-weight: 400; }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(14.5rem, 1fr)); gap: var(--s-4); align-items: start; }
+.col__title { font-size: var(--fs-2); margin: var(--s-2) 0 0; } .col__hint { margin: 0 0 var(--s-2); }
+.admin__output { position: sticky; top: calc(var(--top-h, 4.05rem) + 7rem); max-height: calc(100vh - var(--top-h, 4.05rem) - 8rem); overflow: auto; }
+.admin__output .log { max-height: 55vh; } .jobs__title { font-size: var(--fs-2); margin: 0 0 var(--s-2); } .jobs__title--small { font-size: var(--fs-1); color: var(--text-2); margin-top: var(--s-4); }
+@media (max-width: 1000px) { .admin__grid { grid-template-columns: minmax(0, 1fr); } .admin__output { position: static; max-height: none; } .statusbar { position: static; } }

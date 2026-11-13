@@ -15,6 +15,7 @@
 'use strict';
 
 const fs   = require('fs');
+const { normalizeCreated } = require('./lib/created_date');
 const path = require('path');
 // QUARRY_HOME is the quarry directory itself (default ~/dev/quarry): the DB, logs and chunk caches live
 // directly under it. (These scripts once treated it as a PARENT and appended dev/quarry, which doubles
@@ -297,9 +298,10 @@ function extractTitle(fm, body, filepath) {
 }
 
 function extractCreated(fm, rawContent) {
-  if (fm && fm.created) return fm.created.trim();
+  // normalizeCreated keeps ISO dates and bare years, converts "17 July 2016" to ISO, and turns template leftovers like "We0-47-yyyy" into null.
+  if (fm && fm.created) return normalizeCreated(fm.created);
   var m = rawContent.match(/_Created at ([^._]+)\._/);
-  if (m) return m[1].trim();
+  if (m) return normalizeCreated(m[1]);
   return null;
 }
 

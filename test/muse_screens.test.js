@@ -58,6 +58,9 @@ test('screens: Admin shows the status read-only, and In focus with nothing chose
   assert.ok(/Index the vault/.test(at) && /Writes the database/.test(at) && /Spends money/.test(at) && /Check first/.test(at) && !/Do it for real/.test(at) && !/Counts and health/.test(at), 'actions come from the catalogue; the real run waits for a check');
   assert.ok(/Notes ready to process right now: 12/.test(at) && /backs up the database first/.test(at));
   assert.ok(/56,559/.test(at) && /170\.\d MB|169\.\d MB/.test(at) && /\$7\.99/.test(at) && /80%/.test(at) && /missing/.test(at) && /Leftovers/.test(at) && /Run drift check/.test(at) && /Reads only|Writes the database/.test(at) && at.indexOf('Run drift check') < at.indexOf('Counts'), 'actions come before the reports');
+  assert.ok(/6,929/.test(at) && /12 waiting/.test(at) && /Nothing has run yet/.test(at) && /Recent jobs/.test(at), 'the status strip and the output panel are on the page');
+  const cls = c => D.all(a.node, e => String(e.className || '').split(' ').includes(c)).length;
+  assert.strictEqual(cls('statusbar'), 1); assert.strictEqual(cls('admin__output'), 1); assert.strictEqual(cls('col'), 2, 'Every day and Prepare the data; no empty columns');
   const bad = await adminView({ api: { adminStatus: async () => { throw new Error('nope'); } }, store }); assert.ok(/Could not read the status: nope/.test(text(bad.node)));
   const s = await stickView({ route: parse('#/stick'), api: stubApi([]), nav: {}, actions: {} }); assert.ok(/Nothing in focus yet/.test(text(s.node)) && D.all(s.node, e => e.tag === 'a' && e.attrs.href === '#/').length === 1);
 });
@@ -77,4 +80,12 @@ test('screens: the word chips on a Home fact card are links to that word', async
   api.shelf = async o => { const r = await base(o); return { ...r, items: r.items.map(i => ({ ...i, hooks: [{ id: 'jammu', label: 'Jammu', type: 'place', df: 5 }] })) }; };
   const { node } = await homeView({ route: parse('#/'), api, store, nav: { go() { } }, actions: {} });
   assert.ok(D.all(node, e => e.tag === 'a' && e.attrs.href === '#/set/jammu?from=home').length >= 1, 'a hook chip links to its set page');
+});
+
+test('screens: Admin columns group tasks by purpose, pin the everyday ones first, and never lose a task', async () => {
+  D.install(); const { planColumns } = await imp('views/admin_tasks.mjs');
+  const cat = { tasks: [{ id: 'index', area: 'ingest' }, { id: 'refresh', area: 'ingest' }, { id: 'backup', area: 'safety' }, { id: 'restore', area: 'safety' }, { id: 'dedupe', area: 'prep' }, { id: 'check', area: 'dev' }, { id: 'mystery', area: 'brand-new' }, { id: 'status', area: 'status' }] };
+  const by = Object.fromEntries(planColumns(cat).map(c => [c.id, c.tasks.map(t => t.id)]));
+  assert.deepStrictEqual(by, { daily: ['refresh', 'backup', 'index'], prep: ['dedupe'], care: ['restore', 'check'], more: ['mystery'] }, 'status is shown elsewhere; a task from an unknown area still appears, under More');
+  assert.deepStrictEqual(planColumns({ tasks: [] }), [], 'no tasks, no columns');
 });

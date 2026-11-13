@@ -34,10 +34,27 @@ export async function adminView({ api }) {
     driftBtn.disabled = false;
   } });
 
-  const tasks = await tasksSection({ api });
-  const node = h('div', {},
+  // The status strip stays in view while you scroll (see .statusbar), and refreshes when a job ends, so the numbers a run changes are never stale.
+  const bar = h('section', { class: 'statusbar', 'aria-label': 'Status at a glance' });
+  const fillBar = x => {
+    const cc = x.counts, dd = x.database, mm = x.money, pp = mm.ceiling ? Math.min(100, Math.round(mm.spent / mm.ceiling * 100)) : 0;
+    const stat = (k, v, note) => h('div', { class: 'stat' }, h('dt', { text: k }), h('dd', { text: v }), note ? h('small', { class: 'stat__note', text: note }) : null);
+    bar.replaceChildren(h('dl', { class: 'statusbar__list' },
+      stat('Notes', n(cc.notes), cc.pending == null ? '' : n(cc.pending) + ' waiting'),
+      stat('Facts', n((cc.byVersion.find(v => v.version === cc.version) || {}).n), cc.version),
+      stat('Database', size(dd.bytes), dd.backups[0] ? 'backed up ' + when(dd.backups[0].at) : 'no backup yet'),
+      stat('Spent', '$' + mm.spent.toFixed(2), 'of $' + mm.ceiling.toFixed(2) + ' (' + pp + '%)'),
+      stat('Server', uptime(x.server.upSeconds), 'version ' + x.server.version)), meter(pp));
+  };
+  fillBar(s);
+  const refreshBar = () => api.adminStatus().then(fillBar).catch(() => {});
+  const { actions, output } = await tasksSection({ api, onJobEnd: refreshBar });
+  const node = h('div', { class: 'admin' },
     h('div', { class: 'page-head' }, h('h1', { text: W.admin }), h('p', { text: 'What you can run from here comes first; the reports on the state of things are below. Every task checks first, shows what it would do, and asks before it spends money or deletes anything.' })),
-    Section('Actions', 'the same tasks as the `muse ops` command', h('div', { class: 'toolbar' }, driftBtn), out, tasks),
+    bar,
+    h('div', { class: 'admin__grid' },
+      h('div', { class: 'admin__actions' }, h('h2', { class: 'admin__h' }, 'Actions', h('small', { text: 'the same tasks as the `muse ops` command' })), h('div', { class: 'toolbar' }, driftBtn), out, actions),
+      output ? h('aside', { class: 'admin__output', 'aria-label': 'Output of the last run' }, output) : null),
     h('h2', { class: 'section__split', text: 'Reports' }),
     Section('Counts', c.version, Table([Row('Notes', n(c.notes)), ...c.byVersion.map(v => Row('Facts, ' + v.version, n(v.n), v.version === c.version ? 'the version Muse shows' : '')),
       Row('Notes not yet processed for ' + c.version, c.pending == null ? null : n(c.pending), 'waiting for nuggetize'), ...c.dupes.map(x => Row('Duplicates, ' + x.status, n(x.n), 'hidden from Muse')),
