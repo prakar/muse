@@ -20,7 +20,7 @@ test('serves the interface with a strict content policy, and keeps files inside 
     const r = await call(p); assert.notStrictEqual(r.status, 200, p); assert.ok(!r.body.includes('createServer'), p + ' must not leak server source');
   }
   assert.strictEqual((await call('/nope.js')).status, 404);
-  assert.strictEqual((await call('/', { headers: { Host: 'evil.example' } })).status, 421, 'another hostname pointing here is refused');
+  assert.strictEqual((await call('/', { headers: { Host: 'evil.example' } })).status, 200, 'open by design: any hostname is answered (the closed setting, MUSE_HOST=127.0.0.1, is tested in muse_access.test.js)');
 }));
 
 test('pairs are paged, clamped and carry their parts; dull ones drop out', () => withServer(async (call, marks) => {

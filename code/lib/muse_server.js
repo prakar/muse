@@ -1,7 +1,7 @@
 'use strict';
 // The Muse app's HTTP layer: static files for the interface, a small JSON API, and nothing else. Dependencies are passed in, so tests use fakes.
 const http = require('http'), fs = require('fs'), path = require('path');
-const C = require('./connect'), I = require('./ops_internal');
+const C = require('./connect'), I = require('./ops_internal'), { createAccess } = require('./muse_access');
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.txt': 'text/plain; charset=utf-8' };
@@ -10,10 +10,18 @@ const SECURITY = { 'Content-Security-Policy': "default-src 'self'; img-src 'self
 const PAGE_SIZES = [12, 24, 48, 96];
 // Marks are keyed by a handle. A star on one fact with no handle uses this reserved one.
 const FACT_HANDLE = '*';
-function createServer({ model, marks, notes, version, uiRoot, search = null, events = null, trayStore = null, admin = null, ops = null }) {
+// Calls that change the author's data or run jobs. Reading is open; these need the login from another machine (see lib/muse_access.js).
+const WRITE_PATHS = new Set(['/api/mark', '/api/tray', '/api/event']);
+// `access` decides who may do what; the default is the old closed behaviour (this machine only), so a caller that passes nothing stays safe.
+// `tls` ({ key, cert }) serves https from Node itself; without it the server speaks plain http.
+function createServer({ model, marks, notes, version, uiRoot, search = null, events = null, trayStore = null, admin = null, ops = null, access = createAccess({ env: {} }), tls = null }) {
   const root = path.resolve(uiRoot);
   const send = (res, code, type, body) => { res.writeHead(code, Object.assign({ 'Content-Type': type }, SECURITY)); res.end(body); };
   const json = (res, o, code) => send(res, code || 200, 'application/json; charset=utf-8', JSON.stringify(o));
+  // A refused call: 401 asks the browser for the login (it shows its own box and retries), 403 means no login is set up, 429 means too many wrong tries.
+  const deny = (res, a) => { const h = Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, SECURITY);
+    if (a.challenge) h['WWW-Authenticate'] = 'Basic realm="Muse (author)", charset="UTF-8"'; if (a.retryAfter) h['Retry-After'] = String(a.retryAfter);
+    res.writeHead(a.status, h); res.end(JSON.stringify({ error: a.message })); };
   // Dull and wrong-sense items drop out of lists (unless asked for); kept ones come first and carry their mark.
   const withMarks = (items, all) => items.map(i => Object.assign({}, i, { mark: marks.get(i.id) || null }))
     .filter(i => all || (i.mark !== 'dull' && i.mark !== 'wrong-sense')).sort((a, b) => (b.mark === 'use') - (a.mark === 'use'));
@@ -28,11 +36,15 @@ function createServer({ model, marks, notes, version, uiRoot, search = null, eve
     fs.readFile(file, (err, buf) => err ? send(res, 404, MIME['.txt'], 'not found') : send(res, 200, MIME[path.extname(file)] || 'application/octet-stream', buf));
   }
 
-  return http.createServer(function (req, res) {
-    // A local server holding private notes must not answer a page on another site that points its own hostname at this machine.
-    if (!/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(req.headers.host || '')) return send(res, 421, MIME['.txt'], 'misdirected request');
+  const handler = function (req, res) {
+    // WAS (closed design): every request needed Host = localhost or 127.0.0.1, else 421, because the server only listened on 127.0.0.1 and held
+    // private notes: a page on another site could point its own hostname at this machine and read them.
+    // NOW (open design): the notes are public, so any Host is fine. The check still runs when MUSE_HOST is a loopback address, or when MUSE_ALLOWED_HOSTS lists names.
+    if (!access.hostAllowed(req)) return send(res, 421, MIME['.txt'], 'misdirected request');
     const u = new URL(req.url, 'http://localhost'), q = u.searchParams, all = q.get('hidden') === '1';
     if (!u.pathname.startsWith('/api/')) return req.method === 'GET' ? serveStatic(res, u.pathname) : send(res, 405, MIME['.txt'], 'method not allowed');
+    // The login gate. From this machine it is open; from any other it asks for the author's login. Everything else under /api/ is read-only and open.
+    if (u.pathname.startsWith('/api/admin/') || (req.method === 'POST' && WRITE_PATHS.has(u.pathname))) { const a = access.authorize(req); if (!a.ok) return deny(res, a); }
 
     if (u.pathname === '/api/meta') return json(res, { version, notes: model.notes, burrs: model.burrs.length, sparks: model.sparks.length, wordplay: model.wordplay.length,
       wordplayState: model.wordplayState, wordplayKinds: model.wordplayKinds(), marks: marks.counts(), search: search ? search.status().meaning : null });
@@ -138,6 +150,7 @@ function createServer({ model, marks, notes, version, uiRoot, search = null, eve
       return search.search({ q: q.get('q'), meaning: q.get('meaning') !== '0' }).then(r => { const st = starredIds(); (r.results || []).forEach(x => { x.starred = st.has(x.burrId); }); json(res, r); }, e => json(res, { error: e.message }, e.code === 'bad_request' ? 400 : 500));
     }
     json(res, { error: 'not found' }, 404);
-  });
+  };
+  return tls ? require('https').createServer(tls, handler) : http.createServer(handler);
 }
 module.exports = { createServer };

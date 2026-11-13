@@ -2,7 +2,8 @@
 'use strict';
 /**
  * Muse, the author-facing app.   node --no-warnings code/muse_app.js [--port 3005] [--version nug-v6]     then open http://localhost:3005
- * Read-only on vault.db (the author's marks go to muse-marks.jsonl beside it). Binds to 127.0.0.1. Zero dependencies.
+ * Read-only on vault.db (the author's marks go to muse-marks.jsonl beside it). Listens on MUSE_HOST (default 0.0.0.0, all interfaces; it was 127.0.0.1). Zero dependencies.
+ * Open to read; the Admin page and anything that writes need the author's login from other machines: see lib/muse_access.js. Set the password with `node code/muse_set_password.js`.
  * Wordplay appears once `npm run wordplay -- --apply` has been run. The interface is static files in code/muse_ui; the HTTP layer is lib/muse_server.js.
  * The inspection tool (judging burrs, hooks, sparks) stays in code/muse_view.js.
  */
@@ -11,6 +12,7 @@ const { DatabaseSync } = require('node:sqlite');
 const Core = require('./lib/search_core'), SV = require('./lib/search_vectors'), SE = require('./lib/search_embed'), SC = require('./lib/search_cache'), { createRewriter } = require('./lib/search_rewrite'), { createSearchService } = require('./lib/search_service');
 const LLM = require('./lib/llm'), Bud = require('./lib/budget');
 const { createAdmin } = require('./lib/muse_admin'), { createJobs } = require('./lib/ops_jobs');
+const { createAccess } = require('./lib/muse_access');
 const M = require('./lib/muse_model'), K = require('./lib/marks'), { createServer } = require('./lib/muse_server'), { createNoteStore } = require('./lib/note_store');
 
 const args = process.argv.slice(2), opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : d; };
@@ -35,5 +37,17 @@ const search = createSearchService({ burrs: searchBurrs, words: Core.buildWordIn
   rewriter: MEANING ? createRewriter({ cache, callLLM: LLM.callLLM, hasKey: LLM.hasKey, priceFor: Bud.priceFor, breaker: SE.createBreaker(), config: { provider: 'gemini', maxUsdPerDay: process.env.MUSE_REWRITE_MAX_USD_DAY ? +process.env.MUSE_REWRITE_MAX_USD_DAY : 0.25 } }) : null, cache });
 console.log('Search: words ready (' + searchBurrs.length + ' facts); meaning ' + (!MEANING ? 'switched off (MUSE_MEANING=off)' : vectors ? vectors.count + ' vectors' + (vectors.stale || vectors.gone ? ' (' + vectors.stale + ' out of date, ' + vectors.gone + ' gone: rerun search_build.js)' : '') : 'index not built yet (run: node --no-warnings code/search_build.js)'));
 
-createServer({ ops: createJobs({ home: HOME, dbPath: DB, version: VERSION }), admin: createAdmin({ home: HOME, dbPath: DB, db, version: VERSION, port: PORT, search, drift: () => require('./muse_map_check').check() }), model, marks: K.open(MARKS_FILE, VERSION), notes: createNoteStore(db, { vaultRoot: process.env.MUSE_VAULT_ROOT || path.join(os.homedir(), 'md-vaults', 'knowledge') }), version: VERSION, search, trayStore: { load: () => { try { return JSON.parse(fs.readFileSync(TRAY_FILE, 'utf8')); } catch (e) { return { items: [], links: {} }; } }, save: o => { fs.writeFileSync(TRAY_FILE + '.tmp', JSON.stringify(o)); fs.renameSync(TRAY_FILE + '.tmp', TRAY_FILE); } }, events: { append: o => fs.appendFile(path.join(HOME, 'muse-events.jsonl'), JSON.stringify(o) + '\n', () => {}) }, uiRoot: path.join(__dirname, 'muse_ui') })
-  .listen(PORT, '127.0.0.1', () => console.log('Open http://localhost:' + PORT + '   (marks are saved to ' + MARKS_FILE + ')'));
+// Where to listen, and who may do what. This is the change from the closed design to the open one:
+//   WAS:  .listen(PORT, '127.0.0.1', ...)    only this machine could connect (a NAT written into the code)
+//   NOW:  .listen(PORT, HOST, ...)           HOST = MUSE_HOST, default '0.0.0.0' = every network interface. MUSE_HOST=127.0.0.1 restores the old behaviour.
+const access = createAccess({ env: process.env }), HOST = access.host;
+// Optional https straight from Node (no proxy needed): MUSE_TLS_KEY and MUSE_TLS_CERT are paths to a private key and a certificate.
+const TLS = process.env.MUSE_TLS_KEY && process.env.MUSE_TLS_CERT ? { key: fs.readFileSync(process.env.MUSE_TLS_KEY), cert: fs.readFileSync(process.env.MUSE_TLS_CERT) } : null;
+
+createServer({ access, tls: TLS, ops: createJobs({ home: HOME, dbPath: DB, version: VERSION }), admin: createAdmin({ home: HOME, dbPath: DB, db, version: VERSION, port: PORT, search, drift: () => require('./muse_map_check').check() }), model, marks: K.open(MARKS_FILE, VERSION), notes: createNoteStore(db, { vaultRoot: process.env.MUSE_VAULT_ROOT || path.join(os.homedir(), 'md-vaults', 'knowledge') }), version: VERSION, search, trayStore: { load: () => { try { return JSON.parse(fs.readFileSync(TRAY_FILE, 'utf8')); } catch (e) { return { items: [], links: {} }; } }, save: o => { fs.writeFileSync(TRAY_FILE + '.tmp', JSON.stringify(o)); fs.renameSync(TRAY_FILE + '.tmp', TRAY_FILE); } }, events: { append: o => fs.appendFile(path.join(HOME, 'muse-events.jsonl'), JSON.stringify(o) + '\n', () => {}) }, uiRoot: path.join(__dirname, 'muse_ui') })
+  .listen(PORT, HOST, () => {
+    console.log('Open ' + (TLS ? 'https' : 'http') + '://localhost:' + PORT + '   (marks are saved to ' + MARKS_FILE + ')');
+    console.log(access.loopbackOnly ? 'Listening on ' + HOST + ' only: this machine.' : 'Listening on ' + HOST + ':' + PORT + ' (all network interfaces). Reading is open to anyone who can reach it.');
+    if (!access.loopbackOnly) console.log('Admin and saving from other machines: ' + (access.loginConfigured ? 'login required (user "' + access.user + '", ' + (access.mode === 'hashed' ? 'hashed password' : 'plain-text password') + (access.lockout ? ', lockout on' : '') + ')' : 'LOCKED (403) until a password is set: node code/muse_set_password.js') + '. From this machine: open.');
+    if (!access.loopbackOnly && !TLS) console.log('Plain http: a login sent from another machine crosses the network unencrypted. Use https (MUSE_TLS_KEY, MUSE_TLS_CERT) or a private network before opening this to the internet.');
+  });
