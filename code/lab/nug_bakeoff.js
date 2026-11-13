@@ -10,12 +10,12 @@
 // Options: --n 100  --seed 7  --max-usd 0.25  --provider gemini  --baseline-model (label only)
 const fs = require('node:fs'), path = require('node:path');
 const B = require('../lib/burrs'), Bud = require('../lib/budget'), D = require('./data'), M = require('./metrics');
-const { JsonlCache } = require('./judge');
+const { JsonlCache } = require('./judge'), Paths = require('../lib/note_path');
 const OUT = path.join(__dirname, 'out');
 
-function loadNote(row) {   // same reading as nuggetizer.js loadNote
-  const raw = fs.readFileSync(row.filepath, 'utf8'), { body } = B.splitFrontmatter(raw), cleaned = B.cleanBody(body);
-  return { id: row.id, title: row.title || path.basename(row.filepath, '.md'), source_url: row.source_url, cleaned: cleaned, real_words: B.realWordCount(cleaned) };
+function loadNote(row, root) {   // same reading as nuggetizer.js loadNote
+  const raw = fs.readFileSync(Paths.toAbs(row.rel_path, root), 'utf8'), { body } = B.splitFrontmatter(raw), cleaned = B.cleanBody(body);
+  return { id: row.id, title: row.title || path.basename(row.rel_path, '.md'), source_url: row.source_url, cleaned: cleaned, real_words: B.realWordCount(cleaned) };
 }
 const norm = s => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 const toks = s => new Set(norm(s).split(' ').filter(w => w.length > 2));
@@ -77,7 +77,7 @@ async function main() {
   const dbPath = arg('db'); if (!dbPath) { console.error('Usage: node code/lab/nug_bakeoff.js --db eval.db [--dry-run] [--n 100] [--model gemini-2.5-flash-lite]'); process.exit(1); }
   const provider = arg('provider', 'gemini'), model = arg('model', 'gemini-2.5-flash-lite'), n = +arg('n', 100), maxUsd = +arg('max-usd', 0.25);
   const db = D.openCopy(dbPath), rnd = M.rng(+arg('seed', 7));
-  const rows = db.prepare("SELECT n.id, n.title, n.filepath, n.source_url FROM vault_notes n JOIN nuggetize_status s ON s.note_id=n.id WHERE s.prompt_version='nug-v6' AND s.status='ok' ORDER BY n.id").all()
+  const rows = db.prepare("SELECT n.id, n.title, n.rel_path, n.source_url FROM vault_notes n JOIN nuggetize_status s ON s.note_id=n.id WHERE s.prompt_version='nug-v6' AND s.status='ok' ORDER BY n.id").all()
     .map(r => [rnd(), r]).sort((x, y) => x[0] - y[0]).slice(0, n).map(x => x[1]);
   const baseline = key => { const r = db.prepare('SELECT response_text FROM nuggetize_cache WHERE cache_key=?').get(key); return r ? r.response_text : null; };
   const rate = (Bud.priceFor(provider, model, 0) || { in: 0, out: 0 });
@@ -86,7 +86,7 @@ async function main() {
   if (a.includes('--dry-run')) return;
   const { callLLM } = require('../lib/llm');
   const ledger = rec => { fs.mkdirSync(OUT, { recursive: true }); fs.appendFileSync(path.join(OUT, 'spend.jsonl'), JSON.stringify(rec) + '\n'); };
-  const res = await run(rows, { loadNote: loadNote, baseline: baseline, callLLM: callLLM, cache: new JsonlCache(path.join(OUT, 'cache', 'nug_bakeoff.jsonl')), ledger: ledger }, { provider: provider, model: model, maxUsd: maxUsd, rate: rate });
+  const res = await run(rows, { loadNote: row => loadNote(row, arg('root') || Paths.vaultRoot(process.env, process.env.QUARRY_HOME || path.join(__dirname, '..', '..'))), baseline: baseline, callLLM: callLLM, cache: new JsonlCache(path.join(OUT, 'cache', 'nug_bakeoff.jsonl')), ledger: ledger }, { provider: provider, model: model, maxUsd: maxUsd, rate: rate });
   const done = res.filter(r => r.base), skipped = res.filter(r => r.skipped), fx = x => Number.isFinite(x) ? x.toFixed(3) : 'n/a';
   const sb = summarise(done.map(r => r.base)), sc = summarise(done.map(r => r.cand)), ov = overlap(done.map(r => [r.base, r.cand]));
   console.log(`\ncompared ${done.length} notes, skipped ${skipped.length}${skipped.length ? ' (' + Array.from(new Set(skipped.map(s => s.skipped))).join('; ') + ')' : ''}; spent $${done.reduce((s, r) => s + (r.cost || 0), 0).toFixed(4)}`);

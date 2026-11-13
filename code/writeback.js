@@ -42,6 +42,10 @@ const { openDatabase } = require('./lib/db');   // sets a busy timeout - see lib
 const QUARRY_HOME = process.env.QUARRY_HOME || path.join(process.env.HOME, 'dev', 'quarry');
 const DB_PATH      = process.env.QUARRY_DB   || path.join(QUARRY_HOME, 'vault.db');
 const VAULT_PATH   = process.env.VAULT_PATH  || path.join(process.env.HOME, 'dev', 'md-vaults', 'knowledge');
+// Notes are stored by their key (rel_path); the file is the key joined to the vault root. The root is NEVER guessed: unset VAULT_PATH (and no dev copy) stops here,
+// so a write can not land in a vault that was not chosen. See lib/note_path.js.
+const Paths = require('./lib/note_path');
+const fileOf = note => Paths.toAbs(note.rel_path, Paths.vaultRoot(process.env, QUARRY_HOME));
 const ARCH_OUT     = path.join(process.env.HOME, 'dev', 'archaeology_output');
 
 // ---------------------------------------------------------------------------
@@ -171,7 +175,7 @@ function replaceTagsInFrontmatter(fmText, newTags) {
 // ---------------------------------------------------------------------------
 function runNoiseStage(db, noisePatterns) {
   const notes = db.prepare(
-    "SELECT id, filepath, title FROM vault_notes WHERE content_type != 'attachment' ORDER BY id LIMIT ?"
+    "SELECT id, rel_path, title FROM vault_notes WHERE content_type != 'attachment' ORDER BY id LIMIT ?"
   ).all(LIMIT === Infinity ? 999999 : LIMIT);
 
   log('info', 'Noise stage starting', { totalNotes: notes.length });
@@ -180,8 +184,8 @@ function runNoiseStage(db, noisePatterns) {
 
   for (const note of notes) {
     try {
-      if (!fs.existsSync(note.filepath)) { errors++; continue; }
-      const { frontmatter, body } = readFrontmatter(note.filepath);
+      if (!fs.existsSync(fileOf(note))) { errors++; continue; }
+      const { frontmatter, body } = readFrontmatter(fileOf(note));
       if (!frontmatter) { unchanged++; continue; }
 
       const { tags } = extractTagsFromFrontmatter(frontmatter);
@@ -198,8 +202,8 @@ function runNoiseStage(db, noisePatterns) {
       }
 
       const newFm = replaceTagsInFrontmatter(frontmatter, kept);
-      fs.writeFileSync(note.filepath + '.bak', fs.readFileSync(note.filepath));
-      fs.writeFileSync(note.filepath, newFm + body, 'utf8');
+      fs.writeFileSync(fileOf(note) + '.bak', fs.readFileSync(fileOf(note)));
+      fs.writeFileSync(fileOf(note), newFm + body, 'utf8');
 
       db.prepare(
         'INSERT INTO writeback_log (note_id, stage, tags_before, tags_after, written_at) VALUES (?,?,?,?,?)'
@@ -220,7 +224,7 @@ function runNoiseStage(db, noisePatterns) {
 // ---------------------------------------------------------------------------
 function runNormaliseStage(db, normMap, noisePatterns) {
   const notes = db.prepare(
-    "SELECT id, filepath, title FROM vault_notes WHERE content_type != 'attachment' ORDER BY id LIMIT ?"
+    "SELECT id, rel_path, title FROM vault_notes WHERE content_type != 'attachment' ORDER BY id LIMIT ?"
   ).all(LIMIT === Infinity ? 999999 : LIMIT);
 
   log('info', 'Normalise stage starting', { totalNotes: notes.length, mapSize: Object.keys(normMap).length });
@@ -229,8 +233,8 @@ function runNormaliseStage(db, normMap, noisePatterns) {
 
   for (const note of notes) {
     try {
-      if (!fs.existsSync(note.filepath)) { errors++; continue; }
-      const { frontmatter, body } = readFrontmatter(note.filepath);
+      if (!fs.existsSync(fileOf(note))) { errors++; continue; }
+      const { frontmatter, body } = readFrontmatter(fileOf(note));
       if (!frontmatter) { unchanged++; continue; }
 
       const { tags } = extractTagsFromFrontmatter(frontmatter);
@@ -265,8 +269,8 @@ function runNormaliseStage(db, normMap, noisePatterns) {
       }
 
       const newFm = replaceTagsInFrontmatter(frontmatter, result);
-      fs.writeFileSync(note.filepath + '.bak', fs.readFileSync(note.filepath));
-      fs.writeFileSync(note.filepath, newFm + body, 'utf8');
+      fs.writeFileSync(fileOf(note) + '.bak', fs.readFileSync(fileOf(note)));
+      fs.writeFileSync(fileOf(note), newFm + body, 'utf8');
 
       db.prepare(
         'INSERT INTO writeback_log (note_id, stage, tags_before, tags_after, written_at) VALUES (?,?,?,?,?)'
@@ -292,7 +296,7 @@ function runNormaliseStage(db, normMap, noisePatterns) {
 // ---------------------------------------------------------------------------
 function runQuarryStage(db) {
   const notes = db.prepare(
-    "SELECT id, filepath, title FROM vault_notes WHERE quarry_exclude = 1 ORDER BY id LIMIT ?"
+    "SELECT id, rel_path, title FROM vault_notes WHERE quarry_exclude = 1 ORDER BY id LIMIT ?"
   ).all(LIMIT === Infinity ? 999999 : LIMIT);
 
   log('info', 'Quarry stage starting', { flaggedNotes: notes.length });
@@ -301,8 +305,8 @@ function runQuarryStage(db) {
 
   for (const note of notes) {
     try {
-      if (!fs.existsSync(note.filepath)) { errors++; continue; }
-      const raw = fs.readFileSync(note.filepath, 'utf8');
+      if (!fs.existsSync(fileOf(note))) { errors++; continue; }
+      const raw = fs.readFileSync(fileOf(note), 'utf8');
 
       if (/^quarry_exclude:\s*true/m.test(raw)) { unchanged++; continue; }
 
@@ -312,7 +316,7 @@ function runQuarryStage(db) {
         continue;
       }
 
-      const { frontmatter, body } = readFrontmatter(note.filepath);
+      const { frontmatter, body } = readFrontmatter(fileOf(note));
       let newFm;
       if (frontmatter) {
         newFm = frontmatter.replace(/^---\r?\n/, m => m + 'quarry_exclude: true\n');
@@ -320,8 +324,8 @@ function runQuarryStage(db) {
         newFm = '---\nquarry_exclude: true\n---\n';
       }
 
-      fs.writeFileSync(note.filepath + '.bak', raw);
-      fs.writeFileSync(note.filepath, newFm + (frontmatter ? body : raw), 'utf8');
+      fs.writeFileSync(fileOf(note) + '.bak', raw);
+      fs.writeFileSync(fileOf(note), newFm + (frontmatter ? body : raw), 'utf8');
 
       db.prepare(
         'INSERT INTO writeback_log (note_id, stage, tags_before, tags_after, written_at) VALUES (?,?,?,?,?)'
@@ -354,7 +358,7 @@ function runQuarryStage(db) {
 function runSyncApprovedStage(db) {
   // Load all notes that completed HIL review, ordered by id for determinism
   const notes = db.prepare(
-    `SELECT id, filepath, title
+    `SELECT id, rel_path, title
      FROM vault_notes
      WHERE tag_source = 'switch3-hil'
      ORDER BY id
@@ -394,13 +398,13 @@ function runSyncApprovedStage(db) {
       const approvedTags = approvedRows.map(r => r.tag_full);
 
       // Read the file
-      if (!fs.existsSync(note.filepath)) {
+      if (!fs.existsSync(fileOf(note))) {
         errors++;
-        log('warn', 'File not found', { title: note.title.slice(0,60), filepath: note.filepath });
+        log('warn', 'File not found', { title: note.title.slice(0,60), rel_path: note.rel_path });
         continue;
       }
 
-      const { frontmatter, body } = readFrontmatter(note.filepath);
+      const { frontmatter, body } = readFrontmatter(fileOf(note));
 
       // Extract what's currently in the file
       const { tags: existingFileTags } = extractTagsFromFrontmatter(frontmatter || '');
@@ -454,8 +458,8 @@ function runSyncApprovedStage(db) {
       }
 
       // Backup then write
-      fs.writeFileSync(note.filepath + '.bak', fs.readFileSync(note.filepath));
-      fs.writeFileSync(note.filepath, newFm + body, 'utf8');
+      fs.writeFileSync(fileOf(note) + '.bak', fs.readFileSync(fileOf(note)));
+      fs.writeFileSync(fileOf(note), newFm + body, 'utf8');
 
       insertLog.run(
         note.id,

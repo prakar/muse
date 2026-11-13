@@ -13,6 +13,7 @@ const path  = require('path');
 // the path when QUARRY_HOME=$HOME/dev/quarry - the convention writeback.js and the docs use.)
 const QUARRY_HOME = process.env.QUARRY_HOME || path.join(process.env.HOME, 'dev', 'quarry');
 const { insertNoteTag } = require('./lib/tags');
+const Paths = require('./lib/note_path');   // notes are stored by key (rel_path); the file is the key joined to the vault root
 const cp    = require('child_process');
 const { DatabaseSync } = require('node:sqlite');
 const { openDatabase } = require('./lib/db');   // sets a busy timeout - see lib/db.js
@@ -1010,10 +1011,8 @@ const FLAGS = ['--no-warnings'];
 // the tagger at an arbitrary path (tagger.js also refuses files that aren't indexed).
 function fileArgs(b) {
   if (!b.file) return [];
-  const fp   = path.resolve(String(b.file));
-  const root = path.resolve(VAULT_DIR) + path.sep;
-  if (!fp.startsWith(root)) throw new Error('file must be inside the vault');
-  return ['--file', fp];
+  let key; try { key = Paths.toKey(String(b.file), VAULT_DIR); } catch (e) { throw new Error('file must be inside the vault'); }   // a note key, or an absolute path inside the vault
+  return ['--file', key];
 }
 
 // Optional numeric/flag inputs from the UI. A limit must be a positive whole number; anything
@@ -1370,9 +1369,9 @@ function router(req, res) {
     const db = openDb(); ensureSchema(db);
     // Escape LIKE wildcards in the user's text so "50%" or "a_b" match literally.
     const like = '%' + q.replace(/[\\%_]/g, function(m){ return '\\' + m; }) + '%';
-    const rows = db.prepare("SELECT id,title,word_count,filepath FROM vault_notes WHERE title LIKE ? ESCAPE '\\' AND content_type!='attachment' ORDER BY word_count DESC LIMIT 10").all(like);
+    const rows = db.prepare("SELECT id,title,word_count,rel_path FROM vault_notes WHERE title LIKE ? ESCAPE '\\' AND content_type!='attachment' ORDER BY word_count DESC LIMIT 10").all(like);
     db.close();
-    json(rows.map(function(r){ return { id:r.id, title:r.title, word_count:r.word_count, filepath:r.filepath, rel:path.relative(VAULT_DIR, r.filepath) }; }));
+    json(rows.map(function(r){ return { id:r.id, title:r.title, word_count:r.word_count, rel:r.rel_path }; }));
     return;
   }
 
@@ -1380,7 +1379,7 @@ function router(req, res) {
   if (method==='GET' && noteMatch) {
     const id=parseInt(noteMatch[1],10);
     const db=openDb();ensureSchema(db);
-    const note=db.prepare('SELECT id,title,filepath,source_url,word_count,content_type FROM vault_notes WHERE id=?').get(id);
+    const note=db.prepare('SELECT id,title,rel_path,source_url,word_count,content_type FROM vault_notes WHERE id=?').get(id);
     if (!note){db.close();res.writeHead(404);res.end(JSON.stringify({}));return;}
     const essay=db.prepare("SELECT claim FROM note_classifications WHERE note_id=? AND bucket='essay' ORDER BY switch_level DESC LIMIT 1").get(id);
     const verified=db.prepare("SELECT claim FROM note_classifications WHERE note_id=? AND bucket='verified' ORDER BY switch_level DESC LIMIT 12").all(id).map(r=>r.claim);
@@ -1388,7 +1387,7 @@ function router(req, res) {
     const tags=db.prepare('SELECT tag_full FROM note_tags WHERE note_id=? ORDER BY tag_full').all(id).map(r=>r.tag_full);
     db.close();
     var body='';
-    try{body=fs.readFileSync(note.filepath,'utf8').replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/,'').replace(/_Created at[^_]*\._/g,'').replace(/_Source URL:[^_]*\._/g,'').trim();}catch(_){}
+    try{body=fs.readFileSync(Paths.toAbs(note.rel_path, VAULT_DIR),'utf8').replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/,'').replace(/_Created at[^_]*\._/g,'').replace(/_Source URL:[^_]*\._/g,'').trim();}catch(_){}
     json(Object.assign({},note,{body,essay:essay?essay.claim:null,verified,trivia,tags}));
     return;
   }
@@ -1421,15 +1420,15 @@ function router(req, res) {
     readBody(req,function(b){
       var data={};try{data=JSON.parse(b);}catch(_){}
       const db=openDb();
-      const note=db.prepare('SELECT filepath FROM vault_notes WHERE id=?').get(id);
+      const note=db.prepare('SELECT rel_path FROM vault_notes WHERE id=?').get(id);
       db.close();
       if(!note){res.writeHead(404);res.end(JSON.stringify({error:'not found'}));return;}
       try{
-        const orig=fs.readFileSync(note.filepath,'utf8');
+        const file=Paths.toAbs(note.rel_path, VAULT_DIR), orig=fs.readFileSync(file,'utf8');
         const fm=(orig.match(/^(---\r?\n[\s\S]*?\r?\n---\r?\n?)/)||[''])[0];
         const nb=(data.content||'').trim();
-        fs.writeFileSync(note.filepath+'.bak',orig);
-        fs.writeFileSync(note.filepath,fm?fm+'\n'+nb:nb,'utf8');
+        fs.writeFileSync(file+'.bak',orig);
+        fs.writeFileSync(file,fm?fm+'\n'+nb:nb,'utf8');
         const wc=(nb.match(/\S+/g)||[]).length;
         const db2=openDb();db2.prepare('UPDATE vault_notes SET word_count=? WHERE id=?').run(wc,id);db2.close();
         json({ok:true});

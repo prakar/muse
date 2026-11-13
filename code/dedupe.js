@@ -61,13 +61,13 @@ if (require.main === module) {
   }
   const notesAt = args.indexOf('--notes');
   if (notesAt >= 0 && args[notesAt + 1]) {   // duplicate NOTES, for your review; nothing is changed
-    const norm = D.norm, rows = db.prepare('SELECT id, title, word_count, filepath, first_paragraph FROM vault_notes').all();
+    const norm = D.norm, rows = db.prepare('SELECT id, title, word_count, rel_path, first_paragraph FROM vault_notes').all();
     const groups = new Map();
     const add = function (kind, key, n) { if (!key) return; const k = kind + '|' + key; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(n); };
     rows.forEach(function (n) { add('same title', norm(n.title), n); const fp = norm(n.first_paragraph).slice(0, 200); if (fp.length >= 40) add('same opening', fp, n); });
     const q2 = function (x) { return '"' + String(x == null ? '' : x).replace(/"/g, '""') + '"'; };
-    const out = ['group,reason,note_id,title,words,filepath']; let g = 0;
-    groups.forEach(function (v, k) { if (v.length < 2) return; g++; v.forEach(function (n) { out.push([g, k.split('|')[0], n.id, q2(n.title), n.word_count, q2(n.filepath)].join(',')); }); });
+    const out = ['group,reason,note_id,title,words,path']; let g = 0;
+    groups.forEach(function (v, k) { if (v.length < 2) return; g++; v.forEach(function (n) { out.push([g, k.split('|')[0], n.id, q2(n.title), n.word_count, q2(n.rel_path)].join(',')); }); });
     fs.writeFileSync(args[notesAt + 1], out.join('\n') + '\n');
     console.log('wrote ' + args[notesAt + 1] + ' (' + g + ' groups of duplicate notes; review only, nothing changed)');
   }

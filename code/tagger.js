@@ -20,6 +20,10 @@ const { DatabaseSync } = require('node:sqlite');
 const { openDatabase } = require('./lib/db');   // sets a busy timeout - see lib/db.js
 const { insertNoteTags, insertNoteTag } = require('./lib/tags');
 const llm = require('./lib/llm');   // all LLM calls: see lib/llm.js
+// Notes are stored by their key (rel_path); the file is the key joined to the vault root, which is never guessed (see lib/note_path.js).
+const Paths = require('./lib/note_path');
+const vaultRoot = () => Paths.vaultRoot(process.env, QUARRY_HOME);
+const fileOf = note => Paths.toAbs(note.rel_path, vaultRoot());
 
 // ---------------------------------------------------------------------------
 // CONFIG
@@ -666,13 +670,13 @@ function writeNoteFile(filepath, frontmatter, body) {
 // SYNC-WC: recount words for all notes, update DB
 // ---------------------------------------------------------------------------
 async function runSyncWc(db) {
-  const notes = db.prepare('SELECT id, filepath, word_count FROM vault_notes').all();
+  const notes = db.prepare('SELECT id, rel_path, word_count FROM vault_notes').all();
   log('info', 'sync-wc starting', {total:notes.length});
   let updated = 0;
   let missing  = 0;
   for (const note of notes) {
-    if (!fs.existsSync(note.filepath)) { missing++; continue; }
-    const body  = readNoteBody(note.filepath);
+    if (!fs.existsSync(fileOf(note))) { missing++; continue; }
+    const body  = readNoteBody(fileOf(note));
     const newWc = countWords(body);
     if (newWc !== note.word_count) {
       db.prepare('UPDATE vault_notes SET word_count=? WHERE id=?').run(newWc, note.id);
@@ -687,7 +691,7 @@ async function runSyncWc(db) {
 // ---------------------------------------------------------------------------
 async function runMindfulWc(db) {
   const candidates = db.prepare(
-    "SELECT id,title,filepath,word_count,source_url FROM vault_notes WHERE word_count>? AND (quarry_exclude IS NULL OR quarry_exclude=0) AND content_type IN ('article','note','video') ORDER BY word_count DESC LIMIT ?"
+    "SELECT id,title,rel_path,word_count,source_url FROM vault_notes WHERE word_count>? AND (quarry_exclude IS NULL OR quarry_exclude=0) AND content_type IN ('article','note','video') ORDER BY word_count DESC LIMIT ?"
   ).all(MINDFUL_THRESHOLD, LIMIT===Infinity ? 9999 : LIMIT);
 
   log('info', 'mindful-wc candidates', {count:candidates.length, threshold:MINDFUL_THRESHOLD});
@@ -711,8 +715,8 @@ async function runMindfulWc(db) {
 
   for (const note of candidates) {
     try {
-      const body      = readNoteBody(note.filepath);
-      const sourceUrl = note.source_url || extractSourceUrl(note.filepath);
+      const body      = readNoteBody(fileOf(note));
+      const sourceUrl = note.source_url || extractSourceUrl(fileOf(note));
       const listFmt   = isListFormat(body);
       const wordCount = (body.match(/\S+/g)||[]).length;
       const useUrl    = false; // URL mode disabled — Gemini fetches from training, not the actual document
@@ -743,9 +747,9 @@ async function runMindfulWc(db) {
         newBody = result.text.trim();
       }
       const newWc   = countWords(newBody);
-      const fm      = readFrontmatter(note.filepath);
+      const fm      = readFrontmatter(fileOf(note));
 
-      writeNoteFile(note.filepath, fm, newBody);
+      writeNoteFile(fileOf(note), fm, newBody);
       db.prepare('UPDATE vault_notes SET word_count=? WHERE id=?').run(newWc, note.id);
       const cost = 0; // already recorded per-chunk or in single call above
 
@@ -809,7 +813,7 @@ function replaceAiOutput(db, noteId, parsed, switchLevel, vocabSet) {
 }
 
 async function processNote(db, note, switchLevel, provider, useFullContent) {
-  const body     = readNoteBody(note.filepath);
+  const body     = readNoteBody(fileOf(note));
   const vocab    = getVocabList(db);
   const vocabSet = getVocabSet(db);
   const prompt   = buildS3Prompt(body, note.source_url, useFullContent, vocab);
@@ -840,7 +844,7 @@ async function processNote(db, note, switchLevel, provider, useFullContent) {
 // ontology (see buildRetagPrompt's worked examples). Does not touch
 // verified/trivia - marks retagged_at, not classification_at.
 async function processNoteRetag(db, note, provider, useFullContent) {
-  const body     = readNoteBody(note.filepath);
+  const body     = readNoteBody(fileOf(note));
   const vocab    = getVocabList(db);
   const vocabSet = getVocabSet(db);
 
@@ -963,9 +967,10 @@ async function main() {
   // Select notes
   let notes = [];
   if (SINGLE_FILE) {
-    const fp = path.resolve(SINGLE_FILE);
-    const note = db.prepare('SELECT * FROM vault_notes WHERE filepath=?').get(fp);
-    if (!note) { log('error','File not in index',{filepath:fp}); db.close(); return; }
+    let key; try { key = Paths.toKey(path.isAbsolute(SINGLE_FILE) ? path.resolve(SINGLE_FILE) : SINGLE_FILE, vaultRoot()); }   // an absolute path inside the vault, or the path inside the vault ("2026/Note.md")
+    catch (e) { log('error','File is not a note path inside the vault',{file:SINGLE_FILE, err:e.message}); db.close(); return; }
+    const note = db.prepare('SELECT * FROM vault_notes WHERE rel_path=?').get(key);
+    if (!note) { log('error','File not in index',{rel_path:key}); db.close(); return; }
     notes = [note];
   } else if (SW3) {
     notes = db.prepare(
@@ -994,8 +999,8 @@ async function main() {
   for (const note of notes) {
     try {
       if (SW_VOCAB) {
-        const body = readNoteBody(note.filepath);
-        const tags = switchVocabTags(note.filepath, body, note.first_paragraph, note.title, vocab);
+        const body = readNoteBody(fileOf(note));
+        const tags = switchVocabTags(fileOf(note), body, note.first_paragraph, note.title, vocab);
         if (tags.length) {
           if (MODE_DRY) {
             log('info', 'Would tag (switch-vocab)', {title:note.title.slice(0,60), tags});

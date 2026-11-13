@@ -22,6 +22,7 @@ const fs   = require('fs');
 const path = require('path');
 const B    = require('./lib/burrs');
 const Bud  = require('./lib/budget');
+const Paths = require('./lib/note_path');   // notes are stored by key (rel_path); the file is the key joined to the vault root
 
 const MAX_CONSEC_ERRORS = 5;
 const EST_PROMPT_TOKENS = 700;   // fixed instructions + example
@@ -50,22 +51,22 @@ function parseArgs(argv) {
 function now() { return new Date().toISOString(); }
 
 function pickCandidates(db, a) {
-  if (a.note) return db.prepare('SELECT id,filepath,title,source_url,word_count FROM vault_notes WHERE id=?').all(a.note);
+  if (a.note) return db.prepare('SELECT id,rel_path,title,source_url,word_count FROM vault_notes WHERE id=?').all(a.note);
   const where = ['COALESCE(n.quarry_exclude,0)=0',
     a.redo ? '1=1' : 'NOT EXISTS (SELECT 1 FROM nuggetize_status s WHERE s.note_id=n.id AND s.prompt_version=? AND s.status IN (\'ok\',\'empty\',\'skipped_empty\'))'];
   const params = a.redo ? [] : [B.PROMPT_VERSION];
   if (!a.all) { where.push('n.word_count < ?'); params.push(a.maxWords); }
   if (a.minWords) { where.push('n.word_count >= ?'); params.push(a.minWords); }
-  const sql = 'SELECT n.id,n.filepath,n.title,n.source_url,n.word_count FROM vault_notes n WHERE ' + where.join(' AND ') +
+  const sql = 'SELECT n.id,n.rel_path,n.title,n.source_url,n.word_count FROM vault_notes n WHERE ' + where.join(' AND ') +
               (a.shuffle ? ' ORDER BY (n.id * 2654435761) % 1000003' : ' ORDER BY n.word_count ASC, n.id ASC') + (a.limit ? ' LIMIT ' + a.limit : '');
   return db.prepare(sql).all(...params);
 }
 
-function loadNote(row) {
-  const raw = fs.readFileSync(row.filepath, 'utf8');
+function loadNote(row, root) {
+  const raw = fs.readFileSync(Paths.toAbs(row.rel_path, root), 'utf8');
   const { body } = B.splitFrontmatter(raw);
   const cleaned = B.cleanBody(body);
-  return { id: row.id, title: row.title || path.basename(row.filepath, '.md'), source_url: row.source_url, cleaned: cleaned,
+  return { id: row.id, title: row.title || path.basename(row.rel_path, '.md'), source_url: row.source_url, cleaned: cleaned,
            real_words: B.realWordCount(cleaned) };
 }
 
@@ -80,7 +81,7 @@ function markNugget(db, row, reason) {
 }
 
 async function processNote(db, row, a, runId, deps) {
-  const note = loadNote(row);
+  const note = loadNote(row, deps.root);
   if (note.real_words < 3) {
     setStatus(db, row.id, 'skipped_empty', 0, 0, ['body under 3 real words (title only or media only)'], null, runId);
     db.prepare('INSERT OR REPLACE INTO note_disposition (note_id,bucket,disposition,reason,decided_by,decided_at) VALUES (?,?,?,?,?,?)')
@@ -125,15 +126,15 @@ async function processNote(db, row, a, runId, deps) {
 
 function writeReviewList(db, outPath) {
   const rows = [];
-  db.prepare("SELECT n.id,n.title,n.filepath,n.word_count,d.reason FROM note_disposition d JOIN vault_notes n ON n.id=d.note_id WHERE d.disposition='review'")
+  db.prepare("SELECT n.id,n.title,n.rel_path,n.word_count,d.reason FROM note_disposition d JOIN vault_notes n ON n.id=d.note_id WHERE d.disposition='review'")
     .all().forEach(function (r) { rows.push(['empty', r]); });
-  db.prepare(`SELECT n.id,n.title,n.filepath,n.word_count,'duplicate title' AS reason FROM vault_notes n
+  db.prepare(`SELECT n.id,n.title,n.rel_path,n.word_count,'duplicate title' AS reason FROM vault_notes n
               WHERE n.word_count<200 AND lower(trim(n.title)) IN
                 (SELECT lower(trim(title)) FROM vault_notes WHERE word_count<200 GROUP BY 1 HAVING COUNT(*)>1)
               ORDER BY lower(trim(n.title)), n.id`).all().forEach(function (r) { rows.push(['duplicate', r]); });
   const q = function (s) { return '"' + String(s == null ? '' : s).replace(/"/g, '""') + '"'; };
   const lines = ['kind,id,title,words,path,reason'].concat(rows.map(function (x) {
-    return [x[0], x[1].id, q(x[1].title), x[1].word_count, q(x[1].filepath), q(x[1].reason)].join(',');
+    return [x[0], x[1].id, q(x[1].title), x[1].word_count, q(x[1].rel_path), q(x[1].reason)].join(',');
   }));
   fs.writeFileSync(outPath, lines.join('\n') + '\n');
   return rows.length;
@@ -152,6 +153,7 @@ async function run(a, deps) {
   console.log('Candidates: ' + cands.length + ' | provider ' + a.provider + ' | est. cost $' + estCost.toFixed(3) + ' | spent so far $' + Bud.spentToDate(db).toFixed(4));
   if (a.dryRun || !cands.length) return { candidates: cands.length, estCost: estCost };
 
+  const root = deps.root || Paths.vaultRoot(process.env, process.env.QUARRY_HOME || path.join(__dirname, '..'));   // never guessed: see lib/note_path.js
   const callLLM = deps.callLLM || require('./lib/llm').callLLM;
   if (!deps.callLLM && !require('./lib/llm').hasKey(a.provider)) throw new Error('No API key for provider ' + a.provider);
   const runId = 'nug-' + now().replace(/[-:.TZ]/g, '').slice(0, 17) + '-' + Math.random().toString(16).slice(2, 6);
@@ -162,7 +164,7 @@ async function run(a, deps) {
   let consec = 0, stopped = '';
   for (let i = 0; i < cands.length; i++) {
     try {
-      const r = await processNote(db, cands[i], a, runId, { callLLM: callLLM });
+      const r = await processNote(db, cands[i], a, runId, { callLLM: callLLM, root: root });
       tally[r.status] = (tally[r.status] || 0) + 1; tally.burrs += r.n; tally.rejected += (r.rejected || 0); tally.cost += r.cost;
       consec = r.status === 'error' ? consec + 1 : 0;
     } catch (e) {

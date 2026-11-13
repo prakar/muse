@@ -335,6 +335,17 @@ const MIGRATIONS = [
     id:   'M014',
     desc: 'burr_dupes: burrs flagged as duplicates of another burr (nothing is deleted)',
     up: function(db) { db.exec(require('./lib/dedupe').SCHEMA_SQL); log('  Added burr_dupes'); }
+  },
+
+  // -------------------------------------------------------------------------
+  // M015: key notes by the path inside the vault (rel_path) instead of one machine's absolute path (filepath)
+  // -------------------------------------------------------------------------
+  {
+    id:   'M015',
+    desc: 'vault_notes: rel_path (path inside the vault) replaces filepath (absolute path); see lib/note_path.js',
+    backupFirst: true,          // a file copy of the database is taken before BEGIN
+    foreignKeysOff: true,       // dropping the old table with foreign keys ON would cascade-delete tags and facts
+    up: function(db) { require('./lib/rel_path_migration').up(db, process.env, log); }
   }
 
 ];
@@ -383,6 +394,14 @@ function printStatus(db) {
     const status = applied.has(m.id) ? '✓' : '○';
     console.log('  ' + status + ' ' + m.id + '  ' + m.desc);
   });
+  if (!applied.has('M015')) {
+    try {
+      const pl = require('./lib/rel_path_migration').plan(db, process.env);
+      console.log('\n  M015 plan: ' + (pl.state === 'legacy' ? pl.notes + ' notes, shared prefix ' + pl.prefix : 'state ' + pl.state));
+      pl.problems.forEach(function(x) { console.log('    PROBLEM: ' + x); });
+      pl.warnings.forEach(function(x) { console.log('    warning: ' + x); });
+    } catch (e) { console.log('\n  M015 plan unavailable: ' + e.message); }
+  }
   const pending = MIGRATIONS.filter(function(m) { return !applied.has(m.id); }).length;
   console.log('');
   console.log('  Pending: ' + pending + ' / ' + MIGRATIONS.length);
@@ -408,15 +427,23 @@ function runMigrations(db) {
     }
 
     log('Applying ' + m.id, { desc: m.desc });
+    if (m.backupFirst) {                           // outside the transaction: VACUUM INTO cannot run inside one
+      const bak = DB_PATH + '.bak-' + new Date().toISOString().replace(/[:.]/g, '-') + '-pre-' + m.id;
+      try { db.exec("VACUUM INTO '" + bak.replace(/'/g, "''") + "'"); log('  backup: ' + bak); }
+      catch (e) { console.error('\nCould not back up the database before ' + m.id + ': ' + e.message + '\nNothing was changed. Run on a disk that supports SQLite writes.'); process.exit(1); }
+    }
+    if (m.foreignKeysOff) db.exec('PRAGMA foreign_keys = OFF');   // a no-op inside a transaction, so it is set here
     db.exec('BEGIN');
     try {
       m.up(db);
       markApplied(db, m);
       db.exec('COMMIT');
+      if (m.foreignKeysOff) db.exec('PRAGMA foreign_keys = ON');
       log('Applied ' + m.id + ' OK');
       ran++;
     } catch (e) {
       db.exec('ROLLBACK');
+      if (m.foreignKeysOff) db.exec('PRAGMA foreign_keys = ON');
       log('FAILED ' + m.id, { err: e.message });
       console.error('\nMigration ' + m.id + ' failed — rolled back. Stopping.');
       process.exit(1);

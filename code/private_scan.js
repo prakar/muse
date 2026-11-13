@@ -39,11 +39,13 @@ const RULES = [
 
 // Notes the DB knows to be clippings (they have a source URL): other people's public text. Personal-signal rules (contact,
 // first-person) do not apply to them, because "my doctor" there is the article author's voice, not the owner's.
+const Paths = require('./lib/note_path');
+const keyOf = (f) => { try { return Paths.toKey(f, VAULT); } catch (e) { return path.relative(VAULT, f).split(path.sep).join('/'); } };
 const CLIPPED = new Set();
 try {
   const { DatabaseSync } = require('node:sqlite');
-  new DatabaseSync(DB, { readOnly: true }).prepare("SELECT filepath FROM vault_notes WHERE source_url IS NOT NULL AND source_url != ''").all()
-    .forEach((r) => { const i = r.filepath.lastIndexOf('/knowledge/'); if (i >= 0) CLIPPED.add(r.filepath.slice(i + '/knowledge/'.length)); });
+  new DatabaseSync(DB, { readOnly: true }).prepare("SELECT rel_path FROM vault_notes WHERE source_url IS NOT NULL AND source_url != ''").all()
+    .forEach((r) => CLIPPED.add(r.rel_path));   // keys: the path inside the vault, forward slashes, NFC (lib/note_path.js)
 } catch (e) { console.error('no DB clipped-map (' + e.message + '): treating every note as unknown'); }
 const PERSONAL = new Set(['contact', 'address', 'finance', 'health', 'family']);
 
@@ -61,7 +63,7 @@ const rows = [], byClass = {};
 for (const f of files) {
   let text; try { text = fs.readFileSync(f, 'utf8'); } catch (e) { continue; }
   const hits = {}; let score = 0; const ev = [];
-  const clipped = CLIPPED.has(path.relative(VAULT, f));
+  const clipped = CLIPPED.has(keyOf(f));
   for (const [cls, name, w, re, ok] of RULES) {
     if (clipped && PERSONAL.has(cls)) continue;
     const seen = new Set(); let m; re.lastIndex = 0;
@@ -74,7 +76,7 @@ for (const f of files) {
     }
   }
   if (score >= MIN) {
-    const rel = path.relative(VAULT, f), year = (rel.match(/(?:^|\/)((?:19|20)\d\d)\//) || [])[1] || '';
+    const rel = keyOf(f), year = (rel.match(/(?:^|\/)((?:19|20)\d\d)\//) || [])[1] || '';
     rows.push({ rel, year, score, kind: clipped ? 'clipped' : (CLIPPED.size ? 'own-or-unmatched' : 'unknown'), classes: Object.keys(hits).sort().join('+'), ev: ev.join('; ') });
     Object.keys(hits).forEach((c) => { byClass[c] = (byClass[c] || 0) + 1; });
   }

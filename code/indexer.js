@@ -16,6 +16,7 @@
 
 const fs   = require('fs');
 const { normalizeCreated } = require('./lib/created_date');
+const Paths = require('./lib/note_path');   // notes are keyed by their path INSIDE the vault (rel_path), never by one machine's absolute path
 const path = require('path');
 // QUARRY_HOME is the quarry directory itself (default ~/dev/quarry): the DB, logs and chunk caches live
 // directly under it. (These scripts once treated it as a PARENT and appended dev/quarry, which doubles
@@ -27,8 +28,9 @@ const { openDatabase } = require('./lib/db');   // sets a busy timeout - see lib
 // ---------------------------------------------------------------------------
 // CONFIG
 // ---------------------------------------------------------------------------
-const VAULT_PATH = process.env.VAULT_PATH
-  || path.join(process.env.HOME, 'vault');
+const VAULT_PATH = (function () {            // VAULT_PATH, else the dev convention when it exists, else the old default
+  try { return Paths.vaultRoot(process.env, QUARRY_HOME); } catch (e) { return path.join(process.env.HOME, 'vault'); }
+})();
 
 const DB_PATH = process.env.QUARRY_DB
   || path.join(QUARRY_HOME, 'vault.db');
@@ -84,11 +86,20 @@ function openDb() {
   return openDatabase(DB_PATH);
 }
 
+// A database made before M015 stores absolute paths (filepath). Every query below uses rel_path, so say so plainly instead of failing inside SQL.
+function assertKeyedSchema(db) {
+  var cols = db.prepare('PRAGMA table_info(vault_notes)').all().map(function(c) { return c.name; });
+  if (cols.length && cols.indexOf('rel_path') < 0) {
+    log('error', 'This database still stores absolute note paths (filepath). Run the migration first: node code/migrate.js --run (Admin: Database migrations). Nothing was changed.', {});
+    process.exit(3);
+  }
+}
+
 function initSchema(db) {
   db.exec([
     "CREATE TABLE IF NOT EXISTS vault_notes (",
     "  id              INTEGER PRIMARY KEY,",
-    "  filepath        TEXT    UNIQUE NOT NULL,",
+    "  rel_path        TEXT    UNIQUE NOT NULL,",
     "  title           TEXT,",
     "  created         TEXT,",
     "  source_url      TEXT,",
@@ -374,9 +385,11 @@ function inferOrigin(rawContent) {
 // FILE PARSER
 // ---------------------------------------------------------------------------
 function parseFile(filepath) {
-  var rawContent;
+  var rawContent, key;
+  try { key = Paths.toKey(filepath, VAULT_PATH); }
+  catch (e) { log('error', 'Cannot key file (skipped)', { file: filepath, err: e.message }); return null; }
   try { rawContent = fs.readFileSync(filepath, 'utf8'); }
-  catch (e) { log('error', 'Cannot read file', { filepath: filepath, err: e.message }); return null; }
+  catch (e) { log('error', 'Cannot read file', { rel_path: key, err: e.message }); return null; }
 
   var stat = fs.statSync(filepath);
   var parsed = parseFrontmatter(rawContent);
@@ -388,8 +401,8 @@ function parseFile(filepath) {
   var normalisedTags = normaliseTags(rawTags);
 
   return {
-    filepath:        filepath,
-    title:           extractTitle(fm, body, filepath),
+    rel_path:        key,
+    title:           extractTitle(fm, body, key),
     created:         extractCreated(fm, rawContent),
     source_url:      extractSourceUrl(fm, rawContent),
     author:          (fm && fm.author) ? fm.author.trim() : null,
@@ -397,7 +410,7 @@ function parseFile(filepath) {
     first_paragraph: extractFirstParagraph(body),
     content_type:    inferContentType(fm, body, rawContent),
     origin:          inferOrigin(rawContent),
-    folder_hint:     inferFolderHint(filepath),
+    folder_hint:     inferFolderHint('/' + key),   // leading slash: the year rule looks for /2026/ and must not see the machine's own folders
     has_frontmatter: hasFM ? 1 : 0,
     has_tags:        normalisedTags.length > 0 ? 1 : 0,
     file_mtime:      stat.mtime.toISOString(),
@@ -413,14 +426,14 @@ function upsertNote(db, r) {
   var now = new Date().toISOString();
   db.prepare([
     "INSERT INTO vault_notes",
-    "  (filepath, title, created, source_url, author,",
+    "  (rel_path, title, created, source_url, author,",
     "   word_count, first_paragraph, content_type, origin,",
     "   has_frontmatter, has_tags, folder_hint, file_mtime, indexed_at)",
     "VALUES",
-    "  (@filepath, @title, @created, @source_url, @author,",
+    "  (@rel_path, @title, @created, @source_url, @author,",
     "   @word_count, @first_paragraph, @content_type, @origin,",
     "   @has_frontmatter, @has_tags, @folder_hint, @file_mtime, @indexed_at)",
-    "ON CONFLICT(filepath) DO UPDATE SET",
+    "ON CONFLICT(rel_path) DO UPDATE SET",
     "  title           = excluded.title,",
     "  created         = excluded.created,",
     "  source_url      = excluded.source_url,",
@@ -435,7 +448,7 @@ function upsertNote(db, r) {
     "  file_mtime      = excluded.file_mtime,",
     "  indexed_at      = excluded.indexed_at"
   ].join('\n')).run({
-    filepath:        r.filepath,
+    rel_path:        r.rel_path,
     title:           r.title,
     created:         r.created,
     source_url:      r.source_url,
@@ -451,7 +464,7 @@ function upsertNote(db, r) {
     indexed_at:      r.indexed_at || now
   });
 
-  return db.prepare('SELECT id FROM vault_notes WHERE filepath = ?').get(r.filepath).id;
+  return db.prepare('SELECT id FROM vault_notes WHERE rel_path = ?').get(r.rel_path).id;
 }
 
 // A note's tags come from two places: its frontmatter (the file on disk), and Quarry itself -
@@ -530,15 +543,15 @@ function snapshotOnce(db, reason) {
 // rarely removes more than a few notes at once, while a broken walk or a half-finished git
 // operation looks like "thousands of notes deleted".
 function pruneOrphans(db, currentPaths) {
-  var allDbNotes = db.prepare('SELECT id, filepath, title FROM vault_notes').all();
-  var orphans = allDbNotes.filter(function(n) { return !currentPaths[n.filepath]; });
+  var allDbNotes = db.prepare('SELECT id, rel_path, title FROM vault_notes').all();
+  var orphans = allDbNotes.filter(function(n) { return !currentPaths[n.rel_path]; });
   if (orphans.length === 0) { log('info', 'No orphaned notes found'); return; }
 
   var limit = Math.max(10, Math.ceil(allDbNotes.length * 0.02));
   if (orphans.length > limit && !FORCE_PRUNE) {
     log('error', 'Refusing to prune: far more notes missing than a normal clean-up (nothing was removed)', {
       missing: orphans.length, ofTotal: allDbNotes.length, limit: limit,
-      examples: orphans.slice(0, 5).map(function(o) { return o.filepath; }),
+      examples: orphans.slice(0, 5).map(function(o) { return o.rel_path; }),
       fix: 'check VAULT_PATH and the vault checkout; if the deletions are real, run indexer.js --diff --force-prune'
     });
     return;
@@ -562,7 +575,7 @@ function pruneOrphans(db, currentPaths) {
       var lost = { facts: q.facts.get(o.id).n, approvedTags: q.approved.get(o.id).n };
       del.forEach(function(s) { s.run(o.id); });
       delNote.run(o.id);
-      log('info', 'Pruned', { title: o.title, filepath: o.filepath, discarded: lost });
+      log('info', 'Pruned', { title: o.title, rel_path: o.rel_path, discarded: lost });
     });
     db.exec('COMMIT');
   } catch (e) {
@@ -577,14 +590,29 @@ function rebuildFts(db) {
 }
 
 // ---------------------------------------------------------------------------
+// PORTABILITY REPORT: names that are fine on this machine but would clash or fail elsewhere (macOS and Windows ignore letter case; Windows refuses ? : * and a
+// trailing dot; very long names pass 260 characters once the vault folder is added). Reported once per run, never a reason to stop.
+// ---------------------------------------------------------------------------
+function reportPortability(files) {
+  var keys = [], unkeyable = [];
+  files.forEach(function(f) { try { keys.push(Paths.toKey(f, VAULT_PATH)); } catch (e) { unkeyable.push(f); } });
+  if (unkeyable.length) log('warn', unkeyable.length + ' file name(s) cannot be keyed (a backslash or control character) and will be skipped', { examples: unkeyable.slice(0, 3) });
+  var clashes = Paths.findCollisions(keys);
+  if (clashes.length) log('warn', clashes.length + ' group(s) of notes differ only by letter case or Unicode form (a clash on macOS and Windows)', { examples: clashes.slice(0, 3) });
+  var weak = keys.filter(function(k) { return Paths.portabilityIssues(k).length > 0; });
+  if (weak.length) log('warn', weak.length + ' note name(s) would not work on Windows', { examples: weak.slice(0, 3).map(function(k) { return k + ' (' + Paths.portabilityIssues(k).join('; ') + ')'; }) });
+}
+
+// ---------------------------------------------------------------------------
 // DIFF MODE
 // ---------------------------------------------------------------------------
 function getModifiedFiles(db, allFiles) {
-  var getStmt = db.prepare('SELECT file_mtime FROM vault_notes WHERE filepath = ?');
+  var getStmt = db.prepare('SELECT file_mtime FROM vault_notes WHERE rel_path = ?');
   return allFiles.filter(function(filepath) {
-    var mtime;
+    var mtime, key;
+    try { key = Paths.toKey(filepath, VAULT_PATH); } catch (_) { return true; }   // unkeyable: let parseFile report it
     try { mtime = fs.statSync(filepath).mtime.toISOString(); } catch (_) { return true; }
-    var row = getStmt.get(filepath);
+    var row = getStmt.get(key);
     if (!row) return true;
     return row.file_mtime !== mtime;
   });
@@ -639,6 +667,7 @@ async function main() {
   log('info', 'QUARRY indexer starting', { mode: SINGLE_FILE ? 'single' : args.join(' ') });
 
   var db = openDb();
+  assertKeyedSchema(db);
   if (!MODE_DRY) initSchema(db);
 
   if (MODE_STATS) { printStats(db); db.close(); return; }
@@ -651,6 +680,7 @@ async function main() {
     log('info', 'Walking vault', { vaultPath: VAULT_PATH });
     files = walkVault(VAULT_PATH);
     log('info', 'Vault walk complete', { totalFiles: files.length });
+    reportPortability(files);
     if (files.length === 0) {
       log('error', 'Vault contains no .md files - refusing to index (nothing was changed)', { vaultPath: VAULT_PATH });
       db.close(); process.exit(3);
@@ -663,7 +693,7 @@ async function main() {
       // Prune orphaned rows: notes in the DB whose files no longer
       // exist on disk (removed/moved out of the vault on GitHub).
       var currentPaths = {};
-      walkVault(VAULT_PATH).forEach(function(p) { currentPaths[p] = true; });
+      walkVault(VAULT_PATH).forEach(function(p) { try { currentPaths[Paths.toKey(p, VAULT_PATH)] = true; } catch (e) { /* an unkeyable name is not a note Muse knows */ } });
       pruneOrphans(db, currentPaths);
     }
   }
@@ -687,7 +717,7 @@ async function main() {
           if (writeNoteTags(db, noteId, b[k].tags)) keptQuarryTags++;
           processed++;
         } catch (e) {
-          log('error', 'Failed to write record', { filepath: b[k].filepath, err: e.message });
+          log('error', 'Failed to write record', { rel_path: b[k].rel_path, err: e.message });
           errors++;
         }
       }
@@ -712,7 +742,7 @@ async function main() {
         tag_count:    record.tags.length,
         tags:         record.tags.map(function(t) { return t.tag_full; }),
         word_count:   record.word_count,
-        filepath:     record.filepath
+        rel_path:     record.rel_path
       }, null, 2));
       processed++;
       continue;

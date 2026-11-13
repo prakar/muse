@@ -48,16 +48,16 @@ test('summarise compares head with tail', () => {
 
 function fixture() {
   const db = new DatabaseSync(':memory:');
-  db.exec(`CREATE TABLE vault_notes (id INTEGER PRIMARY KEY, filepath TEXT, title TEXT, source_url TEXT, word_count INT, quarry_exclude INT DEFAULT 0);
+  db.exec(`CREATE TABLE vault_notes (id INTEGER PRIMARY KEY, rel_path TEXT, title TEXT, source_url TEXT, word_count INT, quarry_exclude INT DEFAULT 0);
     CREATE TABLE burrs (id INTEGER PRIMARY KEY, note_id INT, claim TEXT, quote TEXT, kind TEXT, hooks_json TEXT, prompt_version TEXT);`);
-  db.prepare('INSERT INTO vault_notes (id,filepath,title,word_count) VALUES (?,?,?,?)').run(1, '/v/big.md', 'Big note', 9000);
-  db.prepare('INSERT INTO vault_notes (id,filepath,title,word_count) VALUES (?,?,?,?)').run(2, '/v/small.md', 'Small note', 10);
-  db.prepare('INSERT INTO vault_notes (id,filepath,title,word_count,quarry_exclude) VALUES (?,?,?,?,1)').run(3, '/v/private.md', 'Private', 99999);
+  db.prepare('INSERT INTO vault_notes (id,rel_path,title,word_count) VALUES (?,?,?,?)').run(1, 'big.md', 'Big note', 9000);
+  db.prepare('INSERT INTO vault_notes (id,rel_path,title,word_count) VALUES (?,?,?,?)').run(2, 'small.md', 'Small note', 10);
+  db.prepare('INSERT INTO vault_notes (id,rel_path,title,word_count,quarry_exclude) VALUES (?,?,?,?,1)').run(3, 'private.md', 'Private', 99999);
   db.prepare('INSERT INTO burrs (id,note_id,claim,quote,kind,hooks_json,prompt_version) VALUES (1,99,?,?,?,?,?)').run('Quokkas are marsupials.', 'x', 'fact', JSON.stringify([{ type: 'entity', value: 'Quokkas' }]), 'nug-v6');
   return db;
 }
 const files = { '/v/big.md': '---\ntitle: x\n---\n' + [A, Bp, C].join('\n\n'), '/v/small.md': 'Tiny note body here today.' };
-const opts = o => Object.assign({ db: 'x', version: 'nug-v6', top: 1, notes: null, window: 70, provider: 'gemini', maxUsd: 1, parallel: 2, limitWindows: 0, remap: '', dryRun: false }, o);
+const opts = o => Object.assign({ db: 'x', version: 'nug-v6', top: 1, notes: null, window: 70, provider: 'gemini', maxUsd: 1, parallel: 2, limitWindows: 0, root: '/v', dryRun: false }, o);
 
 test('pickTop takes the largest non-private notes, or the ones asked for', () => {
   const db = fixture();

@@ -18,6 +18,7 @@ const path = require('path');
 const QUARRY_HOME = process.env.QUARRY_HOME || path.join(process.env.HOME, 'dev', 'quarry');
 const { DatabaseSync } = require('node:sqlite');
 const { openDatabase } = require('./lib/db');   // sets a busy timeout - see lib/db.js
+const Paths = require('./lib/note_path');   // notes are stored by key (rel_path); the file is the key joined to the vault root
 
 const DB_PATH = process.env.QUARRY_DB || path.join(QUARRY_HOME, 'vault.db');
 
@@ -102,14 +103,15 @@ function main() {
 
   let query, params;
   if (ONLY_ID !== null) {
-    query  = 'SELECT id, title, filepath FROM vault_notes WHERE id = ?';
+    query  = 'SELECT id, title, rel_path FROM vault_notes WHERE id = ?';
     params = [ONLY_ID];
   } else {
     const lim = LIMIT === Infinity ? 999999 : LIMIT;
-    query  = "SELECT id, title, filepath FROM vault_notes WHERE content_type != 'attachment' ORDER BY id LIMIT ?";
+    query  = "SELECT id, title, rel_path FROM vault_notes WHERE content_type != 'attachment' ORDER BY id LIMIT ?";
     params = [lim];
   }
 
+  const root = Paths.vaultRoot(process.env, QUARRY_HOME);
   const notes = db.prepare(query).all(...params);
   console.log('Notes to scan:', notes.length, DRY_RUN ? '(dry-run)' : '');
 
@@ -118,9 +120,10 @@ function main() {
   const stmt = db.prepare('UPDATE vault_notes SET video_links = ? WHERE id = ?');
 
   for (const note of notes) {
-    if (!fs.existsSync(note.filepath)) { noFile++; continue; }
+    const file = Paths.locate(note.rel_path, root);
+    if (!file) { noFile++; continue; }
 
-    const text  = fs.readFileSync(note.filepath, 'utf8');
+    const text  = fs.readFileSync(file, 'utf8');
     const links = extractVideoLinks(text);
 
     if (links.length === 0) continue;

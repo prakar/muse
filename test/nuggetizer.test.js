@@ -99,44 +99,44 @@ test('realWordCount ignores embeds and urls', () => {
 
 function fixture() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nug-'));
-  const f = (n, t) => { const p = path.join(dir, n + '.md'); fs.writeFileSync(p, t); return p; };
+  const f = (n, t) => { fs.writeFileSync(path.join(dir, n + '.md'), t); return n + '.md'; };   // the stored key: the path inside the vault
   const db = new DatabaseSync(':memory:');
   db.exec(B.SCHEMA_SQL);
   db.exec('CREATE TABLE api_budget (id INTEGER PRIMARY KEY, provider TEXT, component TEXT, note_id INTEGER, queue_id INTEGER, tokens_in INTEGER, tokens_out INTEGER, cost_usd REAL, called_at TEXT)');
-  db.exec('CREATE TABLE vault_notes (id INTEGER PRIMARY KEY, filepath TEXT, title TEXT, source_url TEXT, word_count INTEGER, quarry_exclude INTEGER)');
-  const add = db.prepare('INSERT INTO vault_notes (id,filepath,title,source_url,word_count,quarry_exclude) VALUES (?,?,?,?,?,0)');
+  db.exec('CREATE TABLE vault_notes (id INTEGER PRIMARY KEY, rel_path TEXT, title TEXT, source_url TEXT, word_count INTEGER, quarry_exclude INTEGER)');
+  const add = db.prepare('INSERT INTO vault_notes (id,rel_path,title,source_url,word_count,quarry_exclude) VALUES (?,?,?,?,?,0)');
   add.run(1, f('q', '---\ntags: x\n---\nQuokkas on Rottnest Island became a selfie craze in 2015.'), 'Quokka selfie craze', null, 11);
   add.run(2, f('e', '![[pic.png]]'), 'pic', null, 1);
-  return db;
+  return { db, dir };
 }
 const fake = async () => ({ text: '{"burrs":[{"claim":"Quokkas on Rottnest Island became a selfie craze in 2015.","quote":"selfie craze in 2015","kind":"fact","hooks":[{"type":"time","value":"2015"}],"loop":""}],"reason":""}',
   model: 'fake-1', provider: 'gemini', tokensIn: 900, tokensOut: 120 });
 
 test('end to end: burrs stored, empty note flagged, spend recorded, rerun is a no-op', async () => {
-  const db = fixture();
+  const { db, dir } = fixture();
   const args = Nug.parseArgs([]);
-  const t = await Nug.run(args, { db, callLLM: fake });
+  const t = await Nug.run(args, { db, root: dir, callLLM: fake });
   assert.strictEqual(t.ok, 1); assert.strictEqual(t.skipped_empty, 1);
   assert.strictEqual(db.prepare('SELECT COUNT(*) c FROM burrs').get().c, 1);
   assert.ok(db.prepare('SELECT SUM(cost_usd) s FROM api_budget').get().s > 0);
   assert.strictEqual(db.prepare("SELECT disposition d FROM note_disposition WHERE note_id=2").get().d, 'review');
-  const again = await Nug.run(args, { db, callLLM: fake });
+  const again = await Nug.run(args, { db, root: dir, callLLM: fake });
   assert.strictEqual(again.candidates, 0);
 });
 test('--redo re-verifies finished notes from cache without calling the LLM', async () => {
-  const db = fixture();
-  await Nug.run(Nug.parseArgs([]), { db, callLLM: fake });
+  const { db, dir } = fixture();
+  await Nug.run(Nug.parseArgs([]), { db, root: dir, callLLM: fake });
   let calls = 0;
-  const t2 = await Nug.run(Nug.parseArgs(['--redo']), { db, callLLM: async () => { calls++; return fake(); } });
+  const t2 = await Nug.run(Nug.parseArgs(['--redo']), { db, root: dir, callLLM: async () => { calls++; return fake(); } });
   assert.strictEqual(calls, 0);
   assert.strictEqual(t2.ok, 1);
   assert.strictEqual(db.prepare('SELECT COUNT(*) c FROM burrs').get().c, 1);
 });
 test('budget ceiling stops the run', async () => {
-  const db = fixture();
+  const { db, dir } = fixture();
   const a = Nug.parseArgs(['--ceiling', '0.0000001']);
   db.prepare("INSERT INTO api_budget (provider,component,cost_usd,called_at) VALUES ('gemini','x',1,'t')").run();
-  await Nug.run(a, { db, callLLM: fake });
+  await Nug.run(a, { db, root: dir, callLLM: fake });
   assert.strictEqual(db.prepare('SELECT COUNT(*) c FROM burrs').get().c, 0);
   assert.strictEqual(process.exitCode, 1); process.exitCode = 0;
 });

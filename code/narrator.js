@@ -33,6 +33,7 @@ const QUARRY_HOME = process.env.QUARRY_HOME || path.join(process.env.HOME, 'dev'
 const { DatabaseSync } = require('node:sqlite');
 
 const llm = require('./lib/llm');   // all LLM calls: see lib/llm.js
+const Paths = require('./lib/note_path');   // notes are stored by key (rel_path); the file is the key joined to the vault root
 
 // ---------------------------------------------------------------------------
 // CONFIG
@@ -405,7 +406,7 @@ This is valuable feedback for the curator.`;
 function fetchClusterNotes(db, noteIds) {
   return noteIds.map(function(id) {
     const note = db.prepare(
-      'SELECT id, filepath, title, first_paragraph, source_url, word_count, content_type FROM vault_notes WHERE id = ?'
+      'SELECT id, rel_path, title, first_paragraph, source_url, word_count, content_type FROM vault_notes WHERE id = ?'
     ).get(id);
     if (!note) return null;
 
@@ -413,7 +414,7 @@ function fetchClusterNotes(db, noteIds) {
       'SELECT tag_full FROM note_tags WHERE note_id = ? ORDER BY is_hierarchical DESC'
     ).all(id).map(function(r) { return r.tag_full; });
 
-    const body = readNoteBody(note.filepath);
+    const body = readNoteBody(Paths.toAbs(note.rel_path, VAULT_PATH));
 
     const classifications = db.prepare(
       "SELECT bucket, claim FROM note_classifications WHERE note_id = ? AND bucket IN ('verified', 'evergreen', 'trivia') ORDER BY switch_level DESC, bucket"

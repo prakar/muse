@@ -475,13 +475,13 @@ function applyNF() {
 // attributes - paths contain commas, parentheses and quotes, and this codebase already
 // paid for putting arbitrary text into attributes once. Rows carry only the numeric id.
 // ---------------------------------------------------------------------------
-var _singleNote = null;       // { id, title, filepath, rel } once a note is picked
+var _singleNote = null;       // { id, title, rel } once a note is picked (rel = the note's path inside the vault)
 var _findResults = {};        // id -> row from /api/notes/find
 var _findTimer = null;
 var FILE_CMDS = ['sw-vocab', 'sw3', 'sw3-retag'];
 
 function withSingleNote(body) {
-  if (_singleNote && FILE_CMDS.indexOf(body.cmd) !== -1) body.file = _singleNote.filepath;
+  if (_singleNote && FILE_CMDS.indexOf(body.cmd) !== -1) body.file = _singleNote.rel;
   return body;
 }
 

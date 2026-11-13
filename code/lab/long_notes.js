@@ -7,9 +7,9 @@
 //   node code/lab/long_notes.js --db eval.db --dry-run --top 10                  list the notes and estimate the cost
 //   node code/lab/long_notes.js --db eval.db --top 10 --max-usd 1                run it (resumable: responses are cached)
 //   node code/lab/long_notes.js --db eval.db --notes 6145,4414 --limit-windows 6  a quick trial
-//   --remap /Users/me/vault=/mnt/vault   rewrite the start of every note path (dry runs on another machine)
+//   --root /path/to/knowledge   the vault folder to read note files from (default: VAULT_PATH). Notes are stored by their path inside the vault, so any copy of the vault works.
 const fs = require('node:fs'), path = require('node:path');
-const B = require('../lib/burrs'), Bud = require('../lib/budget'), BR = require('../lib/bristles'), D = require('./data');
+const B = require('../lib/burrs'), Bud = require('../lib/budget'), BR = require('../lib/bristles'), D = require('./data'), Paths = require('../lib/note_path');
 
 const OUT = path.join(__dirname, 'out');
 const EST_PROMPT_TOKENS = 700;     // fixed instructions and example (same figure as nuggetizer.js)
@@ -39,8 +39,8 @@ function windowsOf(rawBody, maxChars) {
 }
 
 function pickTop(db, n, ids) {
-  if (ids && ids.length) return ids.map(function (id) { return db.prepare('SELECT id, filepath, title, source_url, word_count FROM vault_notes WHERE id=? AND COALESCE(quarry_exclude,0)=0').get(id); }).filter(Boolean);
-  return db.prepare('SELECT id, filepath, title, source_url, word_count FROM vault_notes WHERE COALESCE(quarry_exclude,0)=0 ORDER BY word_count DESC, id ASC LIMIT ?').all(n);
+  if (ids && ids.length) return ids.map(function (id) { return db.prepare('SELECT id, rel_path, title, source_url, word_count FROM vault_notes WHERE id=? AND COALESCE(quarry_exclude,0)=0').get(id); }).filter(Boolean);
+  return db.prepare('SELECT id, rel_path, title, source_url, word_count FROM vault_notes WHERE COALESCE(quarry_exclude,0)=0 ORDER BY word_count DESC, id ASC LIMIT ?').all(n);
 }
 
 // folded handle key -> Set of note ids, from the stored burrs (years skipped: they are slices, not handles)
@@ -100,9 +100,9 @@ async function run(o, deps) {
   const db = deps.db || D.openCopy(o.db);
   const readFile = deps.readFile || function (p) { return fs.readFileSync(p, 'utf8'); };
   const outRoot = deps.outDir || OUT;
-  const remap = function (p) { if (!o.remap) return p; const i = o.remap.indexOf('='); const from = o.remap.slice(0, i), to = o.remap.slice(i + 1); return p.startsWith(from) ? to + p.slice(from.length) : p; };
+  const root = o.root || Paths.vaultRoot(process.env, process.env.QUARRY_HOME || path.join(__dirname, '..', '..'));
   const notes = pickTop(db, o.top, o.notes).map(function (n) {
-    const raw = readFile(remap(n.filepath)), body = B.splitFrontmatter(raw).body;
+    const raw = readFile(Paths.toAbs(n.rel_path, root)), body = B.splitFrontmatter(raw).body;
     let ws = windowsOf(body, o.window).map(function (w) { return { raw: w, cleaned: B.cleanBody(w) }; }).filter(function (w) { return B.realWordCount(w.cleaned) >= 3; });
     if (o.limitWindows) ws = ws.slice(0, o.limitWindows);
     return Object.assign({}, n, { windows: ws.map(function (w) { return w.raw; }), cleaned: ws.map(function (w) { return w.cleaned; }) });
@@ -160,12 +160,12 @@ function parseArgs(argv) {
   const a = argv, arg = function (n, d) { const i = a.indexOf('--' + n); return i >= 0 ? a[i + 1] : d; };
   return { db: arg('db'), version: arg('version', D.DEFAULT_VERSION), top: +arg('top', 10), notes: arg('notes') ? arg('notes').split(',').map(Number) : null,
     window: +arg('window', 5500), provider: arg('provider', 'gemini'), maxUsd: +arg('max-usd', 1), parallel: +arg('parallel', 4),
-    limitWindows: +arg('limit-windows', 0), remap: arg('remap', ''), dryRun: a.includes('--dry-run') };
+    limitWindows: +arg('limit-windows', 0), root: arg('root', ''), dryRun: a.includes('--dry-run') };
 }
 
 module.exports = { windowsOf, pickTop, handleIndex, joins, estimate, summarise, run, parseArgs };
 if (require.main === module) {
   const o = parseArgs(process.argv.slice(2));
-  if (!o.db) { console.error('Usage: node code/lab/long_notes.js --db eval.db [--dry-run] [--top 10] [--notes 1,2] [--max-usd 1] [--parallel 4] [--limit-windows N] [--remap FROM=TO]'); process.exit(1); }
+  if (!o.db) { console.error('Usage: node code/lab/long_notes.js --db eval.db [--dry-run] [--top 10] [--notes 1,2] [--max-usd 1] [--parallel 4] [--limit-windows N] [--root DIR]'); process.exit(1); }
   run(o).catch(function (e) { console.error(e); process.exit(1); });
 }

@@ -37,6 +37,10 @@ const { openDatabase } = require('./lib/db');   // sets a busy timeout - see lib
 const QUARRY_HOME = process.env.QUARRY_HOME || path.join(process.env.HOME, 'dev', 'quarry');
 const DB_PATH      = process.env.QUARRY_DB   || path.join(QUARRY_HOME, 'vault.db');
 const VAULT_PATH   = process.env.VAULT_PATH  || path.join(process.env.HOME, 'dev', 'md-vaults', 'knowledge');
+// Notes are stored by their key (rel_path); the file is the key joined to the vault root. The root is NEVER guessed: unset VAULT_PATH (and no dev copy) stops here,
+// so a write can not land in a vault that was not chosen. See lib/note_path.js.
+const Paths = require('./lib/note_path');
+const fileOf = note => Paths.toAbs(note.rel_path, Paths.vaultRoot(process.env, QUARRY_HOME));
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -287,15 +291,15 @@ function main() {
 
   const db = openDb();
   const notes = db.prepare(
-    "SELECT id, filepath, title FROM vault_notes WHERE content_type != 'attachment' ORDER BY id LIMIT ?"
+    "SELECT id, rel_path, title FROM vault_notes WHERE content_type != 'attachment' ORDER BY id LIMIT ?"
   ).all(LIMIT === Infinity ? 999999 : LIMIT);
 
   let stats = { A_standard:0, A_unclosed:0, B_pseudo:0, B_lone_dash_no_tags:0, C_bare_inline:0, D_no_tags_found:0, errors:0 };
 
   for (const note of notes) {
     try {
-      if (!fs.existsSync(note.filepath)) { stats.errors++; continue; }
-      const raw = fs.readFileSync(note.filepath, 'utf8');
+      if (!fs.existsSync(fileOf(note))) { stats.errors++; continue; }
+      const raw = fs.readFileSync(fileOf(note), 'utf8');
       const variant = classifyVariant(raw);
       stats[variant] = (stats[variant] || 0) + 1;
 
@@ -313,8 +317,8 @@ function main() {
         continue;
       }
 
-      fs.writeFileSync(note.filepath + '.bak', raw);
-      fs.writeFileSync(note.filepath, normalised, 'utf8');
+      fs.writeFileSync(fileOf(note) + '.bak', raw);
+      fs.writeFileSync(fileOf(note), normalised, 'utf8');
       log('info', 'Normalised', { title: note.title.slice(0,60), variant });
     } catch(e) {
       stats.errors++;
