@@ -5,7 +5,7 @@ const Cat = require('../code/lib/ops_catalogue'), I = require('../code/lib/ops_i
 
 function fixture() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'muse-ops-')), dbPath = path.join(home, 'vault.db'), db = new DatabaseSync(dbPath);
-  db.exec(`CREATE TABLE vault_notes(id INTEGER PRIMARY KEY, filepath TEXT, title TEXT, source_url TEXT, word_count INTEGER, quarry_exclude INTEGER); CREATE TABLE nuggetize_status(note_id INTEGER, prompt_version TEXT, status TEXT); CREATE TABLE burrs(id INTEGER PRIMARY KEY, prompt_version TEXT);
+  db.exec(`CREATE TABLE vault_notes(id INTEGER PRIMARY KEY, rel_path TEXT, title TEXT, source_url TEXT, word_count INTEGER, quarry_exclude INTEGER); CREATE TABLE nuggetize_status(note_id INTEGER, prompt_version TEXT, status TEXT); CREATE TABLE burrs(id INTEGER PRIMARY KEY, prompt_version TEXT);
     CREATE TABLE schema_migrations(id INTEGER); CREATE TABLE wordplay_edges(id INTEGER); CREATE TABLE api_budget(cost_usd REAL);
     INSERT INTO vault_notes VALUES (1,'a','A',NULL,50,0),(2,'b','B',NULL,60,0),(3,'c','C',NULL,70,0),(4,'d','D',NULL,500,0),(5,'e','E',NULL,80,1); INSERT INTO nuggetize_status VALUES (1,'nug-v6','ok'),(2,'nug-v6','empty'); INSERT INTO schema_migrations VALUES (14);`);
   db.close(); const src = path.join(home, 'real'), dst = path.join(home, 'copy'); fs.mkdirSync(src); fs.mkdirSync(dst);
@@ -65,6 +65,9 @@ test('ops plan: the vault copy is never the real vault, never a git folder', () 
   assert.match(err(() => Cat.plan('vault-sync', {}, { ctx: { ...c, env: { ...f.env, VAULT_PATH: f.src } } })).message, /real vault/);
   fs.mkdirSync(path.join(f.dst, '.git')); assert.match(err(() => Cat.plan('vault-sync', {}, { ctx: c })).message, /\.git/);
   fs.rmdirSync(path.join(f.dst, '.git')); assert.match(err(() => Cat.plan('vault-sync', {}, { ctx: { ...c, env: { ...f.env, VAULT_PATH: '' } } })).message, /VAULT_PATH is not set/);
+  { const f2 = fixture(), c2 = ctxOf(f2); fs.rmSync(f2.dst, { recursive: true, force: true });
+    const real = Cat.plan('vault-sync', {}, { go: true, ctx: c2 }).steps; assert.strictEqual(real[0].cmd, 'mkdir'); assert.strictEqual(real[1].cmd, 'rsync');
+    assert.strictEqual(Cat.plan('vault-sync', {}, { ctx: c2 }).steps[0].cmd, 'rsync', 'a dry run makes nothing'); }
   const dry = Cat.plan('vault-sync', {}, { ctx: c }).steps[0]; assert.ok(dry.args.includes('-n') && dry.args.includes('--exclude') && dry.args.includes('.git'));
 });
 
