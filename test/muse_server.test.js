@@ -16,6 +16,10 @@ test('serves the interface with a strict content policy, and keeps files inside 
   assert.match(home.headers['content-security-policy'], /script-src|default-src 'self'/); assert.ok(!/unsafe-inline/.test(home.headers['content-security-policy']));
   assert.match((await call('/js/paging.mjs')).headers['content-type'], /text\/javascript/);
   assert.strictEqual((await call('/css/tokens.css')).status, 200);
+  for (const [f, type] of [['/favicon.svg', /image\/svg\+xml/], ['/favicon.ico', /image\/x-icon/], ['/apple-touch-icon.png', /image\/png/]]) {
+    const r = await call(f); assert.strictEqual(r.status, 200, f); assert.match(r.headers['content-type'], type, f);
+  }
+  assert.match(home.body, /rel="icon" href="\/favicon\.svg"/);
   for (const p of ['/../lib/muse_server.js', '/%2e%2e/lib/muse_server.js', '/..%2f..%2fcode/lib/muse_server.js', '/js/..%2f..%2f..%2flib/muse_server.js']) {
     const r = await call(p); assert.notStrictEqual(r.status, 200, p); assert.ok(!r.body.includes('createServer'), p + ' must not leak server source');
   }
