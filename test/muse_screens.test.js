@@ -51,7 +51,7 @@ test('screens: Admin shows the status read-only, and In focus with nothing chose
     money: { spent: 7.99, ceiling: 10, lastCall: '2026-10-27T13:53:00Z', lastRun: { kind: 'nuggetize', started_at: '2026-10-27T12:16:00Z', finished_at: null } },
     files: [{ file: 'muse-marks.jsonl', what: 'Your stars.', bytes: 2048, at: '2026-10-30T10:00:00Z' }, { file: 'muse-events.jsonl', what: 'Usage.', bytes: null, at: null }], leftovers: [{ name: 'vault.db-journal.stale-1', bytes: 12824, at: '2026-10-24T12:59:00Z' }],
     server: { version: 'nug-v6', port: 3005, pid: 1, node: 'v24', upSeconds: 4000, search: { meaning: { ready: true } } } };
-  const a = await adminView({ api: { ...stubApi([]), adminStatus: async () => status, adminDrift: async () => ({ ok: true, problems: [], warnings: [] }), adminOps: async () => ({ areas: [{ id: 'status', title: 'Status and checks' }, { id: 'ingest', title: 'Bring the vault in' }, { id: 'prep', title: 'Pre-processing' }], pending: 12, backups: ['vault.db.bak-1'], tasks: [
+  const a = await adminView({ api: { ...stubApi([]), adminStatus: async () => status, adminDrift: async () => ({ ok: true, problems: [], warnings: [] }), adminOps: async () => ({ flows: require('../code/lib/ops_catalogue').FLOWS, onPage: ['status', 'drift'], areas: [{ id: 'status', title: 'Status and checks' }, { id: 'ingest', title: 'Bring the vault in' }, { id: 'prep', title: 'Pre-processing' }], pending: 12, backups: ['vault.db.bak-1'], tasks: [
     { id: 'status', area: 'status', title: 'Counts and health', does: 'Counts.', effect: 'read-only', dry: false, params: [] },
     { id: 'index', area: 'ingest', title: 'Index the vault', does: 'Read the vault copy.', effect: 'writes DB', dry: true, backup: true, params: [{ name: 'mode', type: 'enum', values: ['diff', 'full'], default: 'diff', label: 'What to index' }] },
     { id: 'nuggetize', area: 'prep', title: 'Extract facts (paid)', does: 'Send notes.', effect: 'spends money', dry: true, needs: 'count', backup: true, params: [{ name: 'limit', type: 'int', min: 1, max: 5000, default: 20, label: 'How many' }] }] }), adminJobs: async () => ({ jobs: [] }) }, store }), at = text(a.node);
@@ -60,7 +60,7 @@ test('screens: Admin shows the status read-only, and In focus with nothing chose
   assert.ok(/56,559/.test(at) && /170\.\d MB|169\.\d MB/.test(at) && /\$7\.99/.test(at) && /80%/.test(at) && /missing/.test(at) && /Leftovers/.test(at) && /Run drift check/.test(at) && /Reads only|Writes the database/.test(at) && at.indexOf('Run drift check') < at.indexOf('Counts'), 'actions come before the reports');
   assert.ok(/6,929/.test(at) && /12 waiting/.test(at) && /Nothing has run yet/.test(at) && /Recent jobs/.test(at), 'the status strip and the output panel are on the page');
   const cls = c => D.all(a.node, e => String(e.className || '').split(' ').includes(c)).length;
-  assert.strictEqual(cls('statusbar'), 1); assert.strictEqual(cls('admin__output'), 1); assert.strictEqual(cls('col'), 2, 'Every day and Prepare the data; no empty columns');
+  assert.strictEqual(cls('statusbar'), 1); assert.strictEqual(cls('admin__output'), 1); assert.strictEqual(cls('flow__group'), 2, 'only groups with something in them are drawn: the routine (just its restart step here) and the parts, collapsed'); assert.ok(/Ongoing maintenance/.test(at) && /Initial setup/.test(at), 'both modes are offered');
   const bad = await adminView({ api: { adminStatus: async () => { throw new Error('nope'); } }, store }); assert.ok(/Could not read the status: nope/.test(text(bad.node)));
   const s = await stickView({ route: parse('#/stick'), api: stubApi([]), nav: {}, actions: {} }); assert.ok(/Nothing in focus yet/.test(text(s.node)) && D.all(s.node, e => e.tag === 'a' && e.attrs.href === '#/').length === 1);
 });
@@ -82,10 +82,29 @@ test('screens: the word chips on a Home fact card are links to that word', async
   assert.ok(D.all(node, e => e.tag === 'a' && e.attrs.href === '#/set/jammu?from=home').length >= 1, 'a hook chip links to its set page');
 });
 
-test('screens: Admin columns group tasks by purpose, pin the everyday ones first, and never lose a task', async () => {
-  D.install(); const { planColumns } = await imp('views/admin_tasks.mjs');
-  const cat = { tasks: [{ id: 'index', area: 'ingest' }, { id: 'refresh', area: 'ingest' }, { id: 'backup', area: 'safety' }, { id: 'restore', area: 'safety' }, { id: 'dedupe', area: 'prep' }, { id: 'check', area: 'dev' }, { id: 'mystery', area: 'brand-new' }, { id: 'status', area: 'status' }] };
-  const by = Object.fromEntries(planColumns(cat).map(c => [c.id, c.tasks.map(t => t.id)]));
-  assert.deepStrictEqual(by, { daily: ['refresh', 'backup', 'index'], prep: ['dedupe'], care: ['restore', 'check'], more: ['mystery'] }, 'status is shown elsewhere; a task from an unknown area still appears, under More');
-  assert.deepStrictEqual(planColumns({ tasks: [] }), [], 'no tasks, no columns');
+test('screens: Admin draws the catalogue\'s own order in two modes, numbers the routine, and never loses a task', async () => {
+  D.install(); const { planFlow, suggestedMode } = await imp('views/admin_tasks.mjs'), Cat = require('../code/lib/ops_catalogue'), cat = Cat.catalogue();
+  const ongoing = planFlow(cat, 'ongoing'), by = Object.fromEntries(ongoing.groups.map(g => [g.id, g]));
+  assert.deepStrictEqual(ongoing.groups.map(g => g.id), ['routine', 'sometimes', 'update', 'care', 'pieces'], 'the routine first, the parts last');
+  assert.deepStrictEqual(by.routine.items.map(i => i.task ? i.task.id : i.note), ['refresh', 'refresh-process', 'restart']); assert.strictEqual(by.routine.ordered, true); assert.strictEqual(by.pieces.collapsed, true);
+  const shown = new Set(ongoing.groups.flatMap(g => g.items.filter(i => i.task).map(i => i.task.id)));
+  assert.deepStrictEqual(Cat.TASKS.map(t => t.id).filter(id => !shown.has(id) && !cat.onPage.includes(id)), [], 'every task not shown elsewhere is on the page');
+  const setup = planFlow(cat, 'setup'); assert.deepStrictEqual(setup.groups[0].items.map(i => i.task.id), ['migrate', 'vault-sync', 'index', 'private-scan', 'nuggetize', 'refresh-process', 'heuristics', 'backup']);
+  const grown = { ...cat, tasks: [...cat.tasks, { id: 'mystery', area: 'brand-new', title: 'Mystery', params: [] }] };
+  assert.deepStrictEqual(planFlow(grown, 'ongoing').groups.at(-1).items.map(i => i.task.id), ['mystery'], 'a task no flow places still appears, under More');
+  assert.strictEqual(planFlow({ tasks: [] }, 'ongoing'), null, 'no order from the server, no plan');
+  assert.strictEqual(suggestedMode({ setup: { suggested: 'setup' } }), 'setup'); assert.strictEqual(suggestedMode({}), 'ongoing');
+});
+
+test('screens: Admin opens on Initial setup for an install without notes and facts, numbers the steps, marks what is done, and shows when Muse is behind the database', async () => {
+  D.install(); const { adminView } = await imp('views/admin.mjs'), Cat = require('../code/lib/ops_catalogue');
+  const status = { counts: { notes: 3, version: 'nug-v6', byVersion: [], pending: 3, dupes: [], wordplay: [] }, database: { path: 'vault.db', bytes: 1000, at: null, migrations: { n: 18, last: 'M018' }, backups: [], backupBytes: 0 },
+    money: { spent: 0, ceiling: 10, lastCall: null, lastRun: null }, files: [], leftovers: [], server: { version: 'nug-v6', port: 3005, pid: 1, node: 'v24', upSeconds: 5, search: null },
+    freshness: { loadedAt: '2026-11-14T06:00:00.000Z', newFacts: 2, newWordplay: 0, newDuplicateFlags: 1, stale: true } };
+  const cat = { ...Cat.catalogue(), pending: 3, setup: { suggested: 'setup', done: { migrate: true, index: true } } };
+  const a = await adminView({ api: { ...stubApi([]), adminStatus: async () => status, adminDrift: async () => ({ ok: true, problems: [], warnings: [] }), adminOps: async () => cat, adminJobs: async () => ({ jobs: [] }) }, store: {} });
+  const at = text(a.node), steps = D.all(a.node, e => String(e.className || '').split(' ').includes('step__n')).map(e => e.textContent);
+  assert.ok(/Set up Muse/.test(at) && /Makes the database and every table in it/.test(at), 'it opened on Initial setup'); assert.deepStrictEqual(steps, ['1', '2', '3', '4', '5', '6', '7', '8'], 'the eight setup steps are numbered in order');
+  assert.strictEqual((at.match(/looks done/g) || []).length, 2, 'migrate and index are marked done');
+  assert.ok(/Muse is behind the database/.test(at) && /2 new facts, 1 duplicate flag/.test(at) && /muse restart/.test(at), 'the staleness notice says what changed and what to run');
 });

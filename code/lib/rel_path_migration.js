@@ -52,7 +52,7 @@ function plan(db, env) {
 function up(db, env, log) {
   log = log || (() => {});
   const p = plan(db, env);
-  if (p.state === 'keyed') { log('Already keyed by rel_path; nothing to do'); return p; }
+  if (p.state === 'keyed') { db.exec('CREATE TABLE IF NOT EXISTS vault_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)'); log('Already keyed by rel_path; nothing to rewrite'); return p; }
   if (p.problems.length) throw new Error('Cannot key the notes by relative path, nothing was changed: ' + p.problems.join(' | '));
   if (db.prepare('PRAGMA foreign_keys').get().foreign_keys) throw new Error('Foreign keys are ON: dropping the old table would cascade-delete every note\'s tags and facts. migrate.js must turn them off before BEGIN.');
   for (const w of p.warnings) log('  warning: ' + w);

@@ -12,7 +12,7 @@ import { Button } from './components/button.mjs';
 import { homeView } from './views/home.mjs';
 import { setView } from './views/set.mjs';
 import { basketView } from './views/basket.mjs';
-import { stickView } from './views/stick.mjs';
+import { stickView, stickHref } from './views/stick.mjs';
 import { adminView } from './views/admin.mjs';
 import { helpView } from './views/help.mjs';
 import { searchView, searchHref } from './views/search.mjs';
@@ -104,7 +104,7 @@ async function boot() {
   mount(shell, h('div', { class: 'main' }, top, content), drawerHost);
   document.body.prepend(SkipLink(content));
   document.body.append(shell, announcer.node);
-  keys = installKeys({ content, go, build, panelOpen: () => !!panel, route: () => route, toggleCollection: () => go(withQuery(route, { pile: route.query.pile ? '' : '1' })) });
+  keys = installKeys({ content, go, build, panelOpen: () => !!panel, route: () => route, toggleCollection: () => go(withQuery(route, { pile: route.query.pile ? '' : '1' })), random: async () => { try { const r = await api.stickRandom(); go(stickHref(r.burr.id)); } catch (e) { go(build('stick')); } } });
   window.addEventListener('hashchange', onHash);
   onHash();
 }

@@ -47,15 +47,20 @@ export async function adminView({ api }) {
       stat('Server', uptime(x.server.upSeconds), 'version ' + x.server.version)), meter(pp));
   };
   fillBar(s);
-  const refreshBar = () => api.adminStatus().then(fillBar).catch(() => {});
-  const { actions, output } = await tasksSection({ api, onJobEnd: refreshBar });
+  let tasks = null;   // the notice that Muse is behind the database is repainted with the numbers when a job ends
+  const refreshBar = () => api.adminStatus().then(x => { fillBar(x); if (tasks) tasks.setFreshness(x.freshness); }).catch(() => {});
+  tasks = await tasksSection({ api, onJobEnd: refreshBar, freshness: s.freshness });
+  const { actions, output } = tasks;
   const node = h('div', { class: 'admin' },
     h('div', { class: 'page-head' }, h('h1', { text: W.admin }), h('p', { text: 'What you can run from here comes first; the reports on the state of things are below. Every task checks first, shows what it would do, and asks before it spends money or deletes anything.' })),
+    s.integrity && s.integrity.degraded ? h('div', { class: 'fresh fresh--stale integrity', role: 'alert' }, h('p', { text: 'Muse is in repair mode: the database does not match this code, so only Admin is working.' }), ...s.integrity.findings.map(x => h('p', { text: (x.level === 'fatal' ? 'Problem: ' : 'Note: ') + x.msg + (x.fix ? '  Fix: ' + x.fix : '') }))) : s.integrity && s.integrity.findings.length ? h('p', { class: 'fresh', role: 'status', text: 'Integrity notes: ' + s.integrity.findings.map(x => x.msg).join(' ') }) : null,
+    sv.setupMode ? h('p', { class: 'fresh fresh--stale', role: 'status', text: 'Muse started with no database, so it is running on an empty one. Choose Initial setup below and run "Create or update the database", then restart Muse (run  muse restart) so it reads the real one.' }) : null,
     bar,
     h('div', { class: 'admin__grid' },
       h('div', { class: 'admin__actions' }, h('h2', { class: 'admin__h' }, 'Actions', h('small', { text: 'the same tasks as the `muse ops` command' })), h('div', { class: 'toolbar' }, driftBtn), out, actions),
       output ? h('aside', { class: 'admin__output', 'aria-label': 'Output of the last run' }, output) : null),
     h('h2', { class: 'section__split', text: 'Reports' }),
+    h('div', { class: 'reports' },
     Section('Counts', c.version, Table([Row('Notes', n(c.notes)), ...c.byVersion.map(v => Row('Facts, ' + v.version, n(v.n), v.version === c.version ? 'the version Muse shows' : '')),
       Row('Notes not yet processed for ' + c.version, c.pending == null ? null : n(c.pending), 'waiting for nuggetize'), ...c.dupes.map(x => Row('Duplicates, ' + x.status, n(x.n), 'hidden from Muse')),
       Row('Wordplay pairs', n(c.wordplay.reduce((t, x) => t + x.n, 0)))]),
@@ -69,6 +74,6 @@ export async function adminView({ api }) {
     Section('Your saved files', null, Table(s.files.map(f => Row(f.file, f.bytes == null ? 'missing' : size(f.bytes), f.at ? f.what + ' Last written ' + when(f.at) : f.what)))),
     s.leftovers.length ? Section('Leftovers', 'clear them from Actions, under Safety and recovery', Table(s.leftovers.map(f => Row(f.name, size(f.bytes), when(f.at))))) : null,
     Section('Server', null, Table([Row('Muse version', sv.version), Row('Port', sv.port), Row('Up for', uptime(sv.upSeconds), 'process ' + sv.pid + ', node ' + sv.node),
-      Row('Search by meaning', sv.search ? (sv.search.meaning && (sv.search.meaning.state || (sv.search.meaning.ready ? 'ready' : 'not ready'))) : 'not set up')])));
+      Row('Search by meaning', sv.search ? (sv.search.meaning && (sv.search.meaning.state || (sv.search.meaning.ready ? 'ready' : 'not ready'))) : 'not set up')]))));
   return { node, title: W.admin };
 }

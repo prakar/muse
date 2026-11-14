@@ -82,7 +82,12 @@ function openDb() {
     if (fs.existsSync(DB_PATH)) return openDatabase(DB_PATH);
     return new DatabaseSync(':memory:');
   }
-  fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+  // A real run never creates the database: that is `node code/migrate.js --run` (Admin: "Create or update the database"), so a new install gets every table and
+  // column before the first note is written, and nothing is created by accident.
+  if (!fs.existsSync(DB_PATH)) {
+    log('error', 'No database yet. Create it first: node code/migrate.js --run (Admin: Create or update the database). Nothing was changed.', { db: DB_PATH });
+    process.exit(3);
+  }
   return openDatabase(DB_PATH);
 }
 
@@ -90,71 +95,21 @@ function openDb() {
 function assertKeyedSchema(db) {
   var cols = db.prepare('PRAGMA table_info(vault_notes)').all().map(function(c) { return c.name; });
   if (cols.length && cols.indexOf('rel_path') < 0) {
-    log('error', 'This database still stores absolute note paths (filepath). Run the migration first: node code/migrate.js --run (Admin: Database migrations). Nothing was changed.', {});
+    log('error', 'This database still stores absolute note paths (filepath). Run the migration first: node code/migrate.js --run (Admin: Create or update the database). Nothing was changed.', {});
     process.exit(3);
   }
 }
 
-function initSchema(db) {
-  db.exec([
-    "CREATE TABLE IF NOT EXISTS vault_notes (",
-    "  id              INTEGER PRIMARY KEY,",
-    "  rel_path        TEXT    UNIQUE NOT NULL,",
-    "  title           TEXT,",
-    "  created         TEXT,",
-    "  source_url      TEXT,",
-    "  author          TEXT,",
-    "  word_count      INTEGER DEFAULT 0,",
-    "  first_paragraph TEXT,",
-    "  content_type    TEXT    DEFAULT 'unknown',",
-    "  origin          TEXT    DEFAULT 'unknown',",
-    "  has_frontmatter INTEGER DEFAULT 0,",
-    "  has_tags        INTEGER DEFAULT 0,",
-    "  folder_hint     TEXT    DEFAULT 'unknown',",
-    "  file_mtime      TEXT,",
-    "  indexed_at      TEXT    NOT NULL",
-    ");",
-    "CREATE TABLE IF NOT EXISTS note_tags (",
-    "  id              INTEGER PRIMARY KEY,",
-    "  note_id         INTEGER NOT NULL REFERENCES vault_notes(id) ON DELETE CASCADE,",
-    "  tag_full        TEXT,",
-    "  tag_root        TEXT,",
-    "  tag_leaf        TEXT,",
-    "  is_hierarchical INTEGER DEFAULT 0",
-    ");",
-    "CREATE TABLE IF NOT EXISTS narrative_queue (",
-    "  id             INTEGER PRIMARY KEY,",
-    "  note_ids       TEXT    NOT NULL,",
-    "  seed_theme     TEXT,",
-    "  priority_score REAL    DEFAULT 0,",
-    "  status         TEXT    DEFAULT 'queued',",
-    "  created_at     TEXT    NOT NULL",
-    ");",
-    "CREATE TABLE IF NOT EXISTS narratives (",
-    "  id               INTEGER PRIMARY KEY,",
-    "  queue_id         INTEGER REFERENCES narrative_queue(id),",
-    "  note_ids         TEXT    NOT NULL,",
-    "  seed_theme       TEXT,",
-    "  body             TEXT    NOT NULL,",
-    "  register         TEXT,",
-    "  model_used       TEXT,",
-    "  produced_at      TEXT    NOT NULL,",
-    "  used_for_kcircle INTEGER DEFAULT 0",
-    ");",
-    "CREATE INDEX IF NOT EXISTS idx_note_tags_note_id  ON note_tags(note_id);",
-    "CREATE INDEX IF NOT EXISTS idx_note_tags_root     ON note_tags(tag_root);",
-    "CREATE INDEX IF NOT EXISTS idx_note_tags_leaf     ON note_tags(tag_leaf);",
-    "CREATE INDEX IF NOT EXISTS idx_note_tags_full     ON note_tags(tag_full);",
-    "CREATE INDEX IF NOT EXISTS idx_notes_content_type ON vault_notes(content_type);",
-    "CREATE INDEX IF NOT EXISTS idx_notes_origin       ON vault_notes(origin);",
-    "CREATE INDEX IF NOT EXISTS idx_notes_has_tags     ON vault_notes(has_tags);",
-    "CREATE INDEX IF NOT EXISTS idx_notes_folder       ON vault_notes(folder_hint);",
-    "CREATE VIRTUAL TABLE IF NOT EXISTS vault_fts USING fts5(",
-    "  title, first_paragraph,",
-    "  content=vault_notes, content_rowid=id",
-    ");"
-  ].join('\n'));
+// A database that has the base tables but not the migrations (no tag_source and so on) fails note by note inside SQL. Say so once, up front.
+function assertMigrated(db) {
+  var cols = db.prepare('PRAGMA table_info(vault_notes)').all().map(function(c) { return c.name; });
+  if (cols.length && cols.indexOf('tag_source') < 0) {
+    log('error', 'This database has not been migrated yet. Run: node code/migrate.js --run (Admin: Create or update the database). Nothing was changed.', {});
+    process.exit(3);
+  }
 }
+
+const { initSchema } = require('./lib/base_schema');
 
 // ---------------------------------------------------------------------------
 // FILE WALKING
@@ -668,6 +623,7 @@ async function main() {
 
   var db = openDb();
   assertKeyedSchema(db);
+  if (!MODE_DRY) assertMigrated(db);
   if (!MODE_DRY) initSchema(db);
 
   if (MODE_STATS) { printStats(db); db.close(); return; }
@@ -682,7 +638,13 @@ async function main() {
     log('info', 'Vault walk complete', { totalFiles: files.length });
     reportPortability(files);
     if (files.length === 0) {
-      log('error', 'Vault contains no .md files - refusing to index (nothing was changed)', { vaultPath: VAULT_PATH });
+      // A real run refuses an empty vault: an unmounted or emptied folder must never make every note look deleted. A dry run changes nothing, so it says what a real
+      // run would do and succeeds, which lets a task that copies first (Bring Muse up to date) pass its check on a new, still-empty copy folder.
+      if (MODE_DRY) {
+        log('warn', 'The vault copy has no .md files yet, so there is nothing to index. Run "Copy the vault in", or run this task for real: it copies first.', { vaultPath: VAULT_PATH });
+        db.close(); return;
+      }
+      log('error', 'Vault contains no .md files - refusing to index (nothing was changed). If this is a new copy folder, run "Copy the vault in" for real first.', { vaultPath: VAULT_PATH });
       db.close(); process.exit(3);
     }
     if (MODE_DIFF && !MODE_DRY) {

@@ -120,6 +120,8 @@ function createServer({ model, marks, notes, version, uiRoot, search = null, eve
       s.burr.starred = starredIds().has(s.burr.id);
       return json(res, s);
     }
+    // Minimal, no paths and no header needed: lets the deploy script and the UI see whether Muse is serving normally or degraded.
+    if (u.pathname === '/api/health' && req.method === 'GET') { const st = admin ? admin.status() : null, g = st && st.integrity; return json(res, { ok: !g || (g.level !== 'fatal' && g.state !== 'setup'), mode: !g ? 'unknown' : g.state === 'setup' ? 'setup' : g.degraded ? 'degraded' : 'normal', level: g ? g.level : null, problems: g ? g.findings.map(x => ({ id: x.id, level: x.level, msg: x.msg, fix: x.fix })) : [] }); }
     if (u.pathname.startsWith('/api/admin/')) {
       // Local paths and counts, and (later) actions: a custom header keeps a cross-site page from reaching these.
       if (!admin) return json(res, { error: 'Admin is not set up on this server.' }, 503);
@@ -128,14 +130,14 @@ function createServer({ model, marks, notes, version, uiRoot, search = null, eve
       if (u.pathname === '/api/admin/drift' && req.method === 'POST') return admin.runDrift().then(r => json(res, r), e => json(res, { error: e.message }, 500));
       // Maintenance jobs: the same catalogue and runner the `muse ops` command uses. Starting, watching and stopping are all here, so anything that can call HTTP can drive them.
       if (ops && u.pathname === '/api/admin/ops' && req.method === 'GET') { let pending = null; try { pending = I.candidates({ dbPath: ops.ctx.dbPath, args: ['--all'], log: () => {} }); } catch (e) { /* no database */ }
-        return json(res, Object.assign(ops.catalogue(), { pending, running: ops.running().map(j => j.id), backups: I.listBackups(ops.ctx.home).map(b => b.name) })); }
+        return json(res, Object.assign(ops.catalogue(), { pending, setup: I.setupState({ dbPath: ops.ctx.dbPath, home: ops.ctx.home }), running: ops.running().map(j => j.id), backups: I.listBackups(ops.ctx.home).map(b => b.name) })); }
       if (ops && u.pathname === '/api/admin/jobs' && req.method === 'GET') return json(res, { jobs: ops.list(30) });
       if (ops && u.pathname === '/api/admin/jobs' && req.method === 'POST') {
         if (!/application\/json/.test(req.headers['content-type'] || '')) return json(res, { error: 'json only' }, 415);
         return readBody(req, b => {
           if (!b || typeof b.task !== 'string' || (b.params != null && (typeof b.params !== 'object' || Array.isArray(b.params)))) return json(res, { error: 'bad job request' }, 400);
           try { return json(res, { job: ops.start(b.task, b.params || {}, { go: b.go === true, expect: b.expect == null ? null : b.expect }) }, 201); }
-          catch (e) { return e.userError ? json(res, { error: e.message, conflict: e.conflict || null }, e.conflict ? 409 : 400) : json(res, { error: 'could not start the job' }, 500); }
+          catch (e) { return e.userError ? json(res, { error: e.message, conflict: e.conflict || null }, e.conflict ? 409 : 400) : (console.error('[muse] could not start job', b.task, e && e.stack || e), json(res, { error: 'could not start the job' }, 500)); }
         });
       }
       const jm = ops && u.pathname.match(/^\/api\/admin\/jobs\/([\w-]{6,80})(\/cancel)?$/);

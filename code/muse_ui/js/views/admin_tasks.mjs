@@ -1,34 +1,40 @@
 import { h } from '../dom.mjs';
-import { Button } from '../components/button.mjs';
+import { Button, Segmented } from '../components/button.mjs';
+import { getPref, setPref } from '../prefs.mjs';
 
 // Admin actions, drawn from the one catalogue the server sends (the same list `muse ops` uses). Nothing here knows what a task does: it shows the title, the cost,
 // the options, and starts a job. A task with a dry run offers only "Check first"; "Do it for real" appears once that check has finished, and asks for the number
 // or name you saw when the run spends money or deletes. The server enforces every rule again, so this page cannot skip one.
 const EFFECT = { 'read-only': 'Reads only', 'writes files': 'Writes files', 'writes DB': 'Writes the database', 'spends money': 'Spends money' };
-const ON_PAGE = new Set(['status', 'drift']);          // already shown as reports and the drift button above
-// The columns group the catalogue's tasks by purpose and how often they are needed. They are a layout choice only: the catalogue still decides what exists,
-// so a task with an area this list does not know lands in the last column ("More") instead of disappearing, and a new task appears with no change here.
-// `pin` lifts named tasks to the top of their column; `tasks` pulls a task into a column whatever its area says.
-export const COLUMNS = [
-  { id: 'daily', title: 'Every day', hint: 'Bring the vault in and keep a safety copy.', areas: ['ingest'], tasks: ['backup'], pin: ['refresh', 'backup'] },
-  { id: 'prep', title: 'Prepare the data', hint: 'Extract, flag and index. Some of these cost money.', areas: ['prep'], tasks: [], pin: [] },
-  { id: 'care', title: 'Care and checks', hint: 'Needed now and then: recovery, cleanup and tests.', areas: ['safety', 'dev'], tasks: [], pin: [] }
-];
-const MORE = { id: 'more', title: 'More', hint: 'Tasks that do not belong to a column yet.', areas: [], tasks: [], pin: [] };
-export function planColumns(cat, hide = ON_PAGE) {
-  const cols = [...COLUMNS, MORE].map(c => ({ id: c.id, title: c.title, hint: c.hint, tasks: [] }));
-  const home = t => { const i = COLUMNS.findIndex(c => c.tasks.includes(t.id)); if (i >= 0) return i; const j = COLUMNS.findIndex(c => c.areas.includes(t.area)); return j >= 0 ? j : COLUMNS.length; };
-  for (const t of cat.tasks) if (!hide.has(t.id)) cols[home(t)].tasks.push(t);
-  cols.forEach((c, i) => { const pin = (COLUMNS[i] || MORE).pin; c.tasks.sort((a, b) => { const x = pin.indexOf(a.id), y = pin.indexOf(b.id); return (x < 0 ? 99 : x) - (y < 0 ? 99 : y); }); });
-  return cols.filter(c => c.tasks.length);
+// The ORDER lives on the server (the catalogue's `flows`), so the page, the `muse ops` command and a bot calling the API all see the same one; this file only draws it.
+// Two modes: "Initial setup" (a vault and no database yet: do these once, in order) and "Ongoing maintenance" (the weekly routine first, then the rest by how often
+// you need it). planFlow is pure: it turns a catalogue and a mode into groups of steps. A task the server lists but no flow places still appears, under "More", so a
+// task added to the catalogue can never vanish from the page.
+export function planFlow(cat, mode, hide = (cat && cat.onPage) || ['status', 'drift']) {
+  const flow = cat && cat.flows && cat.flows[mode]; if (!flow) return null;
+  const byId = new Map((cat.tasks || []).map(t => [t.id, t])), placed = new Set(), groups = [];
+  for (const g of flow.groups) {
+    const items = [];
+    for (const st of (g.steps || (g.tasks || []).map(task => ({ task })))) {
+      if (st.note) { items.push({ kind: 'note', note: st.note, title: st.title || st.note, why: st.why || '' }); continue; }
+      const t = byId.get(st.task); if (!t) continue; placed.add(t.id); items.push({ kind: 'task', task: t, why: st.why || '' });
+    }
+    if (items.length) groups.push({ id: g.id, title: g.title, hint: g.hint || '', ordered: !!g.ordered, collapsed: !!g.collapsed, items });
+  }
+  if (mode === 'ongoing') {
+    const lost = (cat.tasks || []).filter(t => !placed.has(t.id) && !hide.includes(t.id));
+    if (lost.length) groups.push({ id: 'more', title: 'More', hint: 'Tasks that do not belong to a group yet.', ordered: false, collapsed: false, items: lost.map(task => ({ kind: 'task', task, why: '' })) });
+  }
+  return { id: flow.id, title: flow.title, hint: flow.hint || '', groups };
 }
+export const suggestedMode = cat => (cat && cat.setup && cat.setup.suggested) || 'ongoing';
 const NEEDS = { count: 'Type the number the check showed', name: 'Type the backup name to confirm' };
 const STATE = { running: 'Running', done: 'Done', failed: 'Failed', cancelled: 'Cancelled', lost: 'Lost (the runner stopped)' };
 const when = iso => iso ? new Date(iso).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
 
 // Returns { actions, output }: the columns of tasks, and the panel that shows what a run says. The page puts the output beside the actions so it stays in view.
 // onJobEnd(job) runs when a job stops, so the status strip can refresh its numbers.
-export async function tasksSection({ api, onJobEnd = null }) {
+export async function tasksSection({ api, onJobEnd = null, freshness = null }) {
   let cat; try { cat = await api.adminOps(); } catch (e) { return { actions: h('p', { class: 'empty empty--error', text: 'The actions are not available: ' + e.message }), output: null }; }
   const log = h('pre', { class: 'log', tabindex: '0', role: 'log', 'aria-label': 'Job log', hidden: '' });
   const head = h('p', { class: 'job__head', role: 'status', text: 'Nothing has run yet. Start a task and its log shows here.' });
@@ -81,15 +87,45 @@ export async function tasksSection({ api, onJobEnd = null }) {
     };
     afterJob.add(() => { const d = lastDry.get(t.id); if (t.dry && d && d.task === t.id) real.replaceChildren(...[confirm ? h('label', { class: 'task__field' }, h('span', { text: NEEDS[t.needs] }), confirm) : null, Button({ label: 'Do it for real', size: 'sm', variant: 'primary', onClick: () => run(true) })].filter(Boolean)); });   // replaceChildren(null) would print the word "null"
     return h('article', { class: 'task' }, h('h3', {}, t.title, h('span', { class: 'badge badge--' + t.effect.replace(/\s/g, '-').toLowerCase(), text: EFFECT[t.effect] })), h('p', { class: 'task__does', text: t.does }),
-      t.params.length ? h('div', { class: 'task__fields' }, t.params.map(d => field(d, inputs))) : null,
+      t.params.length ? (fields => t.params.length > 2 ? h('details', { class: 'task__opts' }, h('summary', { text: 'Options (' + t.params.length + ')' }), fields) : fields)(h('div', { class: 'task__fields' }, t.params.map(d => field(d, inputs)))) : null,
       h('div', { class: 'toolbar' }, Button({ label: t.dry ? 'Check first' : 'Run', size: 'sm', onClick: () => run(false) }), t.backup ? h('small', { class: 'hint', text: 'A real run backs up the database first.' }) : null), real, msg);
   }
 
-  const cols = planColumns(cat);
-  const actions = h('div', { class: 'tasks' },
-    cat.pending != null ? h('p', { class: 'hint tasks__pending', text: `Notes ready to process right now: ${cat.pending}. A paid run asks for this number back.` }) : null,
-    h('div', { class: 'cols' }, cols.map(c => h('section', { class: 'col col--' + c.id, 'aria-label': c.title }, h('h3', { class: 'col__title', text: c.title }), h('p', { class: 'col__hint hint', text: c.hint }), c.tasks.map(card)))));
+  // The notice that Muse is behind the database. It is painted wherever it is shown (the top of the actions and the "Restart Muse" step) and repainted when a job ends.
+  const fresh = [], paintFresh = f => {
+    const clock = f && f.loadedAt ? when(f.loadedAt) : '';
+    const bits = f ? [f.newFacts && f.newFacts + ' new fact' + (f.newFacts === 1 ? '' : 's'), f.newWordplay && f.newWordplay + ' wordplay pair' + (f.newWordplay === 1 ? '' : 's'), f.newDuplicateFlags && f.newDuplicateFlags + ' duplicate flag' + (f.newDuplicateFlags === 1 ? '' : 's')].filter(Boolean) : [];
+    fresh.forEach(el => {
+      el.className = 'fresh ' + (f && f.stale ? 'fresh--stale' : 'fresh--ok'); el.hidden = !f; el.setAttribute('role', 'status');
+      el.textContent = !f ? '' : f.stale ? `Muse is behind the database. It loaded at ${clock}; since then the database gained ${bits.join(', ')}. Restart Muse to see them: run  muse restart` : `Muse is up to date with the database (loaded ${clock}).`;
+    });
+  };
+  const freshBox = () => { const el = h('p'); fresh.push(el); return el; };
+  const topFresh = freshBox();
+
+  const stepOf = (it, i, group, done) => it.kind === 'note'
+    ? h('li', { class: 'step' }, h('span', { class: 'step__n', 'aria-hidden': 'true', text: String(i + 1) }), h('article', { class: 'task task--note' }, h('h3', {}, it.title), h('p', { class: 'task__does', text: it.why }), freshBox()))
+    : (() => { const c = card(it.task), body = h('div', { class: 'step__body' }, it.why ? h('p', { class: 'step__why', text: it.why }) : null, c);
+        return group.ordered ? h('li', { class: 'step' + (it.why ? ' step--why' : '') }, h('span', { class: 'step__n', 'aria-hidden': 'true', text: String(i + 1) }), done && done[it.task.id] ? h('span', { class: 'step__done', text: 'looks done' }) : null, body) : h('li', { class: 'step step--plain' + (it.why ? ' step--why' : '') }, body); })();
+  const groupEl = (g, mode, n = 0) => {
+    const list = h(g.ordered ? 'ol' : 'ul', { class: 'steps' + (g.ordered ? ' steps--ordered' : '') }, g.items.map((it, i) => stepOf(it, i, g, mode === 'setup' ? (cat.setup || {}).done : null)));
+    const head = [h('div', { class: 'band__head' }, h('h3', { class: 'col__title', text: g.title }), g.hint ? h('p', { class: 'col__hint hint', text: g.hint }) : null)];
+    return g.collapsed ? h('details', { class: 'flow__group band--' + (n % 3) }, h('summary', {}, h('span', { class: 'col__title', text: g.title }), g.hint ? h('small', { class: 'hint', text: '  ' + g.hint }) : null), list)
+      : h('section', { class: 'flow__group band--' + (n % 3), 'aria-label': g.title }, ...head, list);
+  };
+  let mode = getPref('adminMode', null); if (mode !== 'setup' && mode !== 'ongoing') mode = suggestedMode(cat);
+  const flowBox = h('div', { class: 'flow' }), modeBox = h('div', { class: 'modes' });
+  const drawFlow = () => {
+    const plan = planFlow(cat, mode);
+    flowBox.replaceChildren(...(plan ? [h('p', { class: 'flow__hint hint', text: plan.hint }), ...plan.groups.map((g, n) => groupEl(g, mode, n))] : [h('p', { class: 'empty', text: 'This server did not send an order for the tasks.' })]));
+    paintFresh(freshnessNow);
+  };
+  let freshnessNow = freshness;
+  const drawModes = () => modeBox.replaceChildren(Segmented({ label: 'Admin mode', options: [{ label: 'Ongoing maintenance', value: 'ongoing' }, { label: 'Initial setup', value: 'setup' }], value: mode, onChange: v => { mode = v; setPref('adminMode', v); drawModes(); drawFlow(); } }));
+  const actions = h('div', { class: 'tasks' }, modeBox, topFresh,
+    cat.pending != null ? h('p', { class: 'hint tasks__pending', text: `Notes ready to process right now: ${cat.pending}. A paid run asks for this number back.` }) : null, flowBox);
+  drawModes(); drawFlow();
   const output = h('div', { class: 'output' }, panel, h('h3', { class: 'jobs__title jobs__title--small', text: 'Recent jobs' }), recent);
   listJobs();
-  return { actions, output };
+  return { actions, output, setFreshness: f => { freshnessNow = f; paintFresh(f); } };
 }

@@ -9,7 +9,9 @@ function setup() {
   for (const d of ['2013', '2026/sub']) fs.mkdirSync(path.join(vault, d), { recursive: true }); fs.mkdirSync(home);
   const notes = { '+Home.md': '# Home\nroot note', '2013/Old note.md': '---\ntitle: Old\n---\nbody one two three', "2026/it's Café.md": '# Cafe\nunicode name', '2026/sub/Deep.md': '# Deep\ndeep note' };
   for (const [k, v] of Object.entries(notes)) fs.writeFileSync(path.join(vault, k), v);
-  return { base, vault, home, keys: Object.keys(notes) };
+  const c = { base, vault, home, keys: Object.keys(notes) };
+  migrate(c);   // a new install creates its database first (a real indexer run refuses to make one), exactly as Admin's first step does
+  return c;
 }
 const idx = (c, args, vaultPath) => spawnSync(process.execPath, ['--no-warnings', INDEXER, ...args], { encoding: 'utf8', env: { ...process.env, VAULT_PATH: vaultPath || c.vault, QUARRY_HOME: c.home, QUARRY_DB: path.join(c.home, 'vault.db') } });
 const migrate = c => { const r = spawnSync(process.execPath, ['--no-warnings', MIGRATE, '--run'], { encoding: 'utf8', env: { ...process.env, QUARRY_HOME: c.home, QUARRY_DB: path.join(c.home, 'vault.db'), VAULT_PATH: c.vault } }); assert.strictEqual(r.status, 0, r.stdout + r.stderr); return r.stdout; };
@@ -40,14 +42,25 @@ test('a path outside the vault is refused with a clear message, and a dry run sh
 });
 
 test('portability report: case-only twins and Windows-hostile names are warned about once, not refused', () => {
-  const c = setup(); fs.writeFileSync(path.join(c.vault, '2026', 'Twin.md'), '# a'); fs.writeFileSync(path.join(c.vault, '2026', 'twin.md'), '# b'); fs.writeFileSync(path.join(c.vault, '2026', 'Why? Because.md'), '# c');
+  // On a case-insensitive disk (a Mac's default) Twin.md and twin.md are the SAME file, so the twins cannot exist there; the Windows-name warning is still tested.
+  const c = setup(), ci = (() => { fs.writeFileSync(path.join(c.vault, '2026', 'CaseProbe.md'), 'x'); const same = fs.existsSync(path.join(c.vault, '2026', 'caseprobe.md')); fs.rmSync(path.join(c.vault, '2026', 'CaseProbe.md')); return same; })();
+  if (!ci) { fs.writeFileSync(path.join(c.vault, '2026', 'Twin.md'), '# a'); fs.writeFileSync(path.join(c.vault, '2026', 'twin.md'), '# b'); }
+  fs.writeFileSync(path.join(c.vault, '2026', 'Why? Because.md'), '# c');
   const r = idx(c, ['--full']); assert.strictEqual(r.status, 0, r.stderr);
-  assert.match(r.stdout, /differ only by letter case or Unicode form/); assert.match(r.stdout, /would not work on Windows/); assert.strictEqual(rows(c).filter(x => /twin/i.test(x.rel_path)).length, 2);
+  assert.match(r.stdout, /would not work on Windows/);
+  if (!ci) { assert.match(r.stdout, /differ only by letter case or Unicode form/); assert.strictEqual(rows(c).filter(x => /twin/i.test(x.rel_path)).length, 2); }
 });
 
 test('a database from before M015 is refused by the indexer with the way out, untouched', () => {
-  const c = setup(), db = new DatabaseSync(path.join(c.home, 'vault.db'));
+  const c = setup(); for (const f of fs.readdirSync(c.home)) if (/^vault\.db/.test(f)) fs.rmSync(path.join(c.home, f), { force: true });   // start from the old database only
+  const db = new DatabaseSync(path.join(c.home, 'vault.db'));
   db.exec('CREATE TABLE vault_notes (id INTEGER PRIMARY KEY, filepath TEXT UNIQUE NOT NULL, indexed_at TEXT NOT NULL)'); db.exec("INSERT INTO vault_notes (filepath, indexed_at) VALUES ('/x/knowledge/a.md', 't')"); db.close();
   const r = idx(c, ['--diff']); assert.strictEqual(r.status, 3, r.stdout + r.stderr); assert.match(r.stdout + r.stderr, /migrate\.js --run/);
   const after = new DatabaseSync(path.join(c.home, 'vault.db'), { readOnly: true }); assert.strictEqual(after.prepare('SELECT COUNT(*) n FROM vault_notes').get().n, 1); after.close();
+});
+
+test('an empty vault copy: a real run refuses and says what to do, a dry run only warns, so "Bring Muse up to date" can pass its check on a new copy folder', () => {
+  const c = setup(); fs.rmSync(c.vault, { recursive: true }); fs.mkdirSync(c.vault, { recursive: true });
+  let r = idx(c, ['--diff']); assert.strictEqual(r.status, 3, r.stdout + r.stderr); assert.match(r.stdout + r.stderr, /Copy the vault in/);
+  r = idx(c, ['--diff', '--dry-run']); assert.strictEqual(r.status, 0, r.stdout + r.stderr); assert.match(r.stdout + r.stderr, /no \.md files yet/);
 });

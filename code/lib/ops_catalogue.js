@@ -69,8 +69,8 @@ const TASKS = [
   { id: 'find-notes', area: 'ingest', title: 'Find notes by pattern', does: 'List notes whose text matches a pattern (id, words, title). For picking a trial note.', effect: 'read-only', group: null,
     params: [P('pattern', 'text', 'Pattern (regular expression)', { required: true, max: 120 }), P('limit', 'int', 'How many', { min: 1, max: 200, default: 15 }), P('minWords', 'int', 'At least this many words', { min: 0, max: 5000, default: 0 })],
     build: p => [script('Find', 'find_notes.js', [p.pattern, '--limit', String(p.limit), ...(p.minWords ? ['--min-words', String(p.minWords)] : [])])] },
-  { id: 'migrate', area: 'prep', title: 'Database migrations', does: 'Show which migrations are applied (dry run), or apply the pending ones.', effect: 'writes DB', group: 'db', dry: true, backup: true, params: [],
-    build: (p, go) => [script(go ? 'Apply migrations' : 'Migration status', 'migrate.js', [go ? '--run' : '--status'])] },
+  { id: 'migrate', area: 'prep', title: 'Create or update the database', does: 'Make the database if there is none (the tables Muse starts from), then apply every pending migration. Safe to repeat: nothing is ever dropped. The check shows what would be applied.', effect: 'writes DB', group: 'db', dry: true, backup: true, params: [],
+    build: (p, go) => [script(go ? 'Create or update the database' : 'Check what would change', 'migrate.js', [go ? '--run' : '--status'])] },
   { id: 'nuggetize', area: 'prep', title: 'Extract facts (paid)', does: 'Send pending notes to the model and keep the verified facts. The dry run shows how many notes and the estimated cost; a real run needs that count typed back.', effect: 'spends money', group: 'db', dry: true, backup: true, needs: 'count',
     params: [P('mode', 'enum', 'Which notes', { values: ['limit', 'short', 'all', 'note', 'redo', 'review-list'], default: 'limit', help: 'limit = the N shortest pending; short = every pending note under the short-note cut; all = every pending note; note = one note; redo = re-verify from cache; review-list = write a CSV' }),
       P('limit', 'int', 'How many (mode limit)', { min: 1, max: 5000, default: 20 }), P('note', 'int', 'Note id (mode note)', { min: 1 }), P('provider', 'enum', 'Model provider', { values: PROVIDERS, default: 'gemini' }),
@@ -122,7 +122,39 @@ function byId(id) { return TASK.get(id); }
 
 // What the front doors may show: no functions.
 const describe = t => ({ id: t.id, area: t.area, title: t.title, does: t.does, effect: t.effect, group: t.group, dry: !!t.dry, backup: !!t.backup, needs: t.needs || null, params: t.params.map(({ pattern, ...d }) => d) });
-const catalogue = () => ({ areas: AREAS.map(([id, title]) => ({ id, title })), tasks: TASKS.map(describe) });
+// The order a person works in, for the two situations Admin serves. The server owns this, so the page, the CLI and any bot calling the API all see the same order; a front
+// door only draws it. A step is { task, why } or { note, ... } for something done outside Admin. A group with `ordered` is numbered 1, 2, 3. A task may appear in more than
+// one place. Every task that is not shown elsewhere on the page must appear in the Ongoing view (test/muse_ops.test.js checks), so a new task cannot vanish from Admin.
+const ON_PAGE = ['status', 'drift'];   // shown as the status strip and the drift button, not as task cards
+const FLOWS = {
+  setup: {
+    id: 'setup', title: 'Initial setup',
+    hint: 'A new install: you have a markdown vault and no database yet. Do these once, in order. Every step checks first and shows what it would do.',
+    groups: [{ id: 'setup-steps', title: 'Set up Muse', ordered: true, steps: [
+      { task: 'migrate', why: 'Makes the database and every table in it. Nothing else can run before this.' },
+      { task: 'vault-sync', why: 'Copies your vault into the folder Muse reads (without .git and .obsidian).' },
+      { task: 'index', why: 'Reads the copy into the database: titles, tags, word counts.' },
+      { task: 'private-scan', why: 'Optional, advised before the first paid step: lists notes that look private so you can exclude them before anything is sent to a model.' },
+      { task: 'nuggetize', why: 'A small trial first (the 20 shortest notes by default). Read what it extracts before you spend more.' },
+      { task: 'refresh-process', why: 'Then everything waiting, plus duplicate flags, wordplay and the search index. Paid; you type the count back.' },
+      { task: 'heuristics', why: 'Checks the heuristic registry against its source.' },
+      { task: 'backup', why: 'A first safety copy of the finished database.' }] }]
+  },
+  ongoing: {
+    id: 'ongoing', title: 'Ongoing maintenance',
+    hint: 'For an install that is already set up: bring in new notes, process them, and see them in Muse.',
+    groups: [
+      { id: 'routine', title: 'Your routine', hint: 'After you add notes in Obsidian, daily or weekly.', ordered: true, steps: [
+        { task: 'refresh', why: 'Backs up, copies the vault in, indexes what changed, then counts the notes waiting and estimates the cost. Stops before anything paid.' },
+        { task: 'refresh-process', why: 'Only if notes are waiting. Extracts facts, flags duplicates, stores wordplay and rebuilds search. Paid; you type the count back.' },
+        { note: 'restart', title: 'Restart Muse', why: 'Muse loads its facts when it starts, so new ones appear after a restart: run `muse restart`. This page tells you when it is behind the database.' }] },
+      { id: 'sometimes', title: 'Now and then', hint: 'Useful, but not part of every round.', tasks: ['backup', 'find-notes', 'private-scan'] },
+      { id: 'update', title: 'After an update', hint: 'When you have deployed new code.', tasks: ['migrate', 'search-build', 'heuristics'] },
+      { id: 'care', title: 'Recovery and cleanup', hint: 'Rare: something went wrong, or the backups folder is full.', tasks: ['backups-prune', 'restore', 'clean-leftovers', 'check'] },
+      { id: 'pieces', title: 'Individual steps', hint: 'The parts of the routine, one at a time, for options such as redo or a single note.', collapsed: true, tasks: ['vault-sync', 'index', 'nuggetize', 'dedupe', 'wordplay'] }]
+  }
+};
+const catalogue = () => ({ areas: AREAS.map(([id, title]) => ({ id, title })), tasks: TASKS.map(describe), onPage: ON_PAGE, flows: FLOWS });
 
 // Validate and plan. Returns { task, params, go, dry, effect, group, steps } or throws an Error with userError set.
 function plan(id, rawParams = {}, { go = false, expect = null, ctx }) {
@@ -139,4 +171,4 @@ function plan(id, rawParams = {}, { go = false, expect = null, ctx }) {
   return { task: t.id, params: p, go: !!go, dry: !!t.dry && !go, effect: t.effect, group: t.group, steps: [...pre, ...t.build(p, !!go, ctx)] };
 }
 
-module.exports = { TASKS, TASK, AREAS, catalogue, plan, describe, bad, ROOT };
+module.exports = { TASKS, TASK, AREAS, FLOWS, ON_PAGE, catalogue, plan, describe, bad, ROOT };

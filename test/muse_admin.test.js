@@ -42,3 +42,13 @@ test('admin endpoints: need the X-Muse header, report status, run the drift chec
   const d = await call(mk({ admin }), '/api/admin/drift', 'POST', { 'X-Muse': '1' }); assert.strictEqual(d.body.ok, false); assert.deepStrictEqual(d.body.problems, ['stale button: x']);
   assert.strictEqual((await call(mk({}), '/api/admin/status', 'GET', { 'X-Muse': '1' })).code, 503);
 });
+
+test('admin freshness: says when the database has gained facts, wordplay or duplicate flags since Muse loaded, and stays quiet when it has not', () => {
+  const { dir, db } = setup(); db.exec('ALTER TABLE burrs ADD COLUMN created_at TEXT; ALTER TABLE wordplay_edges ADD COLUMN created_at TEXT; ALTER TABLE burr_dupes ADD COLUMN created_at TEXT;');
+  db.exec("UPDATE burrs SET created_at='2026-11-14T06:00:00.000Z'; UPDATE wordplay_edges SET created_at='2026-11-14 06:00:00'; UPDATE burr_dupes SET created_at='2026-11-14T06:00:00.000Z';");
+  const mk = at => createAdmin({ home: dir, dbPath: path.join(dir, 'vault.db'), db, version: 'nug-v6', port: 1, loadedAt: at }).status().freshness;
+  let f = mk('2026-11-14T07:00:00.000Z'); assert.strictEqual(f.stale, false, 'everything is older than the load'); assert.strictEqual(f.newFacts + f.newWordplay + f.newDuplicateFlags, 0);
+  db.exec("INSERT INTO burrs (prompt_version, created_at) VALUES ('nug-v6','2026-11-14T07:30:00.000Z'); INSERT INTO wordplay_edges (kind, created_at) VALUES ('rhyme','2026-11-14 07:31:00');");
+  f = mk('2026-11-14T07:00:00.000Z'); assert.strictEqual(f.stale, true); assert.strictEqual(f.newFacts, 1); assert.strictEqual(f.newWordplay, 1, 'the plain and ISO time forms are compared alike');
+  assert.strictEqual(createAdmin({ home: dir, dbPath: path.join(dir, 'vault.db'), db, version: 'nug-v6', port: 1 }).status().freshness, null, 'no load time given, nothing claimed');
+});

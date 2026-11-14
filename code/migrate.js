@@ -27,20 +27,33 @@ const args       = process.argv.slice(2);
 const MODE_RUN    = args.includes('--run');
 const MODE_STATUS = args.includes('--status');
 
-if (!MODE_RUN && !MODE_STATUS) {
+if (require.main === module && !MODE_RUN && !MODE_STATUS) {
   console.error('Usage: node migrate.js [--run|--status]');
   process.exit(1);
 }
 
+// `QUIET` lets Muse run these migrations in memory at startup (setup mode) without printing a screen of JSON; the command line never sets it.
+let QUIET = false;
+const say = function() { if (!QUIET) console.log.apply(console, arguments); };
 function log(msg, data) {
   const entry = Object.assign({ ts: new Date().toISOString(), msg }, data || {});
-  console.log(JSON.stringify(entry));
+  say(JSON.stringify(entry));
 }
 
+// A missing database is created here, from the one base definition (lib/base_schema.js), and then migrated like any other. That makes "Create or update the
+// database" the first step of a new install. A status check never creates anything: with no database it shows what a real run would do, on an empty copy in memory.
+let CREATED_NEW = false;
 function openDb() {
+  const { initSchema } = require('./lib/base_schema');
   if (!fs.existsSync(DB_PATH)) {
-    console.error('vault.db not found at', DB_PATH, '— run indexer first');
-    process.exit(1);
+    if (MODE_STATUS) {
+      console.log('\nNo database yet at ' + DB_PATH + '. A real run (--run) creates it and applies every migration below. Nothing is written by this check.');
+      const mem = new DatabaseSync(':memory:'); initSchema(mem); return mem;
+    }
+    fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+    const created = openDatabase(DB_PATH); initSchema(created); CREATED_NEW = true;
+    log('Created a new database', { db: DB_PATH });
+    return created;
   }
   return openDatabase(DB_PATH);
 }
@@ -346,6 +359,44 @@ const MIGRATIONS = [
     backupFirst: true,          // a file copy of the database is taken before BEGIN
     foreignKeysOff: true,       // dropping the old table with foreign keys ON would cascade-delete tags and facts
     up: function(db) { require('./lib/rel_path_migration').up(db, process.env, log); }
+  },
+
+  // -------------------------------------------------------------------------
+  // M016: wordplay_edges is created here, not only the first time the wordplay script runs, so a new install has every table from its first migration.
+  // CREATE ... IF NOT EXISTS from the script's own definition: a database that already has the table is left exactly as it is.
+  // -------------------------------------------------------------------------
+  {
+    id:   'M016',
+    desc: 'wordplay_edges table created by migration (it was created lazily by the wordplay script)',
+    up: function(db) { db.exec(require('./lib/wordplay_edges').SCHEMA_SQL); }
+  },
+
+  // -------------------------------------------------------------------------
+  // M017: the narrative approval columns, which the legacy QUARRY server (server.js) used to add to `narratives` itself each time it started.
+  // Each column is checked first (SQLite cannot add a column twice), so a database that already has them is left as it is.
+  // -------------------------------------------------------------------------
+  {
+    id:   'M017',
+    desc: 'narratives: approval_status, approved_at, rejection_reason (were added lazily by the legacy server)',
+    up: function(db) {
+      var have = db.prepare('PRAGMA table_info(narratives)').all().map(function(c) { return c.name; });
+      if (have.indexOf('approval_status') < 0)  db.exec("ALTER TABLE narratives ADD COLUMN approval_status TEXT DEFAULT 'pending'");
+      if (have.indexOf('approved_at') < 0)      db.exec('ALTER TABLE narratives ADD COLUMN approved_at TEXT');
+      if (have.indexOf('rejection_reason') < 0) db.exec('ALTER TABLE narratives ADD COLUMN rejection_reason TEXT');
+    }
+  },
+
+  // -------------------------------------------------------------------------
+  // M018: vault_notes.video_links and video_transcripts, which extract_video_links.js and the legacy server added themselves. Guarded the same way.
+  // -------------------------------------------------------------------------
+  {
+    id:   'M018',
+    desc: 'vault_notes: video_links, video_transcripts (were added lazily by extract_video_links.js and the legacy server)',
+    up: function(db) {
+      var have = db.prepare('PRAGMA table_info(vault_notes)').all().map(function(c) { return c.name; });
+      if (have.indexOf('video_links') < 0)       db.exec('ALTER TABLE vault_notes ADD COLUMN video_links TEXT');
+      if (have.indexOf('video_transcripts') < 0) db.exec('ALTER TABLE vault_notes ADD COLUMN video_transcripts TEXT');
+    }
   }
 
 ];
@@ -427,7 +478,7 @@ function runMigrations(db) {
     }
 
     log('Applying ' + m.id, { desc: m.desc });
-    if (m.backupFirst) {                           // outside the transaction: VACUUM INTO cannot run inside one
+    if (m.backupFirst && !CREATED_NEW) {          // a database made a moment ago has nothing to back up. Outside the transaction: VACUUM INTO cannot run inside one
       const bak = DB_PATH + '.bak-' + new Date().toISOString().replace(/[:.]/g, '-') + '-pre-' + m.id;
       try { db.exec("VACUUM INTO '" + bak.replace(/'/g, "''") + "'"); log('  backup: ' + bak); }
       catch (e) { console.error('\nCould not back up the database before ' + m.id + ': ' + e.message + '\nNothing was changed. Run on a disk that supports SQLite writes.'); process.exit(1); }
@@ -450,23 +501,36 @@ function runMigrations(db) {
     }
   }
 
-  console.log('\n═══════════════════════════════════════');
-  console.log('  MIGRATION COMPLETE');
-  console.log('  Applied: ' + ran);
-  console.log('  Skipped: ' + skipped);
-  console.log('═══════════════════════════════════════\n');
+  say('\n═══════════════════════════════════════');
+  say('  MIGRATION COMPLETE');
+  say('  Applied: ' + ran);
+  say('  Skipped: ' + skipped);
+  say('═══════════════════════════════════════\n');
+}
+
+// For Muse itself: bring a NEW, empty database (usually in memory) to the current structure, quietly. Used when Muse starts with no vault.db, so the Admin page can
+// open in setup mode; it never touches a file. The real database is still made, explicitly, by "Create or update the database".
+function buildFresh(db, opts) {
+  const { initSchema } = require('./lib/base_schema'); initSchema(db);
+  const was = { q: QUIET, c: CREATED_NEW }; QUIET = !(opts && opts.verbose); CREATED_NEW = true;
+  try { runMigrations(db); } finally { QUIET = was.q; CREATED_NEW = was.c; }
+  return db;
 }
 
 // ---------------------------------------------------------------------------
 // MAIN
 // ---------------------------------------------------------------------------
-const db = openDb();
+if (require.main === module) {
+  const db = openDb();
 
-if (MODE_STATUS) {
-  printStatus(db);
-} else {
-  runMigrations(db);
-  printStatus(db);
+  if (MODE_STATUS) {
+    printStatus(db);
+  } else {
+    runMigrations(db);
+    printStatus(db);
+  }
+
+  db.close();
 }
 
-db.close();
+module.exports = { MIGRATIONS, buildFresh };

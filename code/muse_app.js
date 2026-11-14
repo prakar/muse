@@ -22,9 +22,20 @@ const TRAY_FILE = process.env.MUSE_TRAY || path.join(HOME, 'muse-tray.json');
 const MARKS_FILE = process.env.MUSE_MARKS || path.join(HOME, 'muse-marks.jsonl');
 
 console.log('Building model from ' + DB + ' (' + VERSION + ') ...');
-const db = new DatabaseSync(DB, { readOnly: true }), t0 = Date.now();
+// No database yet (a new install): start in SETUP MODE on an empty in-memory one, so the Admin page opens and its "Initial setup" steps can be run. Nothing is written
+// to disk by this; the real database is made, explicitly, by Admin's "Create or update the database". Restart Muse after that so it reads the real one.
+const t0 = Date.now();
+const VAULT_ROOTS = [process.env.MUSE_VAULT_ROOT || path.join(os.homedir(), 'md-vaults', 'knowledge'), process.env.VAULT_PATH];
+// Integrity check first (read-only). A fatal finding means the database does not match this code, so serving it would give wrong answers or crash: Muse then starts
+// Admin-only on an empty in-memory model, with the findings and their fixes shown in Admin. (No crash loop under systemd; Admin stays reachable as the recovery tool.)
+const INTEGRITY = require('./lib/integrity').check({ dbPath: DB, vaultRoots: VAULT_ROOTS });
+const SETUP_MODE = INTEGRITY.state === 'setup', DEGRADED = INTEGRITY.level === 'fatal' && !SETUP_MODE;
+const db = SETUP_MODE || DEGRADED ? require('./migrate').buildFresh(new DatabaseSync(':memory:')) : new DatabaseSync(DB, { readOnly: true });
+if (DEGRADED) { console.log('DEGRADED MODE: the database does not match this code. Muse is running Admin-only on an empty model.'); for (const l of require('./lib/integrity').lines(INTEGRITY)) console.log('  ' + l); }
+else if (INTEGRITY.findings.length) { console.log('Integrity warnings:'); for (const l of require('./lib/integrity').lines(INTEGRITY)) console.log('  ' + l); }
+if (SETUP_MODE) console.log('SETUP MODE: there is no database at ' + DB + ' yet. Muse is running on an empty one so Admin works. Open Admin, choose Initial setup, run "Create or update the database", then restart Muse (muse restart).');
 // Notes are keyed by their path inside the vault (rel_path). A database from before that (absolute filepath) still serves facts and search, but notes cannot open.
-if (!db.prepare('PRAGMA table_info(vault_notes)').all().some(c => c.name === 'rel_path')) console.log('WARNING: this database still stores absolute note paths. Notes will not open until you run the migration (Admin: Database migrations, or node code/migrate.js --run).');
+if (!db.prepare('PRAGMA table_info(vault_notes)').all().some(c => c.name === 'rel_path')) console.log('WARNING: this database still stores absolute note paths. Notes will not open until you run the migration (Admin: Create or update the database, or node code/migrate.js --run).');
 const model = M.build(db, VERSION, { showDupes: !!process.env.MUSE_SHOW_DUPES });
 console.log('Ready in ' + (Date.now() - t0) + ' ms: ' + model.burrs.length + ' burrs, ' + model.sparks.length + ' sparks, ' + model.wordplay.length + ' wordplay edges (' + model.wordplayState + ')');
 
@@ -46,7 +57,7 @@ const access = createAccess({ env: process.env }), HOST = access.host;
 // Optional https straight from Node (no proxy needed): MUSE_TLS_KEY and MUSE_TLS_CERT are paths to a private key and a certificate.
 const TLS = process.env.MUSE_TLS_KEY && process.env.MUSE_TLS_CERT ? { key: fs.readFileSync(process.env.MUSE_TLS_KEY), cert: fs.readFileSync(process.env.MUSE_TLS_CERT) } : null;
 
-createServer({ access, tls: TLS, ops: createJobs({ home: HOME, dbPath: DB, version: VERSION }), admin: createAdmin({ home: HOME, dbPath: DB, db, version: VERSION, port: PORT, search, drift: () => require('./muse_map_check').check() }), model, marks: K.open(MARKS_FILE, VERSION), notes: createNoteStore(db, { vaultRoot: [process.env.MUSE_VAULT_ROOT || path.join(os.homedir(), 'md-vaults', 'knowledge'), process.env.VAULT_PATH] }), version: VERSION, search, trayStore: { load: () => { try { return JSON.parse(fs.readFileSync(TRAY_FILE, 'utf8')); } catch (e) { return { items: [], links: {} }; } }, save: o => { fs.writeFileSync(TRAY_FILE + '.tmp', JSON.stringify(o)); fs.renameSync(TRAY_FILE + '.tmp', TRAY_FILE); } }, events: { append: o => fs.appendFile(path.join(HOME, 'muse-events.jsonl'), JSON.stringify(o) + '\n', () => {}) }, uiRoot: path.join(__dirname, 'muse_ui') })
+createServer({ access, tls: TLS, ops: createJobs({ home: HOME, dbPath: DB, version: VERSION }), admin: createAdmin({ home: HOME, dbPath: DB, db, setupMode: SETUP_MODE, integrity: INTEGRITY, degraded: DEGRADED, loadedAt: new Date(t0).toISOString(), version: VERSION, port: PORT, search, drift: () => require('./muse_map_check').check() }), model, marks: K.open(MARKS_FILE, VERSION), notes: createNoteStore(db, { vaultRoot: [process.env.MUSE_VAULT_ROOT || path.join(os.homedir(), 'md-vaults', 'knowledge'), process.env.VAULT_PATH] }), version: VERSION, search, trayStore: { load: () => { try { return JSON.parse(fs.readFileSync(TRAY_FILE, 'utf8')); } catch (e) { return { items: [], links: {} }; } }, save: o => { fs.writeFileSync(TRAY_FILE + '.tmp', JSON.stringify(o)); fs.renameSync(TRAY_FILE + '.tmp', TRAY_FILE); } }, events: { append: o => fs.appendFile(path.join(HOME, 'muse-events.jsonl'), JSON.stringify(o) + '\n', () => {}) }, uiRoot: path.join(__dirname, 'muse_ui') })
   .listen(PORT, HOST, () => {
     console.log('Open ' + (TLS ? 'https' : 'http') + '://localhost:' + PORT + '   (marks are saved to ' + MARKS_FILE + ')');
     console.log(access.loopbackOnly ? 'Listening on ' + HOST + ' only: this machine.' : 'Listening on ' + HOST + ':' + PORT + ' (all network interfaces). Reading is open to anyone who can reach it.');

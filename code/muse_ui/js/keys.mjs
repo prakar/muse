@@ -35,7 +35,7 @@ const SHELF_KEY = { shelf0: SHELF_NAME.all, shelf1: SHELF_NAME.veins, shelf2: SH
 const typing = el => !!el && (/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName) || el.isContentEditable);
 const textOf = e => (e.textContent || '').replace(/\s+/g, ' ').trim();
 
-export function installKeys({ content, go, build, panelOpen = () => false, toggleCollection }) {
+export function installKeys({ content, go, build, panelOpen = () => false, toggleCollection, random = null }) {
   let level = 'items', areaLabel = '', idx = -1, label = '', pending = null, timer = null, overlay = null, returnTo = null;
   const root = () => content.closest('.shell') || document.body;
   const usable = e => !e.disabled && e.getAttribute('aria-disabled') !== 'true' && !e.closest('[hidden]');
@@ -132,7 +132,7 @@ export function installKeys({ content, go, build, panelOpen = () => false, toggl
       case 'next': return click(pageLink('Next page'));
       case 'prev': return click(pageLink('Previous page'));
       case 'back': return history.back();
-      case 'random': return click(find(document, t => t === 'Surprise me' || t === 'Another fact')) || go(build('stick'));
+      case 'random': return click(find(document, t => t === 'Surprise me' || t === 'Another fact')) || (random ? random() : go(build('stick')));   // no button on this page: fetch a fact and open it in focus directly, rather than landing on the empty In focus page first
       case 'help': return showOverlay();
       case 'allkinds': return click(find(content, t => t === 'All kinds'));
       case 'collection': return toggleCollection();

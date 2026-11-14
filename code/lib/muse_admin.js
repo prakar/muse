@@ -9,7 +9,7 @@ const stat = f => { try { const s = fs.statSync(f); return { bytes: s.size, at: 
 const q = (db, sql, args = []) => { try { return db.prepare(sql).all(...args); } catch (e) { return null; } };
 const one = (db, sql, args = []) => { const r = q(db, sql, args); return r && r[0] ? r[0] : null; };
 
-function createAdmin({ home, dbPath, db, version, port, search = null, ceiling = parseFloat(process.env.BUDGET_CEILING_USD || '10.00'), now = () => Date.now(), drift = null }) {
+function createAdmin({ home, dbPath, db, version, port, search = null, ceiling = parseFloat(process.env.BUDGET_CEILING_USD || '10.00'), now = () => Date.now(), drift = null, loadedAt = null, setupMode = false, integrity = null, degraded = false }) {
   const started = now();
   function backups() {
     let names = []; try { names = fs.readdirSync(home); } catch (e) { /* folder unreadable */ }
@@ -22,6 +22,15 @@ function createAdmin({ home, dbPath, db, version, port, search = null, ceiling =
   function vectors() {
     let names = []; try { names = fs.readdirSync(home); } catch (e) { /* folder unreadable */ }
     return names.filter(n => /^search-vectors-/.test(n)).map(n => ({ file: n, what: 'Search by meaning: vector index.', ...stat(path.join(home, n)) })).filter(x => x.bytes != null);
+  }
+  // Muse loads its facts, wordplay and duplicate flags once, when it starts. This says whether the database has gained any since, so the page can tell you to restart.
+  // Times are compared with datetime(), which reads both the ISO form (facts) and the plain form (wordplay) in UTC.
+  function freshness() {
+    if (!loadedAt) return null;
+    const since = sql => (one(db, sql, [loadedAt]) || {}).n || 0;
+    const f = { loadedAt, newFacts: since('SELECT COUNT(*) AS n FROM burrs WHERE datetime(created_at) > datetime(?)'), newWordplay: since('SELECT COUNT(*) AS n FROM wordplay_edges WHERE datetime(created_at) > datetime(?)'),
+      newDuplicateFlags: since('SELECT COUNT(*) AS n FROM burr_dupes WHERE datetime(created_at) > datetime(?)') };
+    f.stale = f.newFacts + f.newWordplay + f.newDuplicateFlags > 0; return f;
   }
   function status() {
     const byVersion = q(db, 'SELECT prompt_version AS version, COUNT(*) AS n FROM burrs GROUP BY prompt_version ORDER BY prompt_version') || [];
@@ -38,7 +47,9 @@ function createAdmin({ home, dbPath, db, version, port, search = null, ceiling =
       money: { spent: spent.s || 0, ceiling, lastCall: spent.last || null, lastRun: run },
       files: SIDECARS.map(([file, what]) => ({ file, what, ...(stat(path.join(home, file)) || { bytes: null, at: null }) })).concat(vectors()),
       leftovers: leftovers(),
-      server: { version, port, pid: process.pid, node: process.version, upSeconds: Math.round((now() - started) / 1000), search: search ? search.status() : null }
+      freshness: freshness(),
+      integrity: integrity && { state: integrity.state, level: integrity.level, degraded, findings: integrity.findings, ms: integrity.ms },
+      server: { setupMode, version, port, pid: process.pid, node: process.version, upSeconds: Math.round((now() - started) / 1000), search: search ? search.status() : null }
     };
   }
   async function runDrift() {

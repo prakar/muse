@@ -1,8 +1,24 @@
 # lab status (update on every change; this file is the merge ledger)
 
-Last updated: 2026-10-29
+Last updated: 2026-11-14
 
 This file is the canonical home of code state, numbers and the execution checklist. The design docs are canonical in the vault (see the repo CLAUDE.md); the Claude project QUARRY holds only pointer stubs.
+
+## Startup integrity check and repair mode, 14 Nov 2026
+- `code/lib/integrity.js` (read-only) compares the database with one built fresh by the code's own migrations (`migrate.buildFresh`), so there is no second list to drift. Fatal: damaged file, pending migrations, database newer than the code, missing tables or columns, pre-M015 paths. Warnings: extra structure, foreign-key problems (deep), vault folder missing, sampled notes not found.
+- Fatal at startup: Muse runs Admin-only (repair mode) on an empty in-memory model, so Admin stays reachable and systemd does not crash-loop. Admin shows a red banner with each problem and its fix. `/api/health` reports mode (normal, setup, degraded) without paths.
+- `muse integrity` runs the check; `muse restart` prints findings first; the deploy script stops before the restart on a fatal finding.
+- `structure()` moved to `code/lib/schema_structure.js` (the test helper re-exports it). Tests: `test/integrity.test.js` (10).
+- Still to do: the data map (table to writers/readers) with a checker, and the two lifecycle state tables.
+
+## Admin modes, create-the-database and setup mode, 14 Nov 2026
+- **Create or update the database** (`migrate` task, `node code/migrate.js --run`): makes `vault.db` when missing from `code/lib/base_schema.js`, then applies every migration. Idempotent. A status check on a missing database shows what a run would do and creates nothing. The indexer refuses to run without a migrated database; other tasks say "No database yet"; "Back up first" says there is nothing to back up.
+- **M016 to M018** move schema that scripts added lazily (`wordplay_edges`, the narrative approval columns, `video_links` and `video_transcripts`) into migrations; M015 also creates `vault_meta` on a new install. `test/schema_parity.test.js` builds a fresh database and compares its structure with the real one (`test/helpers/real_schema.json`, from the migrated Mac database). Each existing database needs one more `migrate --run` (a no-op on the data).
+- **Admin**: Initial setup and Ongoing maintenance modes; the order is the catalogue's `flows` (server), drawn by `planFlow`. `GET /api/admin/ops` also returns `setup` (what is in the database, the mode to open on, which steps look done); `GET /api/admin/status` returns `freshness` (what the database gained since Muse loaded) and `server.setupMode`.
+- **Setup mode**: `muse_app.js` with no `vault.db` runs on an empty in-memory database so Admin opens; restart Muse after creating the real one.
+- **Paid-run count** leaves out empty and media-only notes (under 3 words); they are listed beside it and still flagged for review for free.
+- **Deploy**: `muse_deploy.sh` applies pending migrations before the restart and stops without restarting if they fail.
+- `code/rebase_note_paths.js` and its test are superseded by M015 (run on the Mac and the homelab, 13 Nov 2026) and can be deleted.
 
 ## Portable note paths (M015), 13 Nov 2026
 Notes are keyed by `rel_path` (path inside the vault: forward slashes, NFC, relative) instead of an absolute `filepath`. Helpers live in `code/lib/note_path.js` (`toKey`, `toAbs`, `locate`, `vaultRoot`, collision and Windows-name checks). The root comes from `VAULT_PATH`, joined only when a file is opened. M015 rebuilds `vault_notes` (backup first, foreign keys off, counts verified) and records `legacy_path_prefix` in `vault_meta`. Dry run on a copy of the real DB: 6,929 notes keyed, child tables unchanged, 6,926 resolve to files (3 are notes since renamed or removed). `code/rebase_note_paths.js` is superseded: delete once M015 has run everywhere.

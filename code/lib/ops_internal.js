@@ -12,7 +12,8 @@ const names = (home, re) => { let l = []; try { l = fs.readdirSync(home); } catc
 const size = f => { try { return fs.statSync(f).size; } catch (e) { return 0; } };
 const mtime = f => { try { return fs.statSync(f).mtimeMs; } catch (e) { return 0; } };
 
-function openRead(dbPath) { return new DatabaseSync(dbPath, { readOnly: true }); }
+const NO_DB = 'No database yet. Run "Create or update the database" first (muse ops run migrate --go).';
+function openRead(dbPath) { if (!fs.existsSync(dbPath)) throw new Error(NO_DB); return new DatabaseSync(dbPath, { readOnly: true }); }
 
 // Notes the current prompt version has not processed yet: the number a person confirms before any paid run.
 function pendingNotes(dbPath, version) {
@@ -33,6 +34,7 @@ function backup({ home, dbPath, reason = 'manual', log = console.log, now = new 
   const why = String(reason || 'manual').toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 24) || 'manual';
   const dest = path.join(home, `vault.db.bak-${stamp(now)}-${why}`);
   if (fs.existsSync(dest)) throw new Error('A backup with that name already exists: ' + path.basename(dest));
+  if (!fs.existsSync(dbPath)) { log('No database yet, so there is nothing to back up.'); return null; }
   const db = openRead(dbPath);
   try { db.exec(`VACUUM INTO '${dest.replace(/'/g, "''")}'`); } finally { db.close(); }
   log(`Backed up ${path.basename(dbPath)} to ${path.basename(dest)} (${mb(size(dest))})`);
@@ -86,9 +88,28 @@ function status({ home, dbPath, version, log = console.log }) {
 // The notes a nuggetize run with these arguments would actually process: the script's own selection, so the number a person confirms is the number it will do.
 function candidates({ dbPath, args = [], log = console.log }) {
   const N = require('../nuggetizer'), db = openRead(dbPath);
-  try { const n = N.pickCandidates(db, N.parseArgs(args)).length; log(`Notes this run would process: ${n}`); return n; } finally { db.close(); }
+  // The number a person confirms before a paid run. Stubs and media-only notes (under 3 words) are in the run, because it records them for review without a model call,
+  // but they cost nothing and are not "waiting work", so they are reported beside the count and left out of it.
+  try {
+    const rows = N.pickCandidates(db, N.parseArgs(args)), n = rows.filter(r => (r.word_count || 0) >= 3).length, free = rows.length - n;
+    log(`Notes this run would process: ${n}` + (free ? ` (and ${free} empty or media-only note${free === 1 ? '' : 's'} that cost nothing and are only flagged for review)` : '')); return n;
+  } finally { db.close(); }
+}
+
+// Where an install stands, for the Admin page's two modes. Read-only and tolerant of a missing or half-built database. `suggested` is the mode to open on: a database
+// with notes and facts is "ongoing"; anything less is still "setup". `done` marks steps whose result is already in the database, so the setup list shows how far you are.
+function setupState({ dbPath, home }) {
+  const out = { database: fs.existsSync(dbPath), migrations: 0, notes: 0, facts: 0, wordplay: 0, backups: listBackups(home).length };
+  if (out.database) {
+    let db; try { db = openRead(dbPath); } catch (e) { db = null; }
+    const n = (sql) => { try { return db.prepare(sql).get().n; } catch (e) { return 0; } };
+    if (db) { try { out.migrations = n('SELECT COUNT(*) n FROM schema_migrations'); out.notes = n('SELECT COUNT(*) n FROM vault_notes'); out.facts = n('SELECT COUNT(*) n FROM burrs'); out.wordplay = n('SELECT COUNT(*) n FROM wordplay_edges'); } finally { db.close(); } }
+  }
+  out.done = { migrate: out.migrations > 0, 'vault-sync': out.notes > 0, index: out.notes > 0, nuggetize: out.facts > 0, 'refresh-process': out.facts > 0 && out.wordplay > 0, backup: out.backups > 0 };
+  out.suggested = out.database && out.notes > 0 && out.facts > 0 ? 'ongoing' : 'setup';
+  return out;
 }
 
 function pending({ dbPath, version, log = console.log }) { const n = pendingNotes(dbPath, version); log(`Pending notes: ${n}`); return n; }
 
-module.exports = { stamp, candidates, pendingNotes, listBackups, backup, prune, restore, leftovers, clean, status, pending, BACKUP_RE };
+module.exports = { stamp, setupState, candidates, pendingNotes, listBackups, backup, prune, restore, leftovers, clean, status, pending, BACKUP_RE };

@@ -60,6 +60,12 @@ test('ops plan: a paid run needs the count the person saw, and is refused if the
   assert.ok(Cat.plan('nuggetize', { mode: 'all' }, { ctx: c }).dry, 'asking without go never needs a number');
 });
 
+test('a stub (under 3 words) is not waiting work, so no paid run is asked for it', () => {
+  const f = fixture(), db = new DatabaseSync(f.dbPath);
+  db.exec("INSERT INTO vault_notes VALUES (6,'f','Untitled',NULL,0,0),(7,'g','Two',NULL,2,0),(8,'h','Three',NULL,3,0)"); db.close();
+  assert.strictEqual(I.candidates({ dbPath: f.dbPath, args: ['--all'], log() {} }), 3, 'notes 3, 4 and the 3-word note; the 0- and 2-word stubs are left out');
+});
+
 test('ops plan: the vault copy is never the real vault, never a git folder', () => {
   const f = fixture(), c = ctxOf(f);
   assert.match(err(() => Cat.plan('vault-sync', {}, { ctx: { ...c, env: { ...f.env, VAULT_PATH: f.src } } })).message, /real vault/);
@@ -126,4 +132,23 @@ test('ops endpoints: the same jobs over HTTP, behind the X-Muse header, with cle
     assert.strictEqual((await call('/api/admin/jobs/nosuchjob123')).code, 404);
     assert.strictEqual((await call('/api/admin/jobs/nosuchjob123/cancel', 'POST', {})).code, 400);
   } finally { srv.close(); }
+});
+
+test('the catalogue places every task in the Ongoing view, every step in a flow is a real task, and each flow reads in a sensible order', () => {
+  const ids = new Set(Cat.TASKS.map(t => t.id)), c = Cat.catalogue(), placed = id => c.flows.ongoing.groups.some(g => (g.tasks || []).includes(id) || (g.steps || []).some(s => s.task === id));
+  for (const f of Object.values(c.flows)) for (const g of f.groups) { for (const t of (g.tasks || [])) assert.ok(ids.has(t), 'unknown task ' + t); for (const s of (g.steps || [])) assert.ok(s.note || ids.has(s.task), 'unknown step ' + s.task); }
+  assert.deepStrictEqual([...ids].filter(id => !placed(id) && !c.onPage.includes(id)), [], 'no task can disappear from the page');
+  const setup = c.flows.setup.groups[0].steps.map(s => s.task);
+  assert.ok(setup.indexOf('migrate') < setup.indexOf('vault-sync') && setup.indexOf('vault-sync') < setup.indexOf('index') && setup.indexOf('index') < setup.indexOf('nuggetize') && setup.indexOf('nuggetize') < setup.indexOf('refresh-process'), 'a new install runs: database, copy, index, trial, the rest');
+  assert.ok(setup.indexOf('private-scan') > setup.indexOf('index') && setup.indexOf('private-scan') < setup.indexOf('nuggetize'), 'the private scan comes before anything is sent to a model');
+  const routine = c.flows.ongoing.groups[0].steps; assert.deepStrictEqual(routine.map(s => s.task || s.note), ['refresh', 'refresh-process', 'restart'], 'the weekly routine: bring in, process, restart');
+});
+
+test('setup state: no database is "setup"; a database with notes and facts is "ongoing"; done marks follow what is in the database', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'muse-setup-')), dbPath = path.join(dir, 'vault.db'); let s = I.setupState({ dbPath, home: dir });
+  assert.strictEqual(s.database, false); assert.strictEqual(s.suggested, 'setup'); assert.strictEqual(s.done.migrate, false);
+  const db = new DatabaseSync(dbPath); db.exec('CREATE TABLE schema_migrations(id TEXT); INSERT INTO schema_migrations VALUES (\'M001\'); CREATE TABLE vault_notes(id INTEGER); INSERT INTO vault_notes VALUES (1);'); db.close();
+  s = I.setupState({ dbPath, home: dir }); assert.strictEqual(s.suggested, 'setup', 'notes but no facts yet is still setup'); assert.ok(s.done.migrate && s.done.index && !s.done.nuggetize);
+  const d2 = new DatabaseSync(dbPath); d2.exec('CREATE TABLE burrs(id INTEGER); INSERT INTO burrs VALUES (1);'); d2.close();
+  assert.strictEqual(I.setupState({ dbPath, home: dir }).suggested, 'ongoing');
 });
