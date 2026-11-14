@@ -77,7 +77,8 @@ function log(level, msg, data) {
 // DATABASE
 // ---------------------------------------------------------------------------
 function openDb() {
-  if (MODE_DRY) return new DatabaseSync(':memory:');
+  // A dry run writes nothing. With --diff it reads the real database (read-only) so it can say what a real run would do; without one, everything counts as new.
+  if (MODE_DRY) return MODE_DIFF && fs.existsSync(DB_PATH) ? new DatabaseSync(DB_PATH, { readOnly: true }) : new DatabaseSync(':memory:');
   if (MODE_STATS) {
     if (fs.existsSync(DB_PATH)) return openDatabase(DB_PATH);
     return new DatabaseSync(':memory:');
@@ -573,6 +574,21 @@ function getModifiedFiles(db, allFiles) {
   });
 }
 
+function diffPreview(db, files) {
+  var hasTable = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='vault_notes'").get();
+  var getStmt = hasTable ? db.prepare('SELECT file_mtime FROM vault_notes WHERE rel_path = ?') : { get: function() { return undefined; } }, nw = [], ch = [], same = 0, here = {};
+  files.forEach(function(filepath) {
+    var key, mtime;
+    try { key = Paths.toKey(filepath, VAULT_PATH); } catch (_) { return; }
+    here[key] = true;
+    try { mtime = fs.statSync(filepath).mtime.toISOString(); } catch (_) { return; }
+    var row = getStmt.get(key);
+    if (!row) nw.push(key); else if (row.file_mtime !== mtime) ch.push(key); else same++;
+  });
+  var gone = (hasTable ? db.prepare('SELECT rel_path FROM vault_notes').all() : []).map(function(r) { return r.rel_path; }).filter(function(k) { return !here[k]; });
+  return { nw: nw, ch: ch, same: same, gone: gone };
+}
+
 // ---------------------------------------------------------------------------
 // STATS
 // ---------------------------------------------------------------------------
@@ -646,6 +662,13 @@ async function main() {
       }
       log('error', 'Vault contains no .md files - refusing to index (nothing was changed). If this is a new copy folder, run "Copy the vault in" for real first.', { vaultPath: VAULT_PATH });
       db.close(); process.exit(3);
+    }
+    if (MODE_DIFF && MODE_DRY) {
+      // What a real --diff run would do, without parsing or printing every note: new, changed (file time differs), unchanged (skipped), and notes that are gone.
+      var pv = diffPreview(db, files), ex = function(a) { return a.slice(0, 5); };
+      log('info', 'Diff preview (nothing written)', { inVault: files.length, new: pv.nw.length, changed: pv.ch.length, unchanged: pv.same, gone: pv.gone.length, newExamples: ex(pv.nw), changedExamples: ex(pv.ch), goneExamples: ex(pv.gone) });
+      console.log('\nA real "diff" run would index ' + pv.nw.length + ' new and ' + pv.ch.length + ' changed note(s), skip ' + pv.same + ' unchanged, and remove ' + pv.gone.length + ' note(s) that are no longer in the vault.' + (pv.gone.length > Math.max(10, Math.ceil((pv.same + pv.ch.length) * 0.02)) ? '\nThat is more removals than a normal clean-up, so a real run would refuse to remove them (check the vault folder first).' : ''));
+      db.close(); return;
     }
     if (MODE_DIFF && !MODE_DRY) {
       var before = files.length;

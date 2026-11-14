@@ -4,6 +4,14 @@ Last updated: 2026-11-14
 
 This file is the canonical home of code state, numbers and the execution checklist. The design docs are canonical in the vault (see the repo CLAUDE.md); the Claude project QUARRY holds only pointer stubs.
 
+## Edited notes, and clearer checks, 14 Nov 2026
+- **Gap found:** "Bring Muse up to date" re-indexed an edited note but never re-extracted its facts (extraction picks notes with no record for the current prompt version), so facts from the old text stayed. `--redo` is not a fix: it rewrites every note's facts with new ids and would orphan stars, the Collection and duplicate flags.
+- **New task "Re-process edited notes (paid)"** (its own card, step 3 of the routine; never run by another task). A note is *edited* when its file time is newer than its last extraction AND its current text has no saved model answer (the cache is keyed on the text, so a touched or re-synced note is not edited). Check first shows the count and cost; a real run needs the count typed back. Only edited notes get new fact ids. An edit down to nothing removes that note's facts; an empty note stays out until it has text. Same provider as the first extraction (the cache key includes it).
+- "Bring Muse up to date" now also prints "Edited notes this run would re-process: N" so the person knows whether to press it.
+- **Checks in numbers:** the index check (`--diff --dry-run`) reports new / changed / unchanged / gone instead of printing every note (it reads the real database read-only); the copy check says what rsync would add, update and remove, or that the copy is up to date (`muse ops _do vault-diff`).
+- Code: `nuggetizer.js` (`--edited`, `pickEdited`), `lib/ops_internal.js` (`candidates` takes env/home, `vaultDiff`), `lib/ops_catalogue.js`, `indexer.js` (`diffPreview`), `muse_ops.js`. Tests: `test/nuggetizer_edited.test.js` (7) plus additions in `muse_ops`, `indexer_keys`, `muse_screens`.
+- Not measurable on real data yet: 0 notes are edited today (just indexed). First real run: edit a note in the vault, then "Bring Muse up to date" should report 1.
+
 ## Startup integrity check and repair mode, 14 Nov 2026
 - `code/lib/integrity.js` (read-only) compares the database with one built fresh by the code's own migrations (`migrate.buildFresh`), so there is no second list to drift. Fatal: damaged file, pending migrations, database newer than the code, missing tables or columns, pre-M015 paths. Warnings: extra structure, foreign-key problems (deep), vault folder missing, sampled notes not found.
 - Fatal at startup: Muse runs Admin-only (repair mode) on an empty in-memory model, so Admin stays reachable and systemd does not crash-loop. Admin shows a red banner with each problem and its fix. `/api/health` reports mode (normal, setup, degraded) without paths.

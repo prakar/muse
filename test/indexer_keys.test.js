@@ -64,3 +64,16 @@ test('an empty vault copy: a real run refuses and says what to do, a dry run onl
   let r = idx(c, ['--diff']); assert.strictEqual(r.status, 3, r.stdout + r.stderr); assert.match(r.stdout + r.stderr, /Copy the vault in/);
   r = idx(c, ['--diff', '--dry-run']); assert.strictEqual(r.status, 0, r.stdout + r.stderr); assert.match(r.stdout + r.stderr, /no \.md files yet/);
 });
+
+test('--diff --dry-run reports new, changed, unchanged and gone notes in numbers, parses nothing and writes nothing', () => {
+  const c = setup(); assert.strictEqual(idx(c, ['--full']).status, 0);
+  const dbFile = path.join(c.home, 'vault.db'), before = fs.readFileSync(dbFile);
+  const later = new Date(Date.now() + 60000);   // a clearly newer file time
+  fs.writeFileSync(path.join(c.vault, '2013', 'Old note.md'), 'edited body words here'); fs.utimesSync(path.join(c.vault, '2013', 'Old note.md'), later, later);
+  fs.writeFileSync(path.join(c.vault, '2026', 'Brand new.md'), '# New\nfresh'); fs.rmSync(path.join(c.vault, '2026', 'sub', 'Deep.md'));
+  const r = idx(c, ['--diff', '--dry-run']); assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /index 1 new and 1 changed note\(s\), skip 2 unchanged, and remove 1 note/);
+  assert.doesNotMatch(r.stdout, /"tag_count"/, 'it does not print every note');
+  assert.ok(before.equals(fs.readFileSync(dbFile)), 'a dry run writes nothing');
+  const real = idx(c, ['--diff']); assert.strictEqual(real.status, 0, real.stdout + real.stderr); assert.match(real.stdout, /Diff filter applied[^\n]*"after":2/);
+});

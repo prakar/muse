@@ -85,14 +85,30 @@ function status({ home, dbPath, version, log = console.log }) {
   } finally { db.close(); }
 }
 
+// What "Copy the vault in" would do, in plain numbers, without rsync's itemised list: new, changed (size or modified time differs, rsync's own rule), no longer in the vault
+// (removed from the copy), and unchanged. Read-only; skips .git and .obsidian like the copy does.
+function vaultDiff({ src, dst, log = console.log }) {
+  const walk = root => { const out = new Map(); (function go(dir) { let es; try { es = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
+    for (const e of es) { if (e.name === '.git' || e.name === '.obsidian') continue; const p = path.join(dir, e.name);
+      if (e.isDirectory()) go(p); else if (e.isFile()) { try { const st = fs.statSync(p); out.set(path.relative(root, p), [st.size, Math.floor(st.mtimeMs / 1000)]); } catch (x) { /* vanished */ } } } })(root); return out; };
+  const a = walk(src), b = fs.existsSync(dst) ? walk(dst) : new Map(), nw = [], ch = [], gone = [];
+  let same = 0;
+  for (const [k, v] of a) { const w = b.get(k); if (!w) nw.push(k); else if (w[0] !== v[0] || w[1] !== v[1]) ch.push(k); else same++; }
+  for (const k of b.keys()) if (!a.has(k)) gone.push(k);
+  const ex = l => l.length ? '  e.g. ' + l.slice(0, 3).join(', ') : '';
+  if (!nw.length && !ch.length && !gone.length) log(`The copy is up to date: ${same} file(s), nothing to copy.`);
+  else log(`A real copy would add ${nw.length}, update ${ch.length} and remove ${gone.length} file(s); ${same} are already up to date.` + (nw.length ? '\n  new' + ex(nw) : '') + (ch.length ? '\n  changed' + ex(ch) : '') + (gone.length ? '\n  removed from the copy' + ex(gone) : ''));
+  return { new: nw.length, changed: ch.length, gone: gone.length, same };
+}
+
 // The notes a nuggetize run with these arguments would actually process: the script's own selection, so the number a person confirms is the number it will do.
-function candidates({ dbPath, args = [], log = console.log }) {
-  const N = require('../nuggetizer'), db = openRead(dbPath);
+function candidates({ dbPath, args = [], log = console.log, env = process.env, home = process.env.QUARRY_HOME }) {
+  const N = require('../nuggetizer'), db = openRead(dbPath), edited = args.includes('--edited');
   // The number a person confirms before a paid run. Stubs and media-only notes (under 3 words) are in the run, because it records them for review without a model call,
   // but they cost nothing and are not "waiting work", so they are reported beside the count and left out of it.
   try {
-    const rows = N.pickCandidates(db, N.parseArgs(args)), n = rows.filter(r => (r.word_count || 0) >= 3).length, free = rows.length - n;
-    log(`Notes this run would process: ${n}` + (free ? ` (and ${free} empty or media-only note${free === 1 ? '' : 's'} that cost nothing and are only flagged for review)` : '')); return n;
+    const rows = N.pickCandidates(db, N.parseArgs(args), edited ? require('./note_path').vaultRoot(env, home) : null), n = rows.filter(r => (r.word_count || 0) >= 3).length, free = rows.length - n;
+    log((edited ? 'Edited notes this run would re-process: ' : 'Notes this run would process: ') + n + (free ? ` (and ${free} empty or media-only note${free === 1 ? '' : 's'} that cost nothing and are only flagged for review)` : '')); return n;
   } finally { db.close(); }
 }
 
@@ -112,4 +128,4 @@ function setupState({ dbPath, home }) {
 
 function pending({ dbPath, version, log = console.log }) { const n = pendingNotes(dbPath, version); log(`Pending notes: ${n}`); return n; }
 
-module.exports = { stamp, setupState, candidates, pendingNotes, listBackups, backup, prune, restore, leftovers, clean, status, pending, BACKUP_RE };
+module.exports = { stamp, setupState, vaultDiff, candidates, pendingNotes, listBackups, backup, prune, restore, leftovers, clean, status, pending, BACKUP_RE };

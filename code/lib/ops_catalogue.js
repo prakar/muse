@@ -59,7 +59,14 @@ const TASKS = [
   { id: 'check', area: 'dev', title: 'Full test run', does: 'The drift check and every test. About 16 seconds; the log shows any failure.', effect: 'read-only', group: 'dev', params: [],
     build: () => [script('Drift check', 'muse_map_check.js'), { label: 'Tests', script: null, args: ['--no-warnings', '--test', ...fs.readdirSync(path.join(ROOT, 'test')).filter(f => /\.test\.js$/.test(f)).map(f => path.join('test', f))] }] },
   { id: 'vault-sync', area: 'ingest', title: 'Copy the vault in', does: 'Mirror the real vault into the copy Muse indexes (no .git, no .obsidian). Notes deleted from the vault disappear from the copy.', effect: 'writes files', group: 'db', params: [], dry: true,
-    build: (p, go, ctx) => { const v = vaultPaths(ctx.env); return [...(go && !fs.existsSync(v.dst) ? [{ label: 'Make the copy folder', cmd: 'mkdir', args: ['-p', v.dst] }] : []), { label: go ? 'Copy the vault' : 'Copy the vault (dry run)', cmd: 'rsync', args: ['-a', '--delete', '--exclude', '.git', '--exclude', '.obsidian', ...(go ? [] : ['-n', '-i']), v.src + '/', v.dst + '/'] }]; } },
+    build: (p, go, ctx) => { const v = vaultPaths(ctx.env); return [...(go && !fs.existsSync(v.dst) ? [{ label: 'Make the copy folder', cmd: 'mkdir', args: ['-p', v.dst] }] : []), ...(go ? [] : [internal('What would be copied', 'vault-diff', [v.src, v.dst])]), { label: go ? 'Copy the vault' : 'Copy the vault (dry run)', cmd: 'rsync', args: ['-a', '--delete', '--exclude', '.git', '--exclude', '.obsidian', ...(go ? [] : ['-n', '-i']), v.src + '/', v.dst + '/'] }]; } },
+  { id: 'reprocess-edited', area: 'prep', title: 'Re-process edited notes (paid)', does: 'Notes you changed after their facts were extracted: send just those to the model again and replace their facts. Unchanged notes are never touched. The check shows the count and cost; a real run needs the count typed back. A note\'s facts get new ids, so a star on one of them is lost. Afterwards run Flag duplicate facts, Find wordplay and Rebuild search.', effect: 'spends money', group: 'db', dry: true, backup: true, needs: 'count',
+    params: [P('provider', 'enum', 'Model provider', { values: PROVIDERS, default: 'gemini', help: 'Use the provider the facts were first extracted with: a note counts as edited when its current text has no saved answer for this provider.' }), P('ceiling', 'number', 'Spending ceiling, USD', { min: 0.01, max: 100 })],
+    build: (p, go) => {
+      const opts = ['--edited', '--provider', p.provider, ...(p.ceiling ? ['--ceiling', String(p.ceiling)] : [])];
+      return [internal('Edited notes', 'candidates', ['--edited', '--provider', p.provider]), script(go ? 'Re-extract facts' : 'Re-extract facts (dry run)', 'nuggetizer.js', [...opts, ...(go ? [] : ['--dry-run'])])];
+    },
+    expectValue: (p, ctx) => { try { return I.candidates({ dbPath: ctx.dbPath, args: ['--edited', '--provider', p.provider], env: ctx.env, home: ctx.home, log: () => {} }); } catch (e) { throw bad(e.message); } } },
   { id: 'index', area: 'ingest', title: 'Index the vault', does: 'Read the vault copy into vault.db: only what changed (default) or everything.', effect: 'writes DB', group: 'db', dry: true, backup: true,
     params: [P('mode', 'enum', 'What to index', { values: ['diff', 'full'], default: 'diff', help: 'diff = changed notes only' })],
     build: (p, go) => [script(go ? 'Index' : 'Index (dry run)', 'indexer.js', [p.mode === 'full' ? '--full' : '--diff', ...(go ? [] : ['--dry-run'])])] },
@@ -92,8 +99,8 @@ const TASKS = [
   { id: 'search-build', area: 'prep', title: 'Rebuild search by meaning', does: 'Compute vectors for new or changed facts (needs the embedding server), or use only what is cached. Safe to repeat.', effect: 'writes files', group: 'search',
     params: [P('noEmbed', 'bool', 'Cached vectors only, no embedding server', { default: false })],
     build: p => [script('Build vectors', 'search_build.js', p.noEmbed ? ['--no-embed'] : [])] },
-  { id: 'refresh', area: 'ingest', title: 'Bring Muse up to date', does: 'Back up, copy the vault in, index what changed, then count the notes waiting and estimate the cost. Stops before anything paid.', effect: 'writes DB', group: 'db', dry: true, backup: true, params: [],
-    build: (p, go, ctx) => [...byId('vault-sync').build({}, go, ctx), ...byId('index').build({ mode: 'diff' }, go, ctx), internal('Notes waiting', 'candidates', ['--all']), script('Estimate the cost', 'nuggetizer.js', ['--all', '--dry-run'])] },
+  { id: 'refresh', area: 'ingest', title: 'Bring Muse up to date', does: 'Back up, copy the vault in, index what changed, then count the new notes waiting and the notes you have edited, and estimate the cost. Stops before anything paid.', effect: 'writes DB', group: 'db', dry: true, backup: true, params: [],
+    build: (p, go, ctx) => [...byId('vault-sync').build({}, go, ctx), ...byId('index').build({ mode: 'diff' }, go, ctx), internal('Notes waiting', 'candidates', ['--all']), internal('Edited notes waiting', 'candidates', ['--edited']), script('Estimate the cost', 'nuggetizer.js', ['--all', '--dry-run'])] },
   { id: 'refresh-process', area: 'prep', title: 'Process what is waiting (paid)', does: 'Extract facts from every pending note, then flag duplicates, store wordplay, rebuild search. Needs the pending count typed back.', effect: 'spends money', group: 'db', dry: true, backup: true, needs: 'count',
     params: [P('provider', 'enum', 'Model provider', { values: PROVIDERS, default: 'gemini' }), P('ceiling', 'number', 'Spending ceiling, USD', { min: 0.01, max: 100 })],
     build: (p, go) => {
@@ -145,8 +152,9 @@ const FLOWS = {
     hint: 'For an install that is already set up: bring in new notes, process them, and see them in Muse.',
     groups: [
       { id: 'routine', title: 'Your routine', hint: 'After you add notes in Obsidian, daily or weekly.', ordered: true, steps: [
-        { task: 'refresh', why: 'Backs up, copies the vault in, indexes what changed, then counts the notes waiting and estimates the cost. Stops before anything paid.' },
+        { task: 'refresh', why: 'Backs up, copies the vault in, indexes what changed, then counts the new notes waiting and the notes you have edited, and estimates the cost. Stops before anything paid.' },
         { task: 'refresh-process', why: 'Only if notes are waiting. Extracts facts, flags duplicates, stores wordplay and rebuilds search. Paid; you type the count back.' },
+        { task: 'reprocess-edited', why: 'Only if the check above found edited notes. Re-sends just those, never the unchanged ones. Paid; you type the count back.' },
         { note: 'restart', title: 'Restart Muse', why: 'Muse loads its facts when it starts, so new ones appear after a restart: run `muse restart`. This page tells you when it is behind the database.' }] },
       { id: 'sometimes', title: 'Now and then', hint: 'Useful, but not part of every round.', tasks: ['backup', 'find-notes', 'private-scan'] },
       { id: 'update', title: 'After an update', hint: 'When you have deployed new code.', tasks: ['migrate', 'search-build', 'heuristics'] },

@@ -85,7 +85,8 @@ async function main() {
     case '_run': await jobs.runJob(pos[0]); process.exit(0); return;
     case '_do': {
       const [name, ...a] = pos, base = { home: HOME, dbPath: DB, version: VERSION };
-      if (name === 'status') I.status(base); else if (name === 'pending') I.pending(base); else if (name === 'candidates') I.candidates({ dbPath: DB, args: a });
+      if (name === 'status') I.status(base); else if (name === 'pending') I.pending(base); else if (name === 'candidates') I.candidates({ dbPath: DB, args: a, home: HOME });
+      else if (name === 'vault-diff') I.vaultDiff({ src: a[0], dst: a[1] });
       else if (name === 'backup') I.backup({ ...base, reason: a[0] });
       else if (name === 'prune') I.prune({ home: HOME, keep: parseInt(a[0], 10), go: a[1] === 'go' });
       else if (name === 'restore') I.restore({ ...base, name: a[0], go: a[1] === 'go' });

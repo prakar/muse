@@ -46,6 +46,20 @@ test('ops plan: a task with a dry twin only dries unless told to go, and every i
   assert.match(err(() => Cat.plan('nope', {}, { ctx: c })).message, /Unknown task/);
 });
 
+test('ops plan: re-processing edited notes is its own paid task: check first, count typed back, never part of another task\'s real run', () => {
+  const f = fixture(), c = ctxOf(f);
+  { const w = new DatabaseSync(f.dbPath); w.exec('ALTER TABLE vault_notes ADD COLUMN file_mtime TEXT; ALTER TABLE nuggetize_status ADD COLUMN at TEXT'); w.close(); }   // the fixture is a minimal schema; the real one has both
+  const bare = Object.assign({}, c, { env: {}, home: fs.mkdtempSync(path.join(os.tmpdir(), 'muse-ed-home-')) });
+  const miss = err(() => Cat.plan('reprocess-edited', {}, { go: true, expect: 0, ctx: bare })); assert.ok(miss && miss.userError); assert.match(miss.message, /VAULT_PATH/, 'without a vault copy folder the refusal says what is missing');
+  c.env = Object.assign({}, c.env, { VAULT_PATH: fs.mkdtempSync(path.join(os.tmpdir(), 'muse-ed-')) });
+  const t = Cat.catalogue().tasks.find(x => x.id === 'reprocess-edited'); assert.ok(t && t.dry && t.needs === 'count' && t.effect === 'spends money' && t.backup);
+  const dry = Cat.plan('reprocess-edited', {}, { ctx: c }); assert.ok(dry.dry);
+  assert.ok(dry.steps.some(s => s.args && s.args.includes('--edited') && s.args.includes('--dry-run')), 'the check passes --dry-run');
+  assert.ok(dry.steps.some(s => s.args && s.args[0] === '_do' && s.args.includes('--edited')), 'and counts the edited notes first');
+  for (const expect of [undefined, 0]) { const e = err(() => Cat.plan('reprocess-edited', {}, { go: true, expect, ctx: c })); assert.ok(e && e.userError); assert.match(e.message, /Nothing to do/, 'with no edited notes a real run is refused, whatever number is typed'); }
+  const real = Cat.TASK.get('reprocess-edited').build({ provider: 'gemini' }, true, c); assert.ok(real.some(s => s.args && s.args.includes('--edited') && !s.args.includes('--dry-run')), 'the real run steps drop --dry-run');
+  for (const id of ['refresh', 'refresh-process', 'nuggetize']) assert.ok(!Cat.plan(id, id === 'nuggetize' ? { mode: 'all' } : {}, { ctx: c }).steps.some(s => s.args && s.args.includes('--edited') && !s.args.includes('--dry-run') && s.script === 'nuggetizer.js'), id + ' never re-processes edited notes by itself');
+});
 test('ops plan: a paid run needs the count the person saw, and is refused if the count has changed', () => {
   const f = fixture(), c = ctxOf(f);   // 5 notes, 2 done: 3 pending
   assert.strictEqual(I.pendingNotes(f.dbPath, f.version), 3);   // notes minus done; the run itself skips the excluded note and, by default, long ones
@@ -73,8 +87,8 @@ test('ops plan: the vault copy is never the real vault, never a git folder', () 
   fs.rmdirSync(path.join(f.dst, '.git')); assert.match(err(() => Cat.plan('vault-sync', {}, { ctx: { ...c, env: { ...f.env, VAULT_PATH: '' } } })).message, /VAULT_PATH is not set/);
   { const f2 = fixture(), c2 = ctxOf(f2); fs.rmSync(f2.dst, { recursive: true, force: true });
     const real = Cat.plan('vault-sync', {}, { go: true, ctx: c2 }).steps; assert.strictEqual(real[0].cmd, 'mkdir'); assert.strictEqual(real[1].cmd, 'rsync');
-    assert.strictEqual(Cat.plan('vault-sync', {}, { ctx: c2 }).steps[0].cmd, 'rsync', 'a dry run makes nothing'); }
-  const dry = Cat.plan('vault-sync', {}, { ctx: c }).steps[0]; assert.ok(dry.args.includes('-n') && dry.args.includes('--exclude') && dry.args.includes('.git'));
+    const dry = Cat.plan('vault-sync', {}, { ctx: c2 }).steps; assert.ok(!dry.some(x => x.cmd === 'mkdir'), 'a dry run makes nothing'); assert.ok(dry.some(x => x.cmd === 'rsync' && x.args.includes('-n'))); }
+  const dry = Cat.plan('vault-sync', {}, { ctx: c }).steps.find(x => x.cmd === 'rsync'); assert.ok(dry.args.includes('-n') && dry.args.includes('--exclude') && dry.args.includes('.git'));
 });
 
 test('ops internal: backup, prune, restore and clean do what they say, and restore can itself be undone', () => {
@@ -141,7 +155,7 @@ test('the catalogue places every task in the Ongoing view, every step in a flow 
   const setup = c.flows.setup.groups[0].steps.map(s => s.task);
   assert.ok(setup.indexOf('migrate') < setup.indexOf('vault-sync') && setup.indexOf('vault-sync') < setup.indexOf('index') && setup.indexOf('index') < setup.indexOf('nuggetize') && setup.indexOf('nuggetize') < setup.indexOf('refresh-process'), 'a new install runs: database, copy, index, trial, the rest');
   assert.ok(setup.indexOf('private-scan') > setup.indexOf('index') && setup.indexOf('private-scan') < setup.indexOf('nuggetize'), 'the private scan comes before anything is sent to a model');
-  const routine = c.flows.ongoing.groups[0].steps; assert.deepStrictEqual(routine.map(s => s.task || s.note), ['refresh', 'refresh-process', 'restart'], 'the weekly routine: bring in, process, restart');
+  const routine = c.flows.ongoing.groups[0].steps; assert.deepStrictEqual(routine.map(s => s.task || s.note), ['refresh', 'refresh-process', 'reprocess-edited', 'restart'], 'the weekly routine: bring in, process, re-process edited (its own step), restart');
 });
 
 test('setup state: no database is "setup"; a database with notes and facts is "ongoing"; done marks follow what is in the database', () => {
@@ -151,4 +165,18 @@ test('setup state: no database is "setup"; a database with notes and facts is "o
   s = I.setupState({ dbPath, home: dir }); assert.strictEqual(s.suggested, 'setup', 'notes but no facts yet is still setup'); assert.ok(s.done.migrate && s.done.index && !s.done.nuggetize);
   const d2 = new DatabaseSync(dbPath); d2.exec('CREATE TABLE burrs(id INTEGER); INSERT INTO burrs VALUES (1);'); d2.close();
   assert.strictEqual(I.setupState({ dbPath, home: dir }).suggested, 'ongoing');
+});
+
+test('vault copy check: says in numbers what would be copied, and says when the copy is up to date', () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'muse-vd-')), src = path.join(base, 'src'), dst = path.join(base, 'dst');
+  fs.mkdirSync(path.join(src, '.git'), { recursive: true }); fs.mkdirSync(path.join(src, '.obsidian')); fs.mkdirSync(path.join(src, '2026'), { recursive: true });
+  fs.writeFileSync(path.join(src, '.git', 'x'), 'ignored'); fs.writeFileSync(path.join(src, '2026', 'a.md'), 'aaa'); fs.writeFileSync(path.join(src, 'b.md'), 'bbb');
+  const lines = [], run = () => I.vaultDiff({ src, dst, log: l => lines.push(l) });
+  assert.deepStrictEqual(run(), { new: 2, changed: 0, gone: 0, same: 0 }, 'no copy yet: everything is new, .git and .obsidian are skipped');
+  fs.cpSync(src, dst, { recursive: true, preserveTimestamps: true }); fs.rmSync(path.join(dst, '.git'), { recursive: true }); fs.rmSync(path.join(dst, '.obsidian'), { recursive: true });
+  lines.length = 0; assert.deepStrictEqual(run(), { new: 0, changed: 0, gone: 0, same: 2 }); assert.match(lines[0], /copy is up to date: 2 file/);
+  fs.writeFileSync(path.join(src, 'b.md'), 'bbbb longer'); fs.writeFileSync(path.join(src, 'c.md'), 'new'); fs.rmSync(path.join(src, '2026', 'a.md'));
+  lines.length = 0; assert.deepStrictEqual(run(), { new: 1, changed: 1, gone: 1, same: 0 }); assert.match(lines[0], /add 1, update 1 and remove 1/);
+  const t = Cat.TASK.get('vault-sync'), env = { MUSE_VAULT_SRC: src, VAULT_PATH: dst };
+  assert.ok(t.build({}, false, { env, home: base }).some(s => s.args && s.args.includes('vault-diff')), 'the check shows the numbers'); assert.ok(!t.build({}, true, { env, home: base }).some(s => s.args && s.args.includes('vault-diff')), 'a real copy does not need them');
 });

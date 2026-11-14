@@ -29,7 +29,7 @@ const EST_PROMPT_TOKENS = 700;   // fixed instructions + example
 const EST_OUT_TOKENS    = 250;
 
 function parseArgs(argv) {
-  const a = { dryRun: false, limit: 0, provider: 'gemini', all: false, maxWords: 200, minWords: 0, redo: false, shuffle: false, note: 0, ceiling: null, reviewList: '' };
+  const a = { dryRun: false, edited: false, limit: 0, provider: 'gemini', all: false, maxWords: 200, minWords: 0, redo: false, shuffle: false, note: 0, ceiling: null, reviewList: '' };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
     if (k === '--dry-run') a.dryRun = true;
@@ -40,6 +40,7 @@ function parseArgs(argv) {
     else if (k === '--min-words') a.minWords = parseInt(argv[++i], 10) || 0;
     else if (k === '--shuffle') a.shuffle = true;
     else if (k === '--redo') a.redo = true;
+    else if (k === '--edited') a.edited = true;
     else if (k === '--note') a.note = parseInt(argv[++i], 10) || 0;
     else if (k === '--ceiling') a.ceiling = parseFloat(argv[++i]);
     else if (k === '--review-list') a.reviewList = argv[++i] || '';
@@ -50,7 +51,8 @@ function parseArgs(argv) {
 
 function now() { return new Date().toISOString(); }
 
-function pickCandidates(db, a) {
+function pickCandidates(db, a, root) {
+  if (a.edited) return pickEdited(db, a, root);
   if (a.note) return db.prepare('SELECT id,rel_path,title,source_url,word_count FROM vault_notes WHERE id=?').all(a.note);
   const where = ['COALESCE(n.quarry_exclude,0)=0',
     a.redo ? '1=1' : 'NOT EXISTS (SELECT 1 FROM nuggetize_status s WHERE s.note_id=n.id AND s.prompt_version=? AND s.status IN (\'ok\',\'empty\',\'skipped_empty\'))'];
@@ -60,6 +62,24 @@ function pickCandidates(db, a) {
   const sql = 'SELECT n.id,n.rel_path,n.title,n.source_url,n.word_count FROM vault_notes n WHERE ' + where.join(' AND ') +
               (a.shuffle ? ' ORDER BY (n.id * 2654435761) % 1000003' : ' ORDER BY n.word_count ASC, n.id ASC') + (a.limit ? ' LIMIT ' + a.limit : '');
   return db.prepare(sql).all(...params);
+}
+
+// Notes edited since their facts were extracted: the file is newer than the last extraction AND the note's current text has no saved model answer (the cache is keyed on
+// the text itself, so a note that was only touched or re-synced finds its answer and is NOT edited). Unchanged notes are never selected, so their facts and ids stay put.
+// A note that was empty and still is, is not edited either. Unreadable files are left out (the index step reports them). Uses the same provider as the extraction.
+function pickEdited(db, a, root) {
+  if (!root) throw new Error('--edited needs the vault copy folder (VAULT_PATH).');
+  const rows = db.prepare("SELECT n.id,n.rel_path,n.title,n.source_url,n.word_count,s.status AS prev FROM vault_notes n JOIN nuggetize_status s ON s.note_id=n.id AND s.prompt_version=? " +
+    "WHERE COALESCE(n.quarry_exclude,0)=0 AND s.status IN ('ok','empty','skipped_empty') AND n.file_mtime > s.at ORDER BY n.word_count ASC, n.id ASC").all(B.PROMPT_VERSION);
+  if (!rows.length) return [];
+  const cached = db.prepare('SELECT 1 FROM nuggetize_cache WHERE cache_key=?'), out = [];
+  for (const r of rows) {
+    let note; try { note = loadNote(r, root); } catch (e) { continue; }
+    const empty = note.real_words < 3;
+    if (empty) { if (r.prev !== 'skipped_empty') out.push(r); continue; }
+    if (r.prev === 'skipped_empty' || !cached.get(B.cacheKey(a.provider, B.buildInput(note, note.cleaned)))) out.push(r);
+  }
+  return out;
 }
 
 function loadNote(row, root) {
@@ -83,6 +103,7 @@ function markNugget(db, row, reason) {
 async function processNote(db, row, a, runId, deps) {
   const note = loadNote(row, deps.root);
   if (note.real_words < 3) {
+    db.prepare('DELETE FROM burrs WHERE note_id=? AND prompt_version=?').run(row.id, B.PROMPT_VERSION);   // a note edited down to nothing keeps no facts from its old text
     setStatus(db, row.id, 'skipped_empty', 0, 0, ['body under 3 real words (title only or media only)'], null, runId);
     db.prepare('INSERT OR REPLACE INTO note_disposition (note_id,bucket,disposition,reason,decided_by,decided_at) VALUES (?,?,?,?,?,?)')
       .run(row.id, 'empty', 'review', 'no body text (title-only or media-only); human review: delete, expand or keep as hub', 'rule', now());
@@ -146,14 +167,15 @@ async function run(a, deps) {
   if (!db.prepare("SELECT name FROM sqlite_master WHERE name='nuggetize_status'").get()) throw new Error('Tables missing. Run: node code/migrate.js --run');
   if (a.reviewList) { const n = writeReviewList(db, a.reviewList); console.log('Wrote ' + n + ' review rows to ' + a.reviewList); return { reviewRows: n }; }
 
-  const cands = pickCandidates(db, a);
+  const rootOf = () => deps.root || Paths.vaultRoot(process.env, process.env.QUARRY_HOME || path.join(__dirname, '..'));   // never guessed: see lib/note_path.js
+  const cands = pickCandidates(db, a, a.edited ? rootOf() : null);
   const estIn = cands.reduce(function (s, r) { return s + EST_PROMPT_TOKENS + Math.min(B.MAX_BODY_CHARS, (r.word_count || 0) * 7) / 4; }, 0);
   const rate = Bud.priceFor(a.provider, null, 0);
   const estCost = rate ? (estIn * rate.in + cands.length * EST_OUT_TOKENS * rate.out) / 1e6 : 0;
   console.log('Candidates: ' + cands.length + ' | provider ' + a.provider + ' | est. cost $' + estCost.toFixed(3) + ' | spent so far $' + Bud.spentToDate(db).toFixed(4));
   if (a.dryRun || !cands.length) return { candidates: cands.length, estCost: estCost };
 
-  const root = deps.root || Paths.vaultRoot(process.env, process.env.QUARRY_HOME || path.join(__dirname, '..'));   // never guessed: see lib/note_path.js
+  const root = rootOf();
   const callLLM = deps.callLLM || require('./lib/llm').callLLM;
   if (!deps.callLLM && !require('./lib/llm').hasKey(a.provider)) throw new Error('No API key for provider ' + a.provider);
   const runId = 'nug-' + now().replace(/[-:.TZ]/g, '').slice(0, 17) + '-' + Math.random().toString(16).slice(2, 6);
@@ -182,7 +204,7 @@ async function run(a, deps) {
   return tally;
 }
 
-module.exports = { run, parseArgs, processNote, pickCandidates };
+module.exports = { run, parseArgs, processNote, pickCandidates, pickEdited };
 
 if (require.main === module) {
   run(parseArgs(process.argv.slice(2))).catch(function (e) { console.error('FATAL: ' + e.message); process.exit(1); });

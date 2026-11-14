@@ -86,7 +86,7 @@ test('screens: Admin draws the catalogue\'s own order in two modes, numbers the 
   D.install(); const { planFlow, suggestedMode } = await imp('views/admin_tasks.mjs'), Cat = require('../code/lib/ops_catalogue'), cat = Cat.catalogue();
   const ongoing = planFlow(cat, 'ongoing'), by = Object.fromEntries(ongoing.groups.map(g => [g.id, g]));
   assert.deepStrictEqual(ongoing.groups.map(g => g.id), ['routine', 'sometimes', 'update', 'care', 'pieces'], 'the routine first, the parts last');
-  assert.deepStrictEqual(by.routine.items.map(i => i.task ? i.task.id : i.note), ['refresh', 'refresh-process', 'restart']); assert.strictEqual(by.routine.ordered, true); assert.strictEqual(by.pieces.collapsed, true);
+  assert.deepStrictEqual(by.routine.items.map(i => i.task ? i.task.id : i.note), ['refresh', 'refresh-process', 'reprocess-edited', 'restart']); assert.strictEqual(by.routine.ordered, true); assert.strictEqual(by.pieces.collapsed, true);
   const shown = new Set(ongoing.groups.flatMap(g => g.items.filter(i => i.task).map(i => i.task.id)));
   assert.deepStrictEqual(Cat.TASKS.map(t => t.id).filter(id => !shown.has(id) && !cat.onPage.includes(id)), [], 'every task not shown elsewhere is on the page');
   const setup = planFlow(cat, 'setup'); assert.deepStrictEqual(setup.groups[0].items.map(i => i.task.id), ['migrate', 'vault-sync', 'index', 'private-scan', 'nuggetize', 'refresh-process', 'heuristics', 'backup']);
