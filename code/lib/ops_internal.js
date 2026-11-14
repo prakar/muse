@@ -108,7 +108,9 @@ function candidates({ dbPath, args = [], log = console.log, env = process.env, h
   // but they cost nothing and are not "waiting work", so they are reported beside the count and left out of it.
   try {
     const rows = N.pickCandidates(db, N.parseArgs(args), edited ? require('./note_path').vaultRoot(env, home) : null), n = rows.filter(r => (r.word_count || 0) >= 3).length, free = rows.length - n;
-    log((edited ? 'Edited notes this run would re-process: ' : 'Notes this run would process: ') + n + (free ? ` (and ${free} empty or media-only note${free === 1 ? '' : 's'} that cost nothing and are only flagged for review)` : '')); return n;
+    log((edited ? 'Edited notes this run would re-process: ' : 'Notes this run would process: ') + n + (free ? ` (and ${free} empty or media-only note${free === 1 ? '' : 's'} that cost nothing and are only flagged for review)` : ''));
+    if (edited && rows.skipped && rows.skipped.length) { log(`Skipped ${rows.skipped.length} edited-looking note${rows.skipped.length === 1 ? '' : 's'} (nothing to re-extract):`); rows.skipped.forEach(x => log('  ' + x.rel_path + ' - ' + x.reason)); }
+    return n;
   } finally { db.close(); }
 }
 

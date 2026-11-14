@@ -71,13 +71,15 @@ function pickEdited(db, a, root) {
   if (!root) throw new Error('--edited needs the vault copy folder (VAULT_PATH).');
   const rows = db.prepare("SELECT n.id,n.rel_path,n.title,n.source_url,n.word_count,s.status AS prev FROM vault_notes n JOIN nuggetize_status s ON s.note_id=n.id AND s.prompt_version=? " +
     "WHERE COALESCE(n.quarry_exclude,0)=0 AND s.status IN ('ok','empty','skipped_empty') AND n.file_mtime > s.at ORDER BY n.word_count ASC, n.id ASC").all(B.PROMPT_VERSION);
-  if (!rows.length) return [];
-  const cached = db.prepare('SELECT 1 FROM nuggetize_cache WHERE cache_key=?'), out = [];
+  const out = []; Object.defineProperty(out, 'skipped', { value: [], enumerable: false });   // out.skipped: notes whose file changed but are not re-processed, each with the reason
+  if (!rows.length) return out;
+  const cached = db.prepare('SELECT 1 FROM nuggetize_cache WHERE cache_key=?');
   for (const r of rows) {
-    let note; try { note = loadNote(r, root); } catch (e) { continue; }
+    let note; try { note = loadNote(r, root); } catch (e) { out.skipped.push({ rel_path: r.rel_path, reason: 'file could not be read from the vault copy' }); continue; }
     const empty = note.real_words < 3;
-    if (empty) { if (r.prev !== 'skipped_empty') out.push(r); continue; }
+    if (empty) { if (r.prev !== 'skipped_empty') out.push(r); else out.skipped.push({ rel_path: r.rel_path, reason: 'still empty (under 3 words of body text)' }); continue; }
     if (r.prev === 'skipped_empty' || !cached.get(B.cacheKey(a.provider, B.buildInput(note, note.cleaned)))) out.push(r);
+    else out.skipped.push({ rel_path: r.rel_path, reason: 'file changed, but the body text is unchanged since the last extraction (tags, properties or a re-save only)' });
   }
   return out;
 }

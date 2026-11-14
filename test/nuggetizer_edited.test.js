@@ -31,7 +31,10 @@ test('edited: a note not touched since its facts were extracted is never selecte
 test('edited: a note that was only touched (newer file, same text) is NOT edited, because its text has a saved answer', async () => {
   const { db, dir } = await fixture();
   db.prepare('UPDATE vault_notes SET file_mtime=? WHERE id=1').run(NEWER);
-  assert.deepStrictEqual(Nug.pickEdited(db, { provider: 'gemini' }, dir), []);
+  const none = Nug.pickEdited(db, { provider: 'gemini' }, dir);
+  assert.deepStrictEqual([...none], []);
+  assert.strictEqual(none.skipped.length, 1, 'the skipped note is listed, so the report can say why');
+  assert.match(none.skipped[0].reason, /body text is unchanged/);
 });
 test('edited: a really changed note is selected; the run costs one call, replaces only its facts, and the others keep their ids', async () => {
   const { db, dir, edit } = await fixture();
