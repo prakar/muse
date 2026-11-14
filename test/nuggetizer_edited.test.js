@@ -77,3 +77,15 @@ test('edited: the count a person confirms comes from the same selection (ops_int
   const lines = []; const n = I.candidates({ dbPath: p + '.copy', args: ['--edited', '--provider', 'gemini'], env: { VAULT_PATH: f.dir }, home: f.dir, log: l => lines.push(l) });
   assert.strictEqual(n, 1); assert.match(lines[0], /Edited notes this run would re-process: 1/);
 });
+
+test('edited: the report names every note it will re-process, as well as those it skips', async () => {
+  const { db, dir, edit } = await fixture();
+  edit(1, SENT + ' Added later: they are marsupials.', NEWER); db.prepare('UPDATE vault_notes SET file_mtime=? WHERE id=2').run(NEWER);
+  const file = path.join(os.tmpdir(), 'ed-report-' + process.pid + '.db'); fs.rmSync(file, { force: true });
+  const disk = new DatabaseSync(file); db.exec('VACUUM INTO ' + "'" + file.replace(/'/g, "''") + "'"); disk.close();
+  const lines = []; I.candidates({ dbPath: file, args: ['--edited', '--provider', 'gemini'], log: m => lines.push(m), env: { VAULT_PATH: dir }, home: dir });
+  const out = lines.join('\n');
+  assert.match(out, /will re-process: a\.md - body text changed/);
+  assert.match(out, /Skipped 1 .*\n  b\.md - file changed, but the body text is unchanged/);
+  fs.rmSync(file, { force: true });
+});
