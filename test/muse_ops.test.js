@@ -180,3 +180,8 @@ test('vault copy check: says in numbers what would be copied, and says when the 
   const t = Cat.TASK.get('vault-sync'), env = { MUSE_VAULT_SRC: src, VAULT_PATH: dst };
   assert.ok(t.build({}, false, { env, home: base }).some(s => s.args && s.args.includes('vault-diff')), 'the check shows the numbers'); assert.ok(!t.build({}, true, { env, home: base }).some(s => s.args && s.args.includes('vault-diff')), 'a real copy does not need them');
 });
+
+test('internal candidates step receives its flags (regression: --edited was stripped)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'code', 'muse_ops.js'), 'utf8');
+  assert.match(src, /name === 'candidates'\) I\.candidates\(\{ dbPath: DB, args: argv\.slice\(2\)/, 'candidates must get the raw tokens, not the flag-stripped positionals');
+});
