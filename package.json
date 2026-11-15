@@ -2,9 +2,8 @@
   "name": "quarry",
   "version": "2.0.0",
   "description": "Narrative engine for personal knowledge vault",
-  "main": "code/server.js",
+  "main": "code/muse_app.js",
   "scripts": {
-    "start": "node --no-warnings code/server.js",
     "migrate": "node --no-warnings code/migrate.js",
     "index": "node --no-warnings code/indexer.js --diff",
     "nuggetize": "node --no-warnings code/nuggetizer.js",

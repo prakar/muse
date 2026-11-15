@@ -20,8 +20,8 @@ test('ops catalogue: every task is wired to a real script, and the safety rules 
     assert.ok(areas.has(t.area), t.id + ' has a known area'); assert.ok(t.title && t.does, t.id + ' says what it does');
     assert.ok(['read-only', 'writes files', 'writes DB', 'spends money'].includes(t.effect), t.id + ' declares its effect');
     if (t.needs) assert.ok(t.expectValue && t.dry, t.id + ' asks for confirmation only when it has a dry twin and a value to check');
-    if (t.effect === 'spends money') assert.ok(t.needs && t.backup && t.dry, t.id + ': paid tasks have a dry run, a backup and a typed confirmation');
-    if (t.effect === 'writes DB') assert.ok(t.backup || t.id === 'restore', t.id + ': tasks that write the database back it up first (restore does its own)');
+    if (t.effect === 'spends money') assert.ok(t.needs && t.dry && (t.backup || t.safe), t.id + ': paid tasks have a dry run, a typed confirmation, and either a backup or a stated reason none is needed');
+    if (t.effect === 'writes DB') assert.ok(t.backup || (t.safe && t.safe.length > 20) || t.id === 'restore', t.id + ': a task that writes the database backs up first, or says why what it writes can be rebuilt (restore does its own)');
     const steps = Cat.plan(t.id, t.id === 'find-notes' ? { pattern: 'x' } : t.id === 'restore' ? { name: 'vault.db.bak-1' } : {}, { ctx: { home: f.home, dbPath: f.dbPath, version: f.version, env: f.env } }).steps;
     steps.forEach(s => { if (s.script) assert.ok(fs.existsSync(path.join(__dirname, '..', 'code', s.script)), t.id + ' uses a script that exists: ' + s.script); });
   });
@@ -34,7 +34,7 @@ test('ops plan: a task with a dry twin only dries unless told to go, and every i
   const f = fixture(), c = ctxOf(f);
   const dry = Cat.plan('index', {}, { ctx: c }); assert.strictEqual(dry.dry, true); assert.ok(dry.steps.some(s => s.args.includes('--dry-run')) && !dry.steps.some(s => /backup/.test(s.args.join(' '))), 'a dry run neither writes nor backs up');
   const real = Cat.plan('index', { mode: 'full' }, { go: true, ctx: c }); assert.strictEqual(real.dry, false);
-  assert.deepStrictEqual(real.steps.map(s => s.args[0]), ['_do', '--full'], 'a real run backs up first, then indexes'); assert.ok(real.steps[0].args.join(' ').includes('before-index'));
+  assert.deepStrictEqual(real.steps.map(s => s.args[0]), ['--full'], 'a real index run does not back up first: it only adds and updates notes, and the indexer snapshots before it removes any'); assert.ok(!real.steps.some(x => /backup/.test(x.args.join(' '))));
   assert.match(err(() => Cat.plan('index', { mode: 'sideways' }, { ctx: c })).message, /one of diff, full/);
   assert.match(err(() => Cat.plan('index', { colour: 'red' }, { ctx: c })).message, /no parameter colour/);
   assert.match(err(() => Cat.plan('nuggetize', { limit: '2.5' }, { ctx: c })).message, /whole number/);
@@ -70,7 +70,7 @@ test('ops plan: a paid run needs the count the person saw, and is refused if the
   const ok = Cat.plan('nuggetize', { mode: 'all' }, { go: true, expect: 2, ctx: c }); assert.ok(ok.steps.some(s => s.args.includes('--all') && !s.args.includes('--dry-run')));
   assert.ok(Cat.plan('nuggetize', { mode: 'limit', limit: 1 }, { go: true, expect: '1', ctx: c }), 'a limit below the count confirms against the limit');
   assert.match(err(() => Cat.plan('refresh-process', {}, { go: true, ctx: c })).message, /affects 2/);
-  assert.ok(Cat.plan('refresh-process', {}, { go: true, expect: 2, ctx: c }).steps.length === 6, 'backup, count, extract, dedupe, wordplay, search');
+  assert.ok(Cat.plan('refresh-process', {}, { go: true, expect: 2, ctx: c }).steps.length === 5, 'count, extract, dedupe, wordplay, search (it only fills notes with no facts, so no backup)');
   assert.ok(Cat.plan('nuggetize', { mode: 'all' }, { ctx: c }).dry, 'asking without go never needs a number');
 });
 
@@ -184,4 +184,13 @@ test('vault copy check: says in numbers what would be copied, and says when the 
 test('internal candidates step receives its flags (regression: --edited was stripped)', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'code', 'muse_ops.js'), 'utf8');
   assert.match(src, /name === 'candidates'\) I\.candidates\(\{ dbPath: DB, args: argv\.slice\(2\)/, 'candidates must get the raw tokens, not the flag-stripped positionals');
+});
+
+test('backup policy: only steps that can destroy non-rebuildable data back up first', () => {
+  const f = fixture(), c = ctxOf(f), has = steps => steps.some(x => x.args.includes('backup'));
+  assert.ok(Cat.TASK.get('reprocess-edited').backup, 're-processing edited notes replaces facts, so it always backs up');
+  assert.strictEqual(typeof Cat.TASK.get('nuggetize').backup, 'function', 'nuggetize backs up only in the modes that replace finished notes');
+  const T = Cat.TASK.get('nuggetize'); assert.ok(T.backup({ mode: 'note' }) && T.backup({ mode: 'redo' }) && !T.backup({ mode: 'limit' }) && !T.backup({ mode: 'all' }) && !T.backup({ mode: 'short' }));
+  ['index', 'migrate', 'dedupe', 'wordplay', 'refresh', 'refresh-process'].forEach(id => { const t = Cat.TASK.get(id); assert.ok(!t.backup && t.safe, id + ' carries its reason instead of a backup'); });
+  assert.ok(Cat.TASK.get('backup') && Cat.TASK.get('restore'), 'the explicit Back up button and Restore remain');
 });

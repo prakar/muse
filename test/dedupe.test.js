@@ -53,6 +53,8 @@ test('report only writes nothing; --apply writes flags and replaces them on re-r
   const rep = run(db);
   assert.strictEqual(rep.dupes, 1);
   assert.throws(() => db.prepare('SELECT * FROM burr_dupes').all());          // report wrote nothing
+  assert.throws(() => run(db, { apply: true }), /Missing table: burr_dupes.*Create or update the database/);   // a step never builds a table itself
+  db.exec(D.SCHEMA_SQL);   // what migration M014 does
   run(db, { apply: true }); const r2 = run(db, { apply: true });
   assert.strictEqual(r2.dupes, 1);
   assert.strictEqual(db.prepare('SELECT COUNT(*) c FROM burr_dupes').get().c, 1);

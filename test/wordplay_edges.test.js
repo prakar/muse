@@ -19,6 +19,8 @@ test('edgesFrom flattens kinds with grades and note ids', () => {
 });
 test('apply replaces rows, summary counts grades', () => {
   const db = new DatabaseSync(':memory:'), rows = E.edgesFrom(res, idx);
+  assert.throws(() => W.apply(db, rows), /Missing table: wordplay_edges/);   // a step never builds a table itself
+  db.exec(E.SCHEMA_SQL);   // what the migration does
   W.apply(db, rows); W.apply(db, rows);
   assert.strictEqual(db.prepare('SELECT COUNT(*) c FROM wordplay_edges').get().c, rows.length, 'second apply replaces, not appends');
   assert.strictEqual(db.prepare('SELECT fit FROM wordplay_edges LIMIT 1').get().fit, null);

@@ -88,7 +88,7 @@ export async function tasksSection({ api, onJobEnd = null, freshness = null }) {
     afterJob.add(() => { const d = lastDry.get(t.id); if (t.dry && d && d.task === t.id) real.replaceChildren(...[confirm ? h('label', { class: 'task__field' }, h('span', { text: NEEDS[t.needs] }), confirm) : null, Button({ label: 'Do it for real', size: 'sm', variant: 'primary', onClick: () => run(true) })].filter(Boolean)); });   // replaceChildren(null) would print the word "null"
     return h('article', { class: 'task' }, h('h3', {}, t.title, h('span', { class: 'badge badge--' + t.effect.replace(/\s/g, '-').toLowerCase(), text: EFFECT[t.effect] })), h('p', { class: 'task__does', text: t.does }),
       t.params.length ? (fields => t.params.length > 2 ? h('details', { class: 'task__opts' }, h('summary', { text: 'Options (' + t.params.length + ')' }), fields) : fields)(h('div', { class: 'task__fields' }, t.params.map(d => field(d, inputs)))) : null,
-      h('div', { class: 'toolbar' }, Button({ label: t.dry ? 'Check first' : 'Run', size: 'sm', onClick: () => run(false) }), t.backup ? h('small', { class: 'hint', text: 'A real run backs up the database first.' }) : null), real, msg);
+      h('div', { class: 'toolbar' }, Button({ label: t.dry ? 'Check first' : 'Run', size: 'sm', onClick: () => run(false) }), t.backup ? h('small', { class: 'hint', text: t.backupNote || 'A real run backs up the database first.' }) : null), real, msg);
   }
 
   // The notice that Muse is behind the database. It is painted wherever it is shown (the top of the actions and the "Restart Muse" step) and repainted when a job ends.

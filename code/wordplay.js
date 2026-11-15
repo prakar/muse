@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 'use strict';
+const { needTables } = require('./lib/schema_guard');
 /**
  * QUARRY wordplay — find wordplay among the vault's names and store it in wordplay_edges. No model, free.
  *
@@ -30,7 +31,7 @@ function summary(rows) {
 }
 function apply(db, rows) {
   const runId = 'wordplay-' + Date.now().toString(36);
-  db.exec(E.SCHEMA_SQL); db.exec('BEGIN');
+  needTables(db, ['wordplay_edges']); db.exec('BEGIN');
   try {
     db.exec('DELETE FROM wordplay_edges');
     const ins = db.prepare('INSERT INTO wordplay_edges (kind, a_name, b_name, a_notes, b_notes, grade, detail, detector_version, run_id) VALUES (?,?,?,?,?,?,?,?,?)');
@@ -44,7 +45,7 @@ module.exports = { build, summary, apply };
 if (require.main === module) {
   const a = process.argv.slice(2), flag = f => a.includes(f), arg = (n, d) => { const i = a.indexOf('--' + n); return i >= 0 ? a[i + 1] : d; };
   const dbPath = process.env.QUARRY_DB || path.join(process.env.QUARRY_HOME || path.join(__dirname, '..'), 'vault.db'), db = new DatabaseSync(dbPath);
-  if (flag('--undo')) { db.exec(E.SCHEMA_SQL); db.exec('DELETE FROM wordplay_edges'); console.log('UNDONE wordplay_edges cleared'); process.exit(0); }
+  if (flag('--undo')) { needTables(db, ['wordplay_edges']); db.exec('DELETE FROM wordplay_edges'); console.log('UNDONE wordplay_edges cleared'); process.exit(0); }
   const dictPath = arg('cmudict', process.env.CMUDICT || path.join(__dirname, 'lab', 'out', 'cmudict.dict'));
   const r = build(db, arg('version', D.DEFAULT_VERSION), dictPath);
   console.log((flag('--apply') ? 'APPLIED ' : 'report only · ') + r.rows.length + ' edges from ' + r.burrs + ' burrs' + (r.dict ? '' : ' · no pronunciation dictionary, rhymes and sound-alikes skipped (' + dictPath + ')'));

@@ -13,13 +13,8 @@ const DEV_BOX = {
   intro: 'The <code>quarry</code> shell command comes from <code>~/dotfiles/zsh/quarry.zshrc.local</code>, loaded when you cd into the quarry folder. It exists on the Mac only, not on the homelab. <code>dev.sh</code> is the helper behind it; use the <code>quarry</code> command, not <code>dev.sh</code> directly.',
   items: [
     { cmd: 'quarry setup', does: 'First-time setup: install deps, copy the vault (no .git) to ../quarry-data, snapshot vault.db from the homelab, fix note paths.', effect: 'writes DB (backs up the dev DB first)' },
-    { cmd: 'quarry start', does: 'Start the dev server in a detached tmux session "quarry-dev" on http://localhost:3001. LLM keys are scrubbed, so UI runs cannot spend money.', effect: 'free' },
-    { cmd: 'quarry start --llm', does: 'Same, but keeps the LLM keys.', effect: 'spends money (UI runs call the APIs)' },
-    { cmd: 'quarry start --fg', does: 'Run the server in the foreground instead (Ctrl-C stops it).', effect: 'free' },
-    { cmd: 'quarry status | logs | attach | stop', does: 'Is the session up and answering | last 200 lines | watch live (detach with Ctrl-b d) | stop it.', effect: 'free' },
     { cmd: 'quarry refresh-db', does: 'Re-snapshot vault.db from the homelab and fix paths. Burrs exist only in the dev DB, so the current one is copied to vault.db.bak-… first.', effect: 'writes DB (backs up first)' },
     { cmd: 'quarry index', alt: 'npm run index', does: 'Incremental index of the dev vault copy into the dev DB.', effect: 'writes DB' },
-    { cmd: 'quarry open', does: 'Open the dev UI in the browser.', effect: 'free' },
     { cmd: 'quarry muse', alt: 'npm run muse (foreground)', does: 'Start the Muse scratch viewer (burrs, bristles, sparks, knots) in a detached tmux session "quarry-muse" on http://localhost:3002. Your labels go to muse-judgements.jsonl, which is local and gitignored.', effect: 'read-only (writes only your labels)' },
     { cmd: 'quarry muse --fg | status | logs | attach | stop | open', does: 'The same controls as above, for the viewer.', effect: 'free' }
   ]
@@ -52,7 +47,7 @@ const MUSE = {
 };
 
 const NOTES = [
-  'Ports: 3001 is the Quarry server, 3002 is the Muse viewer. tmux sessions: quarry-dev and quarry-muse.',
+  'Ports: 3002 is the Muse viewer, 3005 is Muse. tmux sessions: quarry-muse and muse.',
   'Prompt versions: burrs are stored per prompt version (nug-v1 to nug-v5). The viewer shows nug-v5 by default; start it with <code>--version nug-v4</code> to see the old burrs; older burrs are kept, never deleted.',
   'Burrs exist only in the dev DB. Back up vault.db before any snapshot or migration; <code>.gitignore</code> already covers <code>vault.db.bak-*</code>.',
   'The environment (QUARRY_DB, VAULT_PATH, Node version) comes from <code>mise.toml</code> in the quarry folder; run <code>mise trust</code> once.'

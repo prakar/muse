@@ -104,13 +104,11 @@ function assertKeyedSchema(db) {
 // A database that has the base tables but not the migrations (no tag_source and so on) fails note by note inside SQL. Say so once, up front.
 function assertMigrated(db) {
   var cols = db.prepare('PRAGMA table_info(vault_notes)').all().map(function(c) { return c.name; });
-  if (cols.length && cols.indexOf('tag_source') < 0) {
-    log('error', 'This database has not been migrated yet. Run: node code/migrate.js --run (Admin: Create or update the database). Nothing was changed.', {});
+  if (!cols.length || cols.indexOf('tag_source') < 0) {
+    log('error', 'This database has not been created or migrated yet. Run: node code/migrate.js --run (Admin: Create or update the database). Nothing was changed.', {});
     process.exit(3);
   }
 }
-
-const { initSchema } = require('./lib/base_schema');
 
 // ---------------------------------------------------------------------------
 // FILE WALKING
@@ -473,8 +471,9 @@ function assertVaultReadable() {
   }
 }
 
-// Copy of vault.db taken before the first write of a run (VACUUM INTO makes a consistent copy
-// even while other Quarry processes are using the database). Keeps the newest SNAPSHOT_KEEP.
+// Copy of vault.db taken before the one destructive thing the indexer does: removing notes (and with them their facts and approved tags, which cost money or
+// time to rebuild). Adding and updating notes is not backed up: it is re-read from the vault. VACUUM INTO makes a consistent copy even while other Quarry
+// processes are using the database. Keeps the newest SNAPSHOT_KEEP.
 var SNAPSHOT_DIR  = path.join(QUARRY_HOME, 'backups');
 var SNAPSHOT_KEEP = 3;
 var snapshotTaken = false;
@@ -640,7 +639,6 @@ async function main() {
   var db = openDb();
   assertKeyedSchema(db);
   if (!MODE_DRY) assertMigrated(db);
-  if (!MODE_DRY) initSchema(db);
 
   if (MODE_STATS) { printStats(db); db.close(); return; }
 
@@ -693,7 +691,6 @@ async function main() {
   var batch     = [];
 
   function flushBatch(b) {
-    snapshotOnce(db, 'index ' + files.length + ' file(s)');
     db.exec('BEGIN');
     try {
       for (var k = 0; k < b.length; k++) {

@@ -1,6 +1,5 @@
-// Shared tag-insertion logic, used by both server.js (HIL approve/custom
-// tag review) and tagger.js (switch-vocab direct writes). One definition,
-// no duplication, no drift between the two call sites.
+// Shared tag-insertion logic, used by tagger.js (switch-vocab direct writes). It was shared with the legacy server's
+// tag-review pages (server.js, retired); tagger.js is now the only caller.
 'use strict';
 
 // Splits "a/b/c" into its parts, cleaned and lowercased. Returns null for

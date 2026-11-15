@@ -67,7 +67,7 @@ const TASKS = [
       return [internal('Edited notes', 'candidates', ['--edited', '--provider', p.provider]), script(go ? 'Re-extract facts' : 'Re-extract facts (dry run)', 'nuggetizer.js', [...opts, ...(go ? [] : ['--dry-run'])])];
     },
     expectValue: (p, ctx) => { try { return I.candidates({ dbPath: ctx.dbPath, args: ['--edited', '--provider', p.provider], env: ctx.env, home: ctx.home, log: () => {} }); } catch (e) { throw bad(e.message); } } },
-  { id: 'index', area: 'ingest', title: 'Index the vault', does: 'Read the vault copy into vault.db: only what changed (default) or everything.', effect: 'writes DB', group: 'db', dry: true, backup: true,
+  { id: 'index', area: 'ingest', title: 'Index the vault', does: 'Read the vault copy into vault.db: only what changed (default) or everything.', effect: 'writes DB', group: 'db', dry: true, safe: 'only adds and updates notes from the vault, which can be read in again; the indexer takes its own copy before it removes notes',
     params: [P('mode', 'enum', 'What to index', { values: ['diff', 'full'], default: 'diff', help: 'diff = changed notes only' })],
     build: (p, go) => [script(go ? 'Index' : 'Index (dry run)', 'indexer.js', [p.mode === 'full' ? '--full' : '--diff', ...(go ? [] : ['--dry-run'])])] },
   { id: 'private-scan', area: 'ingest', title: 'Scan for private notes', does: 'List notes that look private so you can review and move them. Never edits or moves a note; evidence is masked.', effect: 'writes files', group: null,
@@ -76,9 +76,9 @@ const TASKS = [
   { id: 'find-notes', area: 'ingest', title: 'Find notes by pattern', does: 'List notes whose text matches a pattern (id, words, title). For picking a trial note.', effect: 'read-only', group: null,
     params: [P('pattern', 'text', 'Pattern (regular expression)', { required: true, max: 120 }), P('limit', 'int', 'How many', { min: 1, max: 200, default: 15 }), P('minWords', 'int', 'At least this many words', { min: 0, max: 5000, default: 0 })],
     build: p => [script('Find', 'find_notes.js', [p.pattern, '--limit', String(p.limit), ...(p.minWords ? ['--min-words', String(p.minWords)] : [])])] },
-  { id: 'migrate', area: 'prep', title: 'Create or update the database', does: 'Make the database if there is none (the tables Muse starts from), then apply every pending migration. Safe to repeat: nothing is ever dropped. The check shows what would be applied.', effect: 'writes DB', group: 'db', dry: true, backup: true, params: [],
+  { id: 'migrate', area: 'prep', title: 'Create or update the database', does: 'Make the database if there is none (the tables Muse starts from), then apply every pending migration. Safe to repeat: nothing is ever dropped. The check shows what would be applied.', effect: 'writes DB', group: 'db', dry: true, safe: 'each migration that rewrites a table takes its own copy first (backupFirst); the rest only add columns', params: [],
     build: (p, go) => [script(go ? 'Create or update the database' : 'Check what would change', 'migrate.js', [go ? '--run' : '--status'])] },
-  { id: 'nuggetize', area: 'prep', title: 'Extract facts (paid)', does: 'Send pending notes to the model and keep the verified facts. The dry run shows how many notes and the estimated cost; a real run needs that count typed back.', effect: 'spends money', group: 'db', dry: true, backup: true, needs: 'count',
+  { id: 'nuggetize', area: 'prep', title: 'Extract facts (paid)', does: 'Send pending notes to the model and keep the verified facts. The dry run shows how many notes and the estimated cost; a real run needs that count typed back.', effect: 'spends money', group: 'db', dry: true, backup: p => p.mode === 'note' || p.mode === 'redo', backupNote: 'Only the modes that re-run finished notes (note, redo) back up first, because they replace those notes\' facts. The other modes only fill notes that have none.', safe: 'the other modes only fill notes that have no facts yet', needs: 'count',
     params: [P('mode', 'enum', 'Which notes', { values: ['limit', 'short', 'all', 'note', 'redo', 'review-list'], default: 'limit', help: 'limit = the N shortest pending; short = every pending note under the short-note cut; all = every pending note; note = one note; redo = re-verify from cache; review-list = write a CSV' }),
       P('limit', 'int', 'How many (mode limit)', { min: 1, max: 5000, default: 20 }), P('note', 'int', 'Note id (mode note)', { min: 1 }), P('provider', 'enum', 'Model provider', { values: PROVIDERS, default: 'gemini' }),
       P('ceiling', 'number', 'Spending ceiling, USD', { min: 0.01, max: 100 }), P('minWords', 'int', 'Only notes with at least this many words', { min: 0, max: 5000 }),
@@ -88,10 +88,10 @@ const TASKS = [
       return [internal('Notes to process', 'candidates', a.sel), script(go || free ? 'Extract facts' : 'Extract facts (dry run)', 'nuggetizer.js', [...a.sel, ...a.opts, ...(go || free ? [] : ['--dry-run'])])];
     },
     expectValue: (p, ctx) => p.mode === 'review-list' ? null : I.candidates({ dbPath: ctx.dbPath, args: nuggetArgs(p, ctx).sel, log: () => {} }) },
-  { id: 'dedupe', area: 'prep', title: 'Flag duplicate facts', does: 'Report duplicates (default), record the flags, or clear them. No fact is ever deleted. Free.', effect: 'writes DB', group: 'db', backup: true, dry: true,
+  { id: 'dedupe', area: 'prep', title: 'Flag duplicate facts', does: 'Report duplicates (default), record the flags, or clear them. No fact is ever deleted. Free.', effect: 'writes DB', group: 'db', safe: 'only the duplicate flags change, and a re-run rebuilds them; no fact is deleted', dry: true,
     params: [P('mode', 'enum', 'Real run does', { values: ['apply', 'undo'], default: 'apply' })],
     build: (p, go) => [script(go ? (p.mode === 'undo' ? 'Clear flags' : 'Record flags') : 'Duplicate report', 'dedupe.js', go ? [p.mode === 'undo' ? '--undo' : '--apply'] : [])] },
-  { id: 'wordplay', area: 'prep', title: 'Find wordplay', does: 'Report wordplay pairs (default), store them, or clear them. Free; needs the pronunciation dictionary for rhymes and sound-alikes.', effect: 'writes DB', group: 'db', backup: true, dry: true,
+  { id: 'wordplay', area: 'prep', title: 'Find wordplay', does: 'Report wordplay pairs (default), store them, or clear them. Free; needs the pronunciation dictionary for rhymes and sound-alikes.', effect: 'writes DB', group: 'db', safe: 'only the wordplay table changes, and a re-run rebuilds it', dry: true,
     params: [P('mode', 'enum', 'Real run does', { values: ['apply', 'undo'], default: 'apply' })],
     build: (p, go) => [script(go ? (p.mode === 'undo' ? 'Clear wordplay' : 'Store wordplay') : 'Wordplay report', 'wordplay.js', go ? [p.mode === 'undo' ? '--undo' : '--apply'] : [])] },
   { id: 'heuristics', area: 'prep', title: 'Heuristic registry', does: 'Check the registry against its source (default), or rebuild it.', effect: 'writes files', group: null, dry: true, params: [],
@@ -99,9 +99,9 @@ const TASKS = [
   { id: 'search-build', area: 'prep', title: 'Rebuild search by meaning', does: 'Compute vectors for new or changed facts (needs the embedding server), or use only what is cached. Safe to repeat.', effect: 'writes files', group: 'search',
     params: [P('noEmbed', 'bool', 'Cached vectors only, no embedding server', { default: false })],
     build: p => [script('Build vectors', 'search_build.js', p.noEmbed ? ['--no-embed'] : [])] },
-  { id: 'refresh', area: 'ingest', title: 'Bring Muse up to date', does: 'Back up, copy the vault in, index what changed, then count the new notes waiting and the notes you have edited, and estimate the cost. Stops before anything paid.', effect: 'writes DB', group: 'db', dry: true, backup: true, params: [],
+  { id: 'refresh', area: 'ingest', title: 'Bring Muse up to date', does: 'Copy the vault in, index what changed, then count the new notes waiting and the notes you have edited, and estimate the cost. Stops before anything paid.', effect: 'writes DB', group: 'db', dry: true, safe: 'copies files, then indexes; the indexer takes its own copy before it removes notes', params: [],
     build: (p, go, ctx) => [...byId('vault-sync').build({}, go, ctx), ...byId('index').build({ mode: 'diff' }, go, ctx), internal('Notes waiting', 'candidates', ['--all']), internal('Edited notes waiting', 'candidates', ['--edited']), script('Estimate the cost', 'nuggetizer.js', ['--all', '--dry-run'])] },
-  { id: 'refresh-process', area: 'prep', title: 'Process what is waiting (paid)', does: 'Extract facts from every pending note, then flag duplicates, store wordplay, rebuild search. Needs the pending count typed back.', effect: 'spends money', group: 'db', dry: true, backup: true, needs: 'count',
+  { id: 'refresh-process', area: 'prep', title: 'Process what is waiting (paid)', does: 'Extract facts from every pending note, then flag duplicates, store wordplay, rebuild search. Needs the pending count typed back.', effect: 'spends money', group: 'db', dry: true, safe: 'fills notes that have no facts yet, then rebuilds flags, wordplay and the search index; nothing existing is replaced', needs: 'count',
     params: [P('provider', 'enum', 'Model provider', { values: PROVIDERS, default: 'gemini' }), P('ceiling', 'number', 'Spending ceiling, USD', { min: 0.01, max: 100 })],
     build: (p, go) => {
       const opts = ['--provider', p.provider, ...(p.ceiling ? ['--ceiling', String(p.ceiling)] : [])];
@@ -128,7 +128,7 @@ const TASK = new Map(TASKS.map(t => [t.id, t]));
 function byId(id) { return TASK.get(id); }
 
 // What the front doors may show: no functions.
-const describe = t => ({ id: t.id, area: t.area, title: t.title, does: t.does, effect: t.effect, group: t.group, dry: !!t.dry, backup: !!t.backup, needs: t.needs || null, params: t.params.map(({ pattern, ...d }) => d) });
+const describe = t => ({ id: t.id, area: t.area, title: t.title, does: t.does, effect: t.effect, group: t.group, dry: !!t.dry, backup: !!t.backup, backupNote: t.backupNote || null, safe: t.safe || null, needs: t.needs || null, params: t.params.map(({ pattern, ...d }) => d) });
 // The order a person works in, for the two situations Admin serves. The server owns this, so the page, the CLI and any bot calling the API all see the same order; a front
 // door only draws it. A step is { task, why } or { note, ... } for something done outside Admin. A group with `ordered` is numbered 1, 2, 3. A task may appear in more than
 // one place. Every task that is not shown elsewhere on the page must appear in the Ongoing view (test/muse_ops.test.js checks), so a new task cannot vanish from Admin.
@@ -152,7 +152,7 @@ const FLOWS = {
     hint: 'For an install that is already set up: bring in new notes, process them, and see them in Muse.',
     groups: [
       { id: 'routine', title: 'Your routine', hint: 'After you add notes in Obsidian, daily or weekly.', ordered: true, steps: [
-        { task: 'refresh', why: 'Backs up, copies the vault in, indexes what changed, then counts the new notes waiting and the notes you have edited, and estimates the cost. Stops before anything paid.' },
+        { task: 'refresh', why: 'Copies the vault in, indexes what changed, then counts the new notes waiting and the notes you have edited, and estimates the cost. Stops before anything paid.' },
         { task: 'refresh-process', why: 'Only if notes are waiting. Extracts facts, flags duplicates, stores wordplay and rebuilds search. Paid; you type the count back.' },
         { task: 'reprocess-edited', why: 'Only if the check above found edited notes. Re-sends just those, never the unchanged ones. Paid; you type the count back.' },
         { note: 'restart', title: 'Restart Muse', why: 'Muse loads its facts when it starts, so new ones appear after a restart: run `muse restart`. This page tells you when it is behind the database.' }] },
@@ -175,7 +175,8 @@ function plan(id, rawParams = {}, { go = false, expect = null, ctx }) {
     if (want === 0) throw bad('Nothing to do: the count is 0.');
     if (want !== null && String(expect) !== String(want)) throw bad(`Confirmation needed: this affects ${want}. Pass the number or name you saw (--expect ${want}) to go ahead. It may have changed since you looked.`);
   }
-  const pre = t.backup && t.dry && go ? [internal('Back up first', 'backup', ['before-' + t.id])] : [];
+  const wantsBackup = typeof t.backup === 'function' ? !!t.backup(p) : !!t.backup;   // always, never, or only when this run replaces something that cannot be rebuilt
+  const pre = wantsBackup && t.dry && go ? [internal('Back up first', 'backup', ['before-' + t.id])] : [];
   return { task: t.id, params: p, go: !!go, dry: !!t.dry && !go, effect: t.effect, group: t.group, steps: [...pre, ...t.build(p, !!go, ctx)] };
 }
 

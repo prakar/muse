@@ -16,10 +16,10 @@ test('no command is listed twice, and every entry is complete', () => {
   });
 });
 
-test('every npm script in package.json is in the catalogue (except start, the server)', () => {
+test('every npm script in package.json is in the catalogue ', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
   const text = all.map(i => i.cmd + ' ' + (i.alt || '')).join('\n');
-  Object.keys(pkg.scripts).filter(s => s !== 'start').forEach(s => {
+  Object.keys(pkg.scripts).forEach(s => {
     const needle = s === 'test' ? 'npm test' : 'npm run ' + s;
     assert.ok(text.indexOf(needle) >= 0, 'missing in catalogue: ' + needle);
   });

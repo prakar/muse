@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 'use strict';
+const { needTables } = require('./lib/schema_guard');
 /**
  * QUARRY dedupe — flag duplicate burrs, deterministically. Free; no burr is ever deleted.
  *
@@ -26,9 +27,9 @@ function run(db, opts) {
   const dupes = D.findDupes(burrs);
   const runId = 'dedupe-' + Date.now().toString(36);
   const clear = "DELETE FROM burr_dupes WHERE burr_id IN (SELECT id FROM burrs WHERE prompt_version = ?)";
-  if (opts.undo) { db.exec(D.SCHEMA_SQL); db.prepare(clear).run(version); }
+  if (opts.undo) { needTables(db, ['burr_dupes']); db.prepare(clear).run(version); }
   else if (opts.apply) {
-    db.exec(D.SCHEMA_SQL);
+    needTables(db, ['burr_dupes']);
     db.exec('BEGIN');
     try {
       db.prepare(clear).run(version);

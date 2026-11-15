@@ -35,7 +35,7 @@ test('the indexer refuses to run on a missing or unmigrated database, with one c
   const idx = () => spawnSync(process.execPath, ['--no-warnings', path.join(ROOT, 'code', 'indexer.js'), '--diff'], { env: { ...process.env, QUARRY_DB: db, QUARRY_HOME: dir, VAULT_PATH: vault }, encoding: 'utf8' });
   let r = idx(); assert.strictEqual(r.status, 3); assert.match(r.stdout + r.stderr, /No database yet/); assert.strictEqual(fs.existsSync(db), false);
   const raw = new DatabaseSync(db); require('../code/lib/base_schema').initSchema(raw); raw.close();   // base tables but no migrations
-  r = idx(); assert.strictEqual(r.status, 3); assert.match(r.stdout + r.stderr, /not been migrated/);
+  r = idx(); assert.strictEqual(r.status, 3); assert.match(r.stdout + r.stderr, /not been created or migrated/);
 });
 
 test('"Back up first" with no database says there is nothing to back up instead of failing', () => {
