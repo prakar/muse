@@ -114,7 +114,7 @@ export const SYSADMIN = {
     ['muse --fg', 'Run in the foreground instead, to see why it will not start.'],
     ['muse drift', 'The fast audit, about a second: does the Muse map still match the code (screens, buttons, server calls, saved files, Help recipes), and has the heuristic registry drifted. Changes nothing.'],
     ['muse check', 'The full gate, about 16 seconds: the drift audit plus every test. Changes nothing. Run it before saying work is done.'],
-    ['muse commit "message" PATH...', 'Run the full gate, stage only the files you name (paths from the repo root), show them, ask, then commit with your message. Add --tracked to take every already-tracked changed file, --yes to skip the question, --push to push afterwards. It never pushes unless told to.'],
+    ['muse commit "message" PATH...', 'Run the full gate, stage only the files you name (paths from the repo root), show them, ask, then commit with your message. Add --tracked to take every already-tracked changed file, --yes to skip the question, --push to push afterwards. It never pushes unless told to. New files are never taken by --tracked: it lists them so you can name them. Anything already staged is refused unless you add --staged, which commits it as well.'],
     ['muse hook', 'Install the pre-commit hook in this clone, once. From then on any commit (even a plain git commit) runs the drift audit first and is blocked if something has drifted. Skip it once, on purpose, with git commit --no-verify.']
   ],
   refuses: 'muse commit refuses to stage databases, the meaning index, Muse\u2019s own data files, your labels, private-candidate scans, backups, quiz material and secrets, even if you name them.',
