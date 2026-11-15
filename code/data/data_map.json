@@ -1,0 +1,161 @@
+{
+ "tables": {
+  "api_budget": {
+   "C": [
+    "lib/budget.js"
+   ],
+   "R": [
+    "lib/budget.js",
+    "lib/muse_admin.js",
+    "lib/ops_internal.js"
+   ],
+   "U": [],
+   "D": []
+  },
+  "burr_dupes": {
+   "C": [
+    "dedupe.js"
+   ],
+   "R": [
+    "lib/muse_admin.js",
+    "lib/muse_model.js"
+   ],
+   "U": [],
+   "D": [
+    "dedupe.js"
+   ]
+  },
+  "burrs": {
+   "C": [
+    "nuggetizer.js"
+   ],
+   "R": [
+    "dedupe.js",
+    "lib/muse_admin.js",
+    "lib/muse_model.js",
+    "lib/note_store.js",
+    "lib/ops_internal.js",
+    "muse_scratch.js"
+   ],
+   "U": [],
+   "D": [
+    "nuggetizer.js"
+   ]
+  },
+  "muse_runs": {
+   "C": [
+    "nuggetizer.js"
+   ],
+   "R": [
+    "lib/muse_admin.js"
+   ],
+   "U": [
+    "nuggetizer.js"
+   ],
+   "D": []
+  },
+  "note_disposition": {
+   "C": [
+    "nuggetizer.js"
+   ],
+   "R": [
+    "nuggetizer.js"
+   ],
+   "U": [],
+   "D": []
+  },
+  "note_tags": {
+   "C": [
+    "indexer.js"
+   ],
+   "R": [
+    "indexer.js",
+    "lib/muse_model.js",
+    "muse_scratch.js"
+   ],
+   "U": [],
+   "D": [
+    "indexer.js"
+   ]
+  },
+  "nuggetize_cache": {
+   "C": [
+    "nuggetizer.js"
+   ],
+   "R": [
+    "nuggetizer.js"
+   ],
+   "U": [],
+   "D": []
+  },
+  "nuggetize_status": {
+   "C": [
+    "nuggetizer.js"
+   ],
+   "R": [
+    "lib/muse_admin.js",
+    "lib/ops_internal.js",
+    "nuggetizer.js"
+   ],
+   "U": [],
+   "D": []
+  },
+  "schema_migrations": {
+   "C": [],
+   "R": [
+    "lib/muse_admin.js",
+    "lib/ops_internal.js"
+   ],
+   "U": [],
+   "D": []
+  },
+  "vault_meta": {
+   "C": [],
+   "R": [],
+   "U": [],
+   "D": []
+  },
+  "vault_notes": {
+   "C": [
+    "indexer.js"
+   ],
+   "R": [
+    "created_repair.js",
+    "dedupe.js",
+    "find_notes.js",
+    "indexer.js",
+    "lib/muse_admin.js",
+    "lib/muse_model.js",
+    "lib/note_store.js",
+    "lib/ops_internal.js",
+    "muse_scratch.js",
+    "nuggetizer.js",
+    "private_scan.js",
+    "rebase_note_paths.js",
+    "wordplay.js"
+   ],
+   "U": [
+    "created_repair.js",
+    "indexer.js",
+    "rebase_note_paths.js"
+   ],
+   "D": [
+    "indexer.js"
+   ]
+  },
+  "wordplay_edges": {
+   "C": [
+    "wordplay.js"
+   ],
+   "R": [
+    "lib/muse_admin.js",
+    "lib/muse_model.js",
+    "lib/ops_internal.js"
+   ],
+   "U": [],
+   "D": [
+    "wordplay.js"
+   ]
+  }
+ }
+}
