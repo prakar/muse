@@ -22,7 +22,7 @@ const DEV_BOX = {
 
 const MUSE = {
   title: 'Muse pipeline: burrs, bristles, sparks, knots',
-  intro: 'Run these in the quarry folder (Node 24 comes from mise). Order: back up vault.db, migrate, nuggetize, then look at the results in the viewer. Nothing here writes to the vault; <code>writeback.js</code> is still never automated.',
+  intro: 'Run these in the quarry folder (Node 24 comes from mise). Order: back up vault.db, migrate, nuggetize, then look at the results in the viewer. Nothing here writes to the vault.',
   items: [
     { cmd: 'npm run migrate -- --status | --run', does: 'Show or apply pending migrations (M012 adds the burr tables, M013 the perishable flag, M014 the duplicate flags). Back up vault.db first: <code>cp vault.db vault.db.bak-$(date +%Y%m%d-%H%M)</code>.', effect: 'writes DB' },
     { cmd: 'npm run nuggetize -- --dry-run', does: 'Count the pending notes and estimate the cost. No LLM call, nothing written.', effect: 'free' },

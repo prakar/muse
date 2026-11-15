@@ -70,59 +70,6 @@
    "foreignKeys": [],
    "indexes": []
   },
-  "narrative_queue": {
-   "columns": [
-    "id INTEGER PK1",
-    "note_ids TEXT NOT NULL",
-    "seed_theme TEXT",
-    "priority_score REAL DEFAULT 0",
-    "status TEXT DEFAULT 'queued'",
-    "created_at TEXT NOT NULL",
-    "mode TEXT DEFAULT 'wow'"
-   ],
-   "foreignKeys": [],
-   "indexes": []
-  },
-  "narratives": {
-   "columns": [
-    "id INTEGER PK1",
-    "queue_id INTEGER",
-    "note_ids TEXT NOT NULL",
-    "seed_theme TEXT",
-    "body TEXT NOT NULL",
-    "register TEXT",
-    "model_used TEXT",
-    "produced_at TEXT NOT NULL",
-    "used_for_kcircle INTEGER DEFAULT 0",
-    "mode TEXT DEFAULT 'wow'",
-    "approval_status TEXT DEFAULT 'pending'",
-    "approved_at TEXT",
-    "rejection_reason TEXT"
-   ],
-   "foreignKeys": [
-    "queue_id -> narrative_queue(id) ON DELETE NO ACTION"
-   ],
-   "indexes": []
-  },
-  "note_classifications": {
-   "columns": [
-    "id INTEGER PK1",
-    "note_id INTEGER NOT NULL",
-    "bucket TEXT NOT NULL",
-    "claim TEXT NOT NULL",
-    "annotation TEXT",
-    "confidence TEXT",
-    "switch_level INTEGER DEFAULT 3",
-    "created_at TEXT NOT NULL"
-   ],
-   "foreignKeys": [
-    "note_id -> vault_notes(id) ON DELETE CASCADE"
-   ],
-   "indexes": [
-    "bucket",
-    "note_id"
-   ]
-  },
   "note_disposition": {
    "columns": [
     "note_id INTEGER PK1",
@@ -134,28 +81,6 @@
    ],
    "foreignKeys": [],
    "indexes": []
-  },
-  "note_tag_proposals": {
-   "columns": [
-    "id INTEGER PK1",
-    "note_id INTEGER NOT NULL",
-    "tag_full TEXT NOT NULL",
-    "tag_root TEXT NOT NULL",
-    "tag_leaf TEXT NOT NULL",
-    "is_hierarchical INTEGER DEFAULT 0",
-    "in_vocabulary INTEGER DEFAULT 0",
-    "status TEXT DEFAULT 'pending'",
-    "created_at TEXT NOT NULL",
-    "reviewed_at TEXT"
-   ],
-   "foreignKeys": [
-    "note_id -> vault_notes(id) ON DELETE NO ACTION"
-   ],
-   "indexes": [
-    "note_id",
-    "status",
-    "tag_full"
-   ]
   },
   "note_tags": {
    "columns": [
@@ -212,25 +137,6 @@
    ],
    "foreignKeys": [],
    "indexes": []
-  },
-  "tag_vocabulary": {
-   "columns": [
-    "id INTEGER PK1",
-    "tag_full TEXT NOT NULL",
-    "tag_root TEXT NOT NULL",
-    "tag_leaf TEXT NOT NULL",
-    "is_hierarchical INTEGER DEFAULT 0",
-    "note_count INTEGER DEFAULT 0",
-    "status TEXT DEFAULT 'approved'",
-    "replaces TEXT",
-    "created_at TEXT NOT NULL"
-   ],
-   "foreignKeys": [],
-   "indexes": [
-    "UNIQUE tag_full",
-    "status",
-    "tag_root"
-   ]
   },
   "vault_meta": {
    "columns": [
@@ -294,24 +200,6 @@
     "a_name",
     "b_name",
     "kind,grade"
-   ]
-  },
-  "writeback_log": {
-   "columns": [
-    "id INTEGER PK1",
-    "note_id INTEGER",
-    "stage TEXT NOT NULL",
-    "tags_before TEXT",
-    "tags_after TEXT",
-    "written_at TEXT NOT NULL",
-    "git_commit TEXT"
-   ],
-   "foreignKeys": [
-    "note_id -> vault_notes(id) ON DELETE NO ACTION"
-   ],
-   "indexes": [
-    "note_id",
-    "stage"
    ]
   }
  },

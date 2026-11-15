@@ -19,9 +19,3 @@ test('calibration: the recorded nuggetize tokens cost about what Google billed, 
   const cost = (36978016 * r.in + 13006563 * r.out) / 1e6;
   assert.ok(cost > 39 && cost < 46, String(cost));
 });
-test('tagger.js and lib/budget.js carry the same gemini prices (kept in sync by hand)', () => {
-  const pick = f => fs.readFileSync(__dirname + '/../code/' + f, 'utf8').split('\n').filter(l => /gemini-2\\\.5|^\s*gemini:\s+\{/.test(l)).map(l => l.replace(/\s+/g, ' ').replace(/largeContext: true, ?/, '').replace(/ ?\/\/.*$/, '').trim());
-  const a = pick('lib/budget.js'), b = pick('tagger.js');
-  assert.ok(a.length >= 4, 'found the gemini rows');
-  assert.deepStrictEqual(a, b);
-});

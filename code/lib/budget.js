@@ -2,11 +2,7 @@
 /**
  * QUARRY lib/budget.js — price table and budget guard for the Muse stages.
  *
- * Mirrors PROVIDER_CONFIG / MODEL_PRICES in tagger.js. The two are kept in sync by hand until
- * tagger.js is pointed at this file (follow-up): when a rate changes, change both.
- *
- * Unlike tagger.js, checkBudget THROWS BudgetError instead of calling process.exit, so a batch
- * can finish its in-flight work and report cleanly.
+ * checkBudget THROWS BudgetError instead of calling process.exit, so a batch can finish its in-flight work and report cleanly.
  */
 const BUDGET_CEILING = parseFloat(process.env.BUDGET_CEILING_USD || '10.00');
 

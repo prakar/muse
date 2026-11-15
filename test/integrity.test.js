@@ -28,7 +28,7 @@ test('a database newer than the code is fatal', () => {
   assert.ok(ids(I.check({ dbPath: p })).includes('database-newer-than-code'));
 });
 test('a missing table and a missing column are fatal', () => {
-  const p = goodDb(tmp()); edit(p, 'DROP TABLE wordplay_edges; ALTER TABLE narratives DROP COLUMN approval_status');
+  const p = goodDb(tmp()); edit(p, 'DROP TABLE wordplay_edges; ALTER TABLE vault_notes DROP COLUMN video_links');
   const r = I.check({ dbPath: p });
   assert.equal(r.level, 'fatal'); assert.ok(ids(r).includes('missing-tables')); assert.ok(ids(r).includes('missing-columns'));
   assert.match(r.findings.find(x => x.id === 'missing-tables').msg, /wordplay_edges/);

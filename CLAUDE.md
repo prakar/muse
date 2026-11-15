@@ -30,7 +30,7 @@ Project-only working papers (single copy, not duplicated): `nug-v6-backlog.md`, 
 ## Standing rules
 - One canonical home per fact. Link to it, never copy it. Anything derived (the heuristic registry, tables) is generated from its sources and carries a test that fails on drift. Say so whenever you add a new document or data file.
 - Quizzes (own or others') are for patterns and backtests only, read-only, outside the burr store and the vault. Only the author's own quiz data may be imported into the `knowledge` vault (the only one Quarry reads). Notes quoting other setters' fragments stay in `tech-journalling`, never `knowledge`. Quiz files and extracts stay in gitignored `backtest/`, never in the repo.
-- Never run `git commit` or `git push` unless asked. Never automate `writeback.js`.
+- Never run `git commit` or `git push` unless asked.
 - Lab work lives in `code/lab/`; lab outputs in `code/lab/out/`. Lab spend log: `code/lab/out/spend.jsonl`. Ask before raising spend caps beyond what was agreed.
 - Eval snapshots: use sqlite `.backup`, not `VACUUM INTO`.
 - Run tests with the repo's test command before saying work is done.

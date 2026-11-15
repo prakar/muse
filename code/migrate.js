@@ -397,6 +397,27 @@ const MIGRATIONS = [
       if (have.indexOf('video_links') < 0)       db.exec('ALTER TABLE vault_notes ADD COLUMN video_links TEXT');
       if (have.indexOf('video_transcripts') < 0) db.exec('ALTER TABLE vault_notes ADD COLUMN video_transcripts TEXT');
     }
+  },
+
+  // -------------------------------------------------------------------------
+  // M019: drop the tables of the retired QUARRY v1/v2 experiments (tag classification, tag proposals, the tag vocabulary, the writeback log, and the narrative queue and
+  // narratives). Their scripts were removed; no live code reads them. This deletes data, so a copy of the database is taken first (backupFirst). The columns they added to
+  // vault_notes (tag_source and so on) stay: the indexer still reads tag_source.
+  // -------------------------------------------------------------------------
+  {
+    id:   'M019',
+    desc: 'Drop the retired v1/v2 tables: narrative_queue, narratives, note_classifications, note_tag_proposals, writeback_log, tag_vocabulary',
+    backupFirst: true,   // a file copy of the database is taken before BEGIN
+    up: function(db) {
+      // narratives has a foreign key to narrative_queue, so the child goes first (dropping the parent while it has rows fails)
+      ['narratives', 'narrative_queue', 'note_classifications', 'note_tag_proposals', 'writeback_log', 'tag_vocabulary'].forEach(function(t) {
+        var has = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t);
+        if (!has) { log('  ' + t + ' not present — skipping'); return; }
+        var n = db.prepare('SELECT COUNT(*) AS n FROM ' + t).get().n;
+        db.exec('DROP TABLE ' + t);
+        log('  Dropped ' + t + ' (' + n + ' row' + (n === 1 ? '' : 's') + ')');
+      });
+    }
   }
 
 ];

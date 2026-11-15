@@ -18,7 +18,7 @@
  *   - optional transient retry (network errors, timeouts, 429/5xx) with linear back-off
  *
  * Callers own: prompts, budget/cost accounting (they get tokensIn/tokensOut/model back),
- * and provider *selection* (e.g. narrator: claude, then fall back to gemini).
+ * and provider *selection* (e.g. claude first, then fall back to gemini).
  *
  * Options (all optional):
  *   system           system prompt string

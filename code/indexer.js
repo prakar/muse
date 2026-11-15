@@ -20,7 +20,7 @@ const Paths = require('./lib/note_path');   // notes are keyed by their path INS
 const path = require('path');
 // QUARRY_HOME is the quarry directory itself (default ~/dev/quarry): the DB, logs and chunk caches live
 // directly under it. (These scripts once treated it as a PARENT and appended dev/quarry, which doubles
-// the path when QUARRY_HOME=$HOME/dev/quarry - the convention writeback.js and the docs use.)
+// the path when QUARRY_HOME=$HOME/dev/quarry - the convention the docs use.)
 const QUARRY_HOME = process.env.QUARRY_HOME || path.join(process.env.HOME, 'dev', 'quarry');
 const { DatabaseSync } = require('node:sqlite');
 const { openDatabase } = require('./lib/db');   // sets a busy timeout - see lib/db.js
@@ -426,7 +426,7 @@ function upsertNote(db, r) {
 // tags exist ONLY in this database; they have never been written back to the files.
 //
 // This used to DELETE every tag and re-insert the frontmatter ones, so any edit to a note
-// (in Obsidian, by git pull, by writeback.js) followed by Vault Sync silently erased every tag
+// (in Obsidian, by git pull) followed by Vault Sync silently erased every tag
 // Quarry had added to it - and "Full re-index" erased them vault-wide.
 //
 // Now: notes whose tag_source says Quarry tagged them keep all their tags and get the
@@ -514,21 +514,16 @@ function pruneOrphans(db, currentPaths) {
 
   snapshotOnce(db, 'prune ' + orphans.length + ' note(s)');
   log('info', 'Pruning orphaned notes (removed from vault)', { count: orphans.length });
-  var q = {
-    facts:    db.prepare('SELECT COUNT(*) AS n FROM note_classifications WHERE note_id = ?'),
-    approved: db.prepare("SELECT COUNT(*) AS n FROM note_tag_proposals WHERE note_id = ? AND status = 'approved'"),
-  };
-  var del = ['note_tags', 'note_classifications', 'writeback_log', 'note_tag_proposals'].map(function(t) {
-    return db.prepare('DELETE FROM ' + t + ' WHERE note_id = ?');
-  });
+  var tagCount = db.prepare('SELECT COUNT(*) AS n FROM note_tags WHERE note_id = ?');
+  var delTags = db.prepare('DELETE FROM note_tags WHERE note_id = ?');
   var delNote = db.prepare('DELETE FROM vault_notes WHERE id = ?');
   db.exec('BEGIN');
   try {
     orphans.forEach(function(o) {
-      // A renamed or moved note looks like delete + add, so its facts and approved tags go too.
+      // A renamed or moved note looks like delete + add, so its tag rows go too (its facts are not touched here).
       // Logged per note so the loss is visible and can be restored from the snapshot.
-      var lost = { facts: q.facts.get(o.id).n, approvedTags: q.approved.get(o.id).n };
-      del.forEach(function(s) { s.run(o.id); });
+      var lost = { tags: tagCount.get(o.id).n };
+      delTags.run(o.id);
       delNote.run(o.id);
       log('info', 'Pruned', { title: o.title, rel_path: o.rel_path, discarded: lost });
     });
@@ -602,8 +597,6 @@ function printStats(db) {
   var byFolder = db.prepare('SELECT folder_hint, COUNT(*) as n FROM vault_notes GROUP BY folder_hint ORDER BY n DESC').all();
   var tagCount = db.prepare('SELECT COUNT(DISTINCT tag_full) as n FROM note_tags').get().n;
   var topTags  = db.prepare('SELECT tag_root, COUNT(*) as n FROM note_tags GROUP BY tag_root ORDER BY n DESC LIMIT 10').all();
-  var queueD   = db.prepare("SELECT COUNT(*) as n FROM narrative_queue WHERE status = 'queued'").get().n;
-  var narr     = db.prepare('SELECT COUNT(*) as n FROM narratives').get().n;
 
   console.log('\n\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550');
   console.log('  QUARRY VAULT INDEX STATS');
@@ -625,8 +618,6 @@ function printStats(db) {
   console.log('  Top tag roots:');
   topTags.forEach(function(r) { console.log('    ' + String(r.tag_root).padEnd(25) + ' ' + r.n); });
   console.log('');
-  console.log('  Narrative queue depth: ' + queueD);
-  console.log('  Narratives produced:   ' + narr);
   console.log('\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n');
 }
 
