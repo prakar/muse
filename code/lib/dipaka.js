@@ -7,11 +7,11 @@
 // Everything outside is passed in (the model, the LLM call, the price table), so tests use fakes. The database is never touched; only the one file given.
 const fs = require('fs');
 
-const PROMPT_VERSION = 'dip-v3';   // v2 carried quotes, notes and link lines and asked two things; v3 is the bare facts and one ask
+const PROMPT_VERSION = 'dip-v4';   // v2 carried quotes, notes and link lines and asked two things; v3 was the bare facts and one ask; v4 puts the note title before each fact and asks for concision
 const LABELS = ['yielded', 'generic', 'already-knew', 'wrong'];
 const INTRO = 'I value interesting, unexpected, and surprising connections, and lesser-known facts about well-known entities. I know these facts:';
-const QUESTION = 'What I want you to do is illuminate the gaps between these facts: tell me things, in the manner I described above, that I would like to know but did not cover in the facts because I don’t know them yet.';
-const SYSTEM = null;   // dip-v3: no system prompt. The packet is the whole request.
+const QUESTION = 'What I want you to do is illuminate the gaps between these facts: tell me things, in the manner I described above, that I would like to know but did not cover in the facts because I don’t know them yet. Be concise: no preamble, no restating my facts, no repetition, and no padding.';
+const SYSTEM = null;   // dip-v4: no system prompt. The packet is the whole request.
 const MAX_FACTS = 20, MAX_PACKET = 30000, EXPECTED_OUT_TOKENS = 2500, MAX_OUT_TOKENS = 4000;
 
 class DipakaError extends Error { constructor(msg, status) { super(msg); this.name = 'DipakaError'; this.userError = true; this.status = status || 400; } }
@@ -22,7 +22,7 @@ const clip = (s, n) => { s = String(s == null ? '' : s).replace(/\s+/g, ' ').tri
 // Pure. facts: [{ claim, quote, note }] in the order gathered; lines: link text between neighbour i and i+1 (or '').
 function buildPacket(facts) {
   const out = [INTRO, ''];
-  facts.forEach((f, i) => out.push((i + 1) + '. ' + clip(plain(f.claim), 400)));
+  facts.forEach((f, i) => out.push((i + 1) + '. ' + (f.note ? clip(plain(f.note), 120) + ': ' : '') + clip(plain(f.claim), 400)));
   out.push('', QUESTION);
   return out.join('\n');
 }

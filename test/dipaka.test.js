@@ -15,7 +15,7 @@ test('the packet is the intro, the facts in order, and the one ask, nothing else
   const { d } = mk(), p = d.preview({ ids: [1, 2], links: { '1>2': 'both opiates' } });
   assert.equal(p.facts, 2); assert.deepEqual(p.missing, []);
   assert.ok(p.packet.startsWith(INTRO)); assert.ok(p.packet.endsWith(QUESTION));
-  assert.match(p.packet, /\n1\. Thebaine is an opiate\.\n2\. /);
+  assert.match(p.packet, /\n1\. [^\n:]+: Thebaine is an opiate\.\n2\. /);
   assert.ok(!/From my note|My own thought|both opiates|Please do two things/.test(p.packet), 'no quotes, note names or link lines');
   assert.ok(p.packet.indexOf('Thebaine') < p.packet.indexOf('Cirebon'));
   assert.ok(p.estimate.usd > 0 && p.estimate.tokensIn > 0);
@@ -29,8 +29,8 @@ test('unknown ids are reported, and an empty, oversized or duplicated Collection
   assert.throws(() => d.preview({ ids: Array.from({ length: MAX_FACTS + 1 }, (_, i) => i + 1) }), /different facts/);
 });
 test('facts are cleaned of Markdown litter before they are sent', () => {
-  const p = buildPacket([{ claim: '- **Gold** bowls in [[Cirebon]] and ==bars of== opiates', quote: 'ignored', note: 'ignored' }]);
-  assert.match(p, /\n1\. Gold bowls in Cirebon and bars of opiates\n/); assert.ok(!/ignored|\*\*|\[\[|==/.test(p));
+  const p = buildPacket([{ claim: '- **Gold** bowls in [[Cirebon]] and ==bars of== opiates', quote: 'ignored', note: 'cirebon shipwreck' }]);
+  assert.match(p, /\n1\. cirebon shipwreck: Gold bowls in Cirebon and bars of opiates\n/); assert.ok(!/ignored|\*\*|\[\[|==/.test(p));
 });
 
 test('a run calls the model once, keeps the thread, and records cost from the tokens', async () => {
