@@ -148,3 +148,12 @@ test('dipaka asks the resolver for the economy profile, for the preview and for 
   const pv = await d.previewResolved({ ids: [1] }); const t = await d.run({ packet: 'x'.repeat(40) });
   assert.deepEqual(asked, ['economy']); assert.equal(pv.profile, 'economy'); assert.equal(sent.profile, 'economy'); assert.equal(t.profile, 'economy');
 });
+
+test('delete removes the answer, packet and label from the file and the list, keeps the cost so the cap still counts it', async () => {
+  const file = tmp(), { d } = mk({ file }), p = d.preview({ ids: [1, 2] }), t = await d.run({ packet: p.packet, seeds: [1, 2] });
+  d.label(t.id, 'yielded'); const spent = d.spentToday();
+  assert.ok(spent > 0); assert.deepEqual(d.remove(t.id), { id: t.id, deleted: true });
+  assert.equal(d.list().length, 0); assert.equal(d.spentToday(), spent);
+  { const raw = fs.readFileSync(file, 'utf8'); assert.ok(!raw.includes('Thebes gave') && !raw.includes('Thebaine') && !raw.includes('yielded'), 'no text left on disk'); assert.equal(raw.trim().split('\n').length, 1); }
+  assert.throws(() => d.remove(t.id), /No such thread/); assert.throws(() => d.label(t.id, 'wrong'), /No such thread|Unknown/);
+});

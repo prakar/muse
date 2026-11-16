@@ -34,6 +34,7 @@ function createDipaka({ file, model, callLLM, hasKey, priceFor, resolveModel = n
   const apply = ev => {
     if (!ev || !ev.id) return;
     if (ev.kind === 'thread') threads.set(ev.id, Object.assign({ label: null }, ev));
+    else if (ev.kind === 'label' && threads.has(ev.id) && threads.get(ev.id).deleted) return;
     else if (ev.kind === 'label' && threads.has(ev.id)) threads.get(ev.id).label = LABELS.includes(ev.label) ? ev.label : null;
   };
   if (file && fs.existsSync(file)) fs.readFileSync(file, 'utf8').split('\n').forEach(l => { if (!l.trim()) return; try { apply(JSON.parse(l)); } catch (e) { /* a torn line is skipped */ } });
@@ -82,13 +83,28 @@ function createDipaka({ file, model, callLLM, hasKey, priceFor, resolveModel = n
       return threads.get(id);
     },
     label(id, label) {
-      if (!threads.has(id)) throw new DipakaError('No such thread.', 404);
+      if (!threads.has(id) || threads.get(id).deleted) throw new DipakaError('No such thread.', 404);
       if (!LABELS.includes(label) && label !== 'clear') throw new DipakaError('Unknown label.');
       append({ kind: 'label', id, label: label === 'clear' ? null : label, ts: new Date(now()).toISOString() });
       return threads.get(id);
     },
-    list: (limit = 20) => Array.from(threads.values()).sort((a, b) => b.ts < a.ts ? -1 : b.ts > a.ts ? 1 : 0).slice(0, limit),
-    spentToday, counts: () => ({ threads: threads.size, spent: Array.from(threads.values()).reduce((s, t) => s + (t.cost || 0), 0) })
+    // Delete removes the answer, the packet and the label from the file (rewritten whole, then swapped in). One stub stays: id, time, provider, model, tokens and cost, so the daily
+    // cap still counts what was spent. The stub never shows in the list.
+    remove(id) {
+      const t = threads.get(id);
+      if (!t || t.deleted) throw new DipakaError('No such thread.', 404);
+      const stub = { kind: 'thread', id: t.id, ts: t.ts, deleted: true, provider: t.provider, profile: t.profile, model: t.model, tokensIn: t.tokensIn, tokensOut: t.tokensOut, cost: t.cost, seeds: [], packet: '', response: '' };
+      if (file && fs.existsSync(file)) {
+        const keep = [];
+        fs.readFileSync(file, 'utf8').split('\n').forEach(l => { if (!l.trim()) return; let ev = null; try { ev = JSON.parse(l); } catch (e) { keep.push(l); return; } if (ev && ev.id === id) return; keep.push(l); });
+        keep.push(JSON.stringify(stub));
+        const tmp = file + '.tmp'; fs.writeFileSync(tmp, keep.join('\n') + '\n'); fs.renameSync(tmp, file);
+      }
+      threads.set(id, Object.assign({ label: null }, stub));
+      return { id, deleted: true };
+    },
+    list: (limit = 20) => Array.from(threads.values()).filter(t => !t.deleted).sort((a, b) => b.ts < a.ts ? -1 : b.ts > a.ts ? 1 : 0).slice(0, limit),
+    spentToday, counts: () => ({ threads: Array.from(threads.values()).filter(t => !t.deleted).length, spent: Array.from(threads.values()).reduce((s, t) => s + (t.cost || 0), 0) })
   };
 }
 module.exports = { createDipaka, buildPacket, DipakaError, PROMPT_VERSION, LABELS, INTRO, QUESTION, MAX_FACTS, MAX_PACKET };

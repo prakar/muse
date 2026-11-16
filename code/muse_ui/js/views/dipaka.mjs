@@ -22,10 +22,25 @@ function Labels({ thread, api, onChange }) {
     onClick: async () => { try { const r = await api.dipakaLabel({ id: thread.id, label: thread.label === k ? NO_LABEL : k }); thread.label = r.thread.label; draw(); onChange && onChange(); } catch (e) { toast({ text: e.message }); } } })));
   draw(); return row;
 }
-const Answer = (thread, api, onChange) => h('div', { class: 'dipaka__answer' }, Prose(parse(thread.response)),
+// Permanent, on every answer. Asking a model to fill gaps is a fuzzy match by design, so it will sometimes invent. A wrong detail can still be a useful lead (a mix-up led to the right name once), but nothing goes into the vault unchecked.
+const CAUTION = 'The nature of this query can produce hallucinations. Itemise and check every claim before committing it to the vault.';
+// Delete is two presses: the first arms it for a few seconds, the second removes the answer, its packet and its label from muse-dipaka.jsonl for good.
+const SURE = 'Press again to delete';
+function Delete({ thread, api, box, onChange }) {
+  let armed = null;
+  const say = t => { btn.lastElementChild.textContent = t; };
+  const btn = Button({ label: 'Delete', size: 'sm', title: 'Remove this answer from muse-dipaka.jsonl for good.', onClick: async () => {
+    if (!armed) { armed = setTimeout(() => { armed = null; say('Delete'); }, 4000); say(SURE); return; }
+    clearTimeout(armed); armed = null;
+    try { await api.dipakaDelete({ id: thread.id }); box.replaceChildren(h('p', { class: 'hint', role: 'status', text: 'Deleted.' })); onChange && onChange(); } catch (e) { toast({ text: e.message }); say('Delete'); } } });
+  return btn;
+}
+const Answer = (thread, api, onChange) => { const box = h('div', { class: 'dipaka__answer' }); box.append(...answerParts(thread, api, onChange, box)); return box; };
+const answerParts = (thread, api, onChange, box) => [ h('p', { class: 'hint dipaka__caution', role: 'note', text: CAUTION }), Prose(parse(thread.response)),
   h('p', { class: 'hint', text: 'Unverified. ' + (thread.model || 'The model') + ' wrote this from the facts you gave it; it is not from your notes and has not been checked. ' + usd(thread.cost) }),
   h('div', { class: 'toolbar' }, Labels({ thread, api, onChange }),
-    Button({ label: 'Copy answer', ic: 'copy', size: 'sm', onClick: async () => { try { await navigator.clipboard.writeText(thread.response); toast({ text: 'Copied. Paste it into a note in Obsidian if it is worth keeping.' }); } catch (e) { toast({ text: 'The browser blocked copy. Select the text and copy it by hand.' }); } } })));
+    Button({ label: 'Copy answer', ic: 'copy', size: 'sm', onClick: async () => { try { await navigator.clipboard.writeText(thread.response); toast({ text: 'Copied. Paste it into a note in Obsidian if it is worth keeping.' }); } catch (e) { toast({ text: 'The browser blocked copy. Select the text and copy it by hand.' }); } } }),
+    Delete({ thread, api, box, onChange }))];
 
 export async function dipakaView({ api }) {
   await loadTray();

@@ -11,7 +11,7 @@ const PAGE_SIZES = [12, 24, 48, 96];
 // Marks are keyed by a handle. A star on one fact with no handle uses this reserved one.
 const FACT_HANDLE = '*';
 // Calls that change the author's data or run jobs. Reading is open; these need the login from another machine (see lib/muse_access.js).
-const WRITE_PATHS = new Set(['/api/mark', '/api/tray', '/api/event', '/api/dipaka/run', '/api/dipaka/label']);
+const WRITE_PATHS = new Set(['/api/mark', '/api/tray', '/api/event', '/api/dipaka/run', '/api/dipaka/label', '/api/dipaka/delete']);
 // `access` decides who may do what; the default is the old closed behaviour (this machine only), so a caller that passes nothing stays safe.
 // `tls` ({ key, cert }) serves https from Node itself; without it the server speaks plain http.
 function createServer({ model, marks, notes, version, uiRoot, search = null, events = null, trayStore = null, dipaka = null, admin = null, ops = null, access = createAccess({ env: {} }), tls = null }) {
@@ -86,7 +86,7 @@ function createServer({ model, marks, notes, version, uiRoot, search = null, eve
       // change the author's data (and run spends money), so they need the login from other machines, and every POST needs the X-Muse header a cross-site page cannot send.
       if (!dipaka) return json(res, { error: 'Dipaka is not set up on this server.' }, 503);
       if (u.pathname === '/api/dipaka' && req.method === 'GET') return json(res, { threads: dipaka.list(20), labels: dipaka.LABELS, provider: dipaka.provider, providers: dipaka.providers(), promptVersion: dipaka.PROMPT_VERSION, spentToday: dipaka.spentToday() });
-      if (req.method !== 'POST' || !['/api/dipaka/preview', '/api/dipaka/run', '/api/dipaka/label'].includes(u.pathname)) return json(res, { error: 'not found' }, 404);
+      if (req.method !== 'POST' || !['/api/dipaka/preview', '/api/dipaka/run', '/api/dipaka/label', '/api/dipaka/delete'].includes(u.pathname)) return json(res, { error: 'not found' }, 404);
       if (req.headers['x-muse'] !== '1') return json(res, { error: 'missing X-Muse header' }, 403);
       if (!/application\/json/.test(req.headers['content-type'] || '')) return json(res, { error: 'json only' }, 415);
       const fail = e => e && e.userError ? json(res, { error: e.message }, e.status || 400) : (console.error('[muse] dipaka failed', e && e.stack || e), json(res, { error: 'Dipaka could not finish: ' + (e && e.message || 'unknown error') }, 502));
@@ -94,6 +94,7 @@ function createServer({ model, marks, notes, version, uiRoot, search = null, eve
         if (!b || typeof b !== 'object') return json(res, { error: 'bad request' }, 400);
         try {
           if (u.pathname === '/api/dipaka/preview') return dipaka.previewResolved({ ids: b.ids, links: b.links && typeof b.links === 'object' ? b.links : {}, provider: b.provider }).then(r => json(res, r), fail);
+          if (u.pathname === '/api/dipaka/delete') return json(res, dipaka.remove(String(b.id)));
           if (u.pathname === '/api/dipaka/label') return json(res, { thread: dipaka.label(String(b.id), String(b.label)) });
           if (u.pathname === '/api/dipaka/run') return dipaka.run({ packet: b.packet, seeds: b.seeds, provider: b.provider }).then(t => json(res, { thread: t }), fail);
           return json(res, { error: 'not found' }, 404);

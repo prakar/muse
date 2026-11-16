@@ -38,6 +38,7 @@ export const api = {
   dipakaPreview: body => request('/api/dipaka/preview', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Muse': '1' }, body: JSON.stringify(body) }),
   dipakaRun: body => request('/api/dipaka/run', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Muse': '1' }, body: JSON.stringify(body) }),
   dipakaLabel: body => request('/api/dipaka/label', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Muse': '1' }, body: JSON.stringify(body) }),
+  dipakaDelete: body => request('/api/dipaka/delete', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Muse': '1' }, body: JSON.stringify(body) }),
   adminStatus: () => get('/api/admin/status', {}, 'admin', { 'X-Muse': '1' }),
   adminDrift: () => request('/api/admin/drift', { method: 'POST', headers: { 'X-Muse': '1' } }),
   adminOps: () => get('/api/admin/ops', {}, 'ops', { 'X-Muse': '1' }),
