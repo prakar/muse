@@ -7,9 +7,9 @@
 // Everything outside is passed in (the model, the LLM call, the price table), so tests use fakes. The database is never touched; only the one file given.
 const fs = require('fs');
 
-const PROMPT_VERSION = 'dip-v4';   // v2 carried quotes, notes and link lines and asked two things; v3 was the bare facts and one ask; v4 puts the note title before each fact and asks for concision
+const PROMPT_VERSION = 'dip-v5';   // v2 carried quotes, notes and link lines and asked two things; v3 was the bare facts and one ask; v4 put the note title before each fact and asked for concision; v5 adds etymologies, pop-culture and historical references to the wanted list
 const LABELS = ['yielded', 'generic', 'already-knew', 'wrong'];
-const INTRO = 'I value interesting, unexpected, and surprising connections, and lesser-known facts about well-known entities. I know these facts:';
+const INTRO = 'I value interesting, unexpected, and surprising connections, and lesser-known facts about well-known entities, including etymologies, pop-culture references, and interesting historical references if any. I know these facts:';
 const QUESTION = 'What I want you to do is illuminate the gaps between these facts: tell me things, in the manner I described above, that I would like to know but did not cover in the facts because I don’t know them yet. Be concise: no preamble, no restating my facts, no repetition, and no padding.';
 const SYSTEM = null;   // dip-v4: no system prompt. The packet is the whole request.
 const MAX_FACTS = 20, MAX_PACKET = 30000, EXPECTED_OUT_TOKENS = 2500, MAX_OUT_TOKENS = 4000;
