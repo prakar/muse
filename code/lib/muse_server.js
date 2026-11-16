@@ -11,10 +11,10 @@ const PAGE_SIZES = [12, 24, 48, 96];
 // Marks are keyed by a handle. A star on one fact with no handle uses this reserved one.
 const FACT_HANDLE = '*';
 // Calls that change the author's data or run jobs. Reading is open; these need the login from another machine (see lib/muse_access.js).
-const WRITE_PATHS = new Set(['/api/mark', '/api/tray', '/api/event']);
+const WRITE_PATHS = new Set(['/api/mark', '/api/tray', '/api/event', '/api/dipaka/run', '/api/dipaka/label']);
 // `access` decides who may do what; the default is the old closed behaviour (this machine only), so a caller that passes nothing stays safe.
 // `tls` ({ key, cert }) serves https from Node itself; without it the server speaks plain http.
-function createServer({ model, marks, notes, version, uiRoot, search = null, events = null, trayStore = null, admin = null, ops = null, access = createAccess({ env: {} }), tls = null }) {
+function createServer({ model, marks, notes, version, uiRoot, search = null, events = null, trayStore = null, dipaka = null, admin = null, ops = null, access = createAccess({ env: {} }), tls = null }) {
   const root = path.resolve(uiRoot);
   const send = (res, code, type, body) => { res.writeHead(code, Object.assign({ 'Content-Type': type }, SECURITY)); res.end(body); };
   const json = (res, o, code) => send(res, code || 200, 'application/json; charset=utf-8', JSON.stringify(o));
@@ -27,7 +27,7 @@ function createServer({ model, marks, notes, version, uiRoot, search = null, eve
     .filter(i => all || (i.mark !== 'dull' && i.mark !== 'wrong-sense')).sort((a, b) => (b.mark === 'use') - (a.mark === 'use'));
   // Facts starred anywhere (under a handle or on their own), so a search result, a fact in focus or a shelf card can show its star.
   const starredIds = () => new Set(marks.all().filter(e => e.mark === 'use' && e.item != null).map(e => e.item));
-  const readBody = (req, cb) => { let b = ''; req.on('data', d => { b += d; if (b.length > 10000) req.destroy(); }); req.on('end', () => { try { cb(JSON.parse(b)); } catch (e) { cb(null); } }); };
+  const readBody = (req, cb, max = 10000) => { let b = ''; req.on('data', d => { b += d; if (b.length > max) req.destroy(); }); req.on('end', () => { try { cb(JSON.parse(b)); } catch (e) { cb(null); } }); };
 
   function serveStatic(res, urlPath) {
     let rel; try { rel = decodeURIComponent(urlPath); } catch (e) { return send(res, 400, MIME['.txt'], 'bad path'); }
@@ -80,6 +80,25 @@ function createServer({ model, marks, notes, version, uiRoot, search = null, eve
         if (!ok) return json(res, { error: 'bad tray' }, 400);
         trayStore.save({ items: b.items.map(i => ({ id: i.id, noteId: i.noteId == null ? null : i.noteId, note: i.note, claim: i.claim })), links: b.links }); json(res, { ok: true });
       });
+    }
+    if (u.pathname.startsWith('/api/dipaka')) {
+      // Dipaka: one paid model call on the facts in the Collection. The answer is kept in muse-dipaka.jsonl and never goes into the vault. Preview costs nothing; run and label
+      // change the author's data (and run spends money), so they need the login from other machines, and every POST needs the X-Muse header a cross-site page cannot send.
+      if (!dipaka) return json(res, { error: 'Dipaka is not set up on this server.' }, 503);
+      if (u.pathname === '/api/dipaka' && req.method === 'GET') return json(res, { threads: dipaka.list(20), labels: dipaka.LABELS, provider: dipaka.provider, promptVersion: dipaka.PROMPT_VERSION, spentToday: dipaka.spentToday() });
+      if (req.method !== 'POST' || !['/api/dipaka/preview', '/api/dipaka/run', '/api/dipaka/label'].includes(u.pathname)) return json(res, { error: 'not found' }, 404);
+      if (req.headers['x-muse'] !== '1') return json(res, { error: 'missing X-Muse header' }, 403);
+      if (!/application\/json/.test(req.headers['content-type'] || '')) return json(res, { error: 'json only' }, 415);
+      const fail = e => e && e.userError ? json(res, { error: e.message }, e.status || 400) : (console.error('[muse] dipaka failed', e && e.stack || e), json(res, { error: 'Dipaka could not finish: ' + (e && e.message || 'unknown error') }, 502));
+      return readBody(req, b => {
+        if (!b || typeof b !== 'object') return json(res, { error: 'bad request' }, 400);
+        try {
+          if (u.pathname === '/api/dipaka/preview') return json(res, dipaka.preview({ ids: b.ids, links: b.links && typeof b.links === 'object' ? b.links : {} }));
+          if (u.pathname === '/api/dipaka/label') return json(res, { thread: dipaka.label(String(b.id), String(b.label)) });
+          if (u.pathname === '/api/dipaka/run') return dipaka.run({ packet: b.packet, seeds: b.seeds }).then(t => json(res, { thread: t }), fail);
+          return json(res, { error: 'not found' }, 404);
+        } catch (e) { return fail(e); }
+      }, 40000);
     }
     if (u.pathname === '/api/event' && req.method === 'POST') {
       // Where a fact came from (which shelf, search, a cling) when it was grabbed or picked up, so a month on you can see which routes led to questions. Counts only; no query text.

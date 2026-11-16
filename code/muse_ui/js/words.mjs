@@ -14,6 +14,8 @@ export const W = {
   collect: 'Collect',           // button: add this fact to the Collection (the working pile where you write the links)
   collected: 'Collected',       // the same button once pressed
   collection: 'Collection',     // the working pile (was the "Picked up" tray)
+  dipaka: 'Dipaka',             // the page where the Collection goes to the model to be illuminated (the lamp)
+  illuminate: 'Illuminate',     // button: send the packet and get the answer
   star: 'Star',                 // button: save this fact or pair for good
   starred: 'Starred',
   // The nudge that says what Focus is, when to use it and what happens. The tooltip is short; the hint is shown on pages full of facts.

@@ -20,6 +20,7 @@ const PORT = parseInt(opt('--port', '3005'), 10), VERSION = opt('--version', 'nu
 const HOME = process.env.QUARRY_HOME || path.join(__dirname, '..'), DB = process.env.QUARRY_DB || path.join(HOME, 'vault.db');
 const TRAY_FILE = process.env.MUSE_TRAY || path.join(HOME, 'muse-tray.json');
 const MARKS_FILE = process.env.MUSE_MARKS || path.join(HOME, 'muse-marks.jsonl');
+const DIPAKA_FILE = process.env.MUSE_DIPAKA || path.join(HOME, 'muse-dipaka.jsonl');
 
 console.log('Building model from ' + DB + ' (' + VERSION + ') ...');
 // No database yet (a new install): start in SETUP MODE on an empty in-memory one, so the Admin page opens and its "Initial setup" steps can be run. Nothing is written
@@ -57,7 +58,9 @@ const access = createAccess({ env: process.env }), HOST = access.host;
 // Optional https straight from Node (no proxy needed): MUSE_TLS_KEY and MUSE_TLS_CERT are paths to a private key and a certificate.
 const TLS = process.env.MUSE_TLS_KEY && process.env.MUSE_TLS_CERT ? { key: fs.readFileSync(process.env.MUSE_TLS_KEY), cert: fs.readFileSync(process.env.MUSE_TLS_CERT) } : null;
 
-createServer({ access, tls: TLS, ops: createJobs({ home: HOME, dbPath: DB, version: VERSION }), admin: createAdmin({ home: HOME, dbPath: DB, db, setupMode: SETUP_MODE, integrity: INTEGRITY, degraded: DEGRADED, loadedAt: new Date(t0).toISOString(), version: VERSION, port: PORT, search, drift: () => require('./muse_map_check').check() }), model, marks: K.open(MARKS_FILE, VERSION), notes: createNoteStore(db, { vaultRoot: [process.env.MUSE_VAULT_ROOT || path.join(os.homedir(), 'md-vaults', 'knowledge'), process.env.VAULT_PATH] }), version: VERSION, search, trayStore: { load: () => { try { return JSON.parse(fs.readFileSync(TRAY_FILE, 'utf8')); } catch (e) { return { items: [], links: {} }; } }, save: o => { fs.writeFileSync(TRAY_FILE + '.tmp', JSON.stringify(o)); fs.renameSync(TRAY_FILE + '.tmp', TRAY_FILE); } }, events: { append: o => fs.appendFile(path.join(HOME, 'muse-events.jsonl'), JSON.stringify(o) + '\n', () => {}) }, uiRoot: path.join(__dirname, 'muse_ui') })
+const dipaka = require('./lib/dipaka').createDipaka({ file: DIPAKA_FILE, model, callLLM: LLM.callLLM, hasKey: LLM.hasKey, priceFor: Bud.priceFor,
+  config: { provider: process.env.MUSE_DIPAKA_PROVIDER || 'claude', maxUsdPerDay: process.env.MUSE_DIPAKA_MAX_USD_PER_DAY == null ? 3 : parseFloat(process.env.MUSE_DIPAKA_MAX_USD_PER_DAY) } });
+createServer({ access, tls: TLS, dipaka, ops: createJobs({ home: HOME, dbPath: DB, version: VERSION }), admin: createAdmin({ home: HOME, dbPath: DB, db, setupMode: SETUP_MODE, integrity: INTEGRITY, degraded: DEGRADED, loadedAt: new Date(t0).toISOString(), version: VERSION, port: PORT, search, drift: () => require('./muse_map_check').check() }), model, marks: K.open(MARKS_FILE, VERSION), notes: createNoteStore(db, { vaultRoot: [process.env.MUSE_VAULT_ROOT || path.join(os.homedir(), 'md-vaults', 'knowledge'), process.env.VAULT_PATH] }), version: VERSION, search, trayStore: { load: () => { try { return JSON.parse(fs.readFileSync(TRAY_FILE, 'utf8')); } catch (e) { return { items: [], links: {} }; } }, save: o => { fs.writeFileSync(TRAY_FILE + '.tmp', JSON.stringify(o)); fs.renameSync(TRAY_FILE + '.tmp', TRAY_FILE); } }, events: { append: o => fs.appendFile(path.join(HOME, 'muse-events.jsonl'), JSON.stringify(o) + '\n', () => {}) }, uiRoot: path.join(__dirname, 'muse_ui') })
   .listen(PORT, HOST, () => {
     console.log('Open ' + (TLS ? 'https' : 'http') + '://localhost:' + PORT + '   (marks are saved to ' + MARKS_FILE + ')');
     console.log(access.loopbackOnly ? 'Listening on ' + HOST + ' only: this machine.' : 'Listening on ' + HOST + ':' + PORT + ' (all network interfaces). Reading is open to anyone who can reach it.');

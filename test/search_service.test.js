@@ -176,7 +176,7 @@ test('Help: every recipe is complete, every link is a real screen, and every but
   assert.ok(C.RECIPES.length >= 8); const keys = new Set();
   C.RECIPES.forEach(r => { assert.ok(r.key && !keys.has(r.key), 'unique key ' + r.key); keys.add(r.key); assert.ok(r.title && r.goal && r.start && r.start.t && r.steps.length >= 3, r.key + ' is complete'); });
   const hrefs = C.RECIPES.flatMap(r => [r.start.href].concat(r.steps.map(s => s && s.href))).filter(Boolean);
-  hrefs.forEach(h => { const p = R.parse(h); assert.ok(h.startsWith('#/') && ['home','set','basket','search','stick','admin','help'].includes(p.name), h + ' is a real screen (got ' + p.name + ')'); });
+  hrefs.forEach(h => { const p = R.parse(h); assert.ok(h.startsWith('#/') && ['home','set','basket','search','stick','admin','help','dipaka'].includes(p.name), h + ' is a real screen (got ' + p.name + ')'); });
   assert.deepStrictEqual(C.WHICH.map(w => w.button), ['Focus', 'Collect', 'Star'].map(k => k)); // order: look, build, remember
   // Which buttons exist is checked against the real UI source by the Muse map audit (test/muse_map.test.js), the one place that owns it.
   const HV = await import(pathToFileURL(path.join(base, 'views', 'help.mjs')).href); assert.strictEqual(typeof HV.helpView, 'function'); assert.strictEqual(R.parse('#/help?r=know').name, 'help');

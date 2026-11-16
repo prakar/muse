@@ -68,6 +68,10 @@ RAW.RECIPES = [
     start: { t: '{home}, Yours', href: '#/?yours=1' },
     steps: ['The {collection} is saved automatically. Open it with the button at the top of any page.', '{recentFocus} lists the last facts you put in focus. {focus} on one to continue.', '{starred} lists facts you starred in sets, {home} and {stick}. {focus} on one to explore it.'],
     then: 'Clear in the {collection} empties it. There is no undo, so Copy cluster first if you might want it.' },
+  { key: 'dipaka', title: 'I want to know what I did not think to ask', goal: 'Have the strongest model tell you related, important things about a handful of facts, which you would not have known to ask.',
+    start: { t: '{collection}', href: '#/dipaka' },
+    steps: ['{collect} the facts that belong together (a handful works best; up to 20), and write how they link if you can.', 'Press {illuminate} in the {collection}. {dipaka} opens with the packet that will be sent: your facts, the words they came from, your link lines and the question. Read it and change anything.', 'It shows about what the call will cost and what you have spent today. Press {illuminate} to send; it can take a minute.', 'Read the answer, then say what it was worth: Yielded, Generic, Already knew, or Wrong or loaded. A month of labels shows whether it is worth the money.'],
+    then: 'The answer is the model’s, not from your notes, and it is not checked. Muse keeps it in muse-dipaka.jsonl and never writes it into your notes. If something is worth keeping, press Copy answer and write the note in Obsidian yourself. A daily cap (MUSE_DIPAKA_MAX_USD_PER_DAY, $3 unless set) stops runs that would pass it.' },
   { key: 'junk', title: 'I found junk and want it out of my way', goal: 'Hide a fact or a pair that is dull or means the wrong thing.',
     start: { t: 'A set, or the {stick} page', href: '#/' },
     steps: ['Press Dull for a true but useless fact; Wrong sense when the match used the word in another meaning.', 'The next fact takes its place. Press Undo on the toast if you slipped.', 'Show dull on a Connect set reveals what you have hidden.'],
@@ -93,13 +97,14 @@ export const GLOSSARY = fill([
   ['{collection}', 'The working pile of facts you have chosen to build a question from, plus the lines you write about how they link. The button at the top opens it over any page.'],
   ['{starred}', 'Everything you have starred, across sets, {home} and {stick}. Starring is permanent; the {collection} is a working pile.'],
   ['Loop', 'A question the note itself raises and leaves open.'],
+  ['{dipaka}', 'The lamp (Sanskrit dipaka: illuminator). It sends your {collection} to the strongest model and asks what is related and important that you did not know to ask. The answer is learning material, unverified, kept apart from your notes.'],
   ['Far apart', 'A badge on a cling whose note shares no tag with the note of the fact in focus. Roughly half of all clings get it, so read it as “different subject area”, not “surprising”.'],
   ['Banner, closeness, best match', 'On a search by meaning: the banner rates the best match by its closeness to your question (0 to 1). 0.50 and above is Closest matches, 0.40 to 0.50 Weak matches, under 0.40 Nothing close. Best match marks the fact the rating is based on.'],
   ['Search by meaning', 'On: finds facts that mean the same thing as your question, using an embedding model on your Mac plus one cheap AI call for each new question (repeat questions are free). Off: matches the words you typed.']
 ]);
 
 export const COMING = fill([
-  ['Live now', '{home}, {stick}, Search, {starred}, Admin (status only), Help.'],
+  ['Live now', '{home}, {stick}, Search, {starred}, {dipaka}, Admin, Help.'],
   ['Planned modes', 'Thread (follow a chain hook by hook), Slice (everything touching a year or day), Shelf (etymology and other typed shelves), Loops (the vault’s unanswered whys, as a mode), Drift (one unprompted spark a day), Wander (a random walk over words with several meanings).'],
   ['Planned features', 'Reflection (a button that inspects Muse for weak facts and fills a review queue: star, retire, fix); {star} on search results; a report of which shelves your finished questions came from; help for each mode as it arrives.']
 ]);

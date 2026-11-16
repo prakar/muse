@@ -128,3 +128,6 @@ details.flow__group > summary { cursor: pointer; padding: 0; list-style-position
 .steps .task { overflow-wrap: anywhere; } .steps .task__fields { display: grid; grid-template-columns: minmax(0, 1fr); } .steps .task__field { min-width: 0; }
 .steps .task .field, .steps .task select.field, .steps .task input.field { width: 100%; min-width: 0; box-sizing: border-box; }
 .task__opts > summary { cursor: pointer; font-size: var(--fs-0); color: var(--text-2); padding: 2px 0; } .task__opts[open] > summary { margin-bottom: var(--s-2); }
+.dipaka__packet { width: 100%; max-width: 52rem; font-family: var(--mono, ui-monospace, monospace); font-size: var(--fs-1); padding: var(--s-3); border: 1px solid var(--line-strong); border-radius: var(--r-2, 6px); background: var(--surface, transparent); color: inherit; resize: vertical; }
+.dipaka__answer .prose { max-width: 52rem; }
+.dipaka__old { margin: var(--s-2) 0; } .dipaka__old > summary { cursor: pointer; }

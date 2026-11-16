@@ -47,6 +47,7 @@ export function Tray() {
     });
     box.append(ol, h('div', { class: 'toolbar' },
       Button({ label: 'Copy cluster', ic: 'copy', onClick: async () => { try { await navigator.clipboard.writeText(tray.text()); toast({ text: `Copied ${its.length} facts.` }); } catch (e) { toast({ text: 'The browser blocked copying.' }); } } }),
+      Button({ label: W.illuminate, ic: 'search', href: build('dipaka'), title: 'Send these facts to the model and ask what you did not think to ask. You see the packet and the cost first.' }),
       Button({ label: 'Clear', variant: 'ghost', onClick: () => tray.clear() })));
     if (keep && keep.i >= 0) { const n = box.querySelectorAll('.tray__link')[keep.i]; if (n) { n.focus(); try { n.setSelectionRange(keep.a, keep.z); } catch (e) { /* not selectable */ } } }
   };

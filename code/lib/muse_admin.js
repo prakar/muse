@@ -4,7 +4,7 @@
 const fs = require('fs'), path = require('path');
 
 const SIDECARS = [['muse-marks.jsonl', 'Your stars and judgements. Permanent.'], ['muse-tray.json', 'The Collection and link lines.'], ['muse-events.jsonl', 'Usage log, for the prune review.'],
-  ['muse-judgements.jsonl', 'Older judgements file.'], ['muse-cache.db', 'Cached question rewrites for search.']];
+  ['muse-judgements.jsonl', 'Older judgements file.'], ['muse-cache.db', 'Cached question rewrites for search.'], ['muse-dipaka.jsonl', 'Dipaka answers and your labels. Permanent.']];
 const stat = f => { try { const s = fs.statSync(f); return { bytes: s.size, at: s.mtime.toISOString() }; } catch (e) { return null; } };
 const q = (db, sql, args = []) => { try { return db.prepare(sql).all(...args); } catch (e) { return null; } };
 const one = (db, sql, args = []) => { const r = q(db, sql, args); return r && r[0] ? r[0] : null; };

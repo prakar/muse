@@ -1,6 +1,6 @@
 // The address bar is the application state: every screen, page, selection and open note is a shareable, bookmarkable, back-button-friendly URL.
 // Pure parse/build here; the browser glue lives in main.mjs.
-const SHAPE = { home: [], set: ['id'], basket: [], search: [], stick: [], admin: [], help: [] };
+const SHAPE = { home: [], set: ['id'], basket: [], search: [], stick: [], admin: [], help: [], dipaka: [] };
 export const DRAWER_KEYS = ['note', 'at', 'pile'];
 
 export function parse(hash) {

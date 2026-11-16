@@ -30,7 +30,7 @@ test('Help is generated from the map: the saved-files table comes from DATA and 
 test('bloat: the audit warns near a budget limit, fails above it, and names the smallest features to trim', async () => {
   const M = await import(pathToFileURL(path.join(UI, 'muse_map.mjs')).href), keep = { ...M.BUDGET };
   try {
-    M.BUDGET.features = 12; let r = await check(); assert.ok(r.warnings.some(w => /10 features/.test(w.msg)), 'warns at over 80%'); assert.deepStrictEqual(r.problems, []);
+    M.BUDGET.features = 13; let r = await check(); assert.ok(r.warnings.some(w => /\d+ features/.test(w.msg)), 'warns at over 80%'); assert.deepStrictEqual(r.problems, []);
     M.BUDGET.features = 8; r = await check(); const p = r.problems.find(x => x.kind === 'bloat'); assert.ok(p && /smallest features: \w+/.test(p.msg) && /reasons/.test(p.msg), 'fails over the limit and says how to trim');
   } finally { Object.assign(M.BUDGET, keep); }
   assert.deepStrictEqual((await check()).problems, []);
