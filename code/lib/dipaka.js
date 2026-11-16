@@ -7,7 +7,7 @@
 // Everything outside is passed in (the model, the LLM call, the price table), so tests use fakes. The database is never touched; only the one file given.
 const fs = require('fs');
 
-const PROMPT_VERSION = 'dip-v5';   // v2 carried quotes, notes and link lines and asked two things; v3 was the bare facts and one ask; v4 put the note title before each fact and asked for concision; v5 adds etymologies, pop-culture and historical references to the wanted list
+const PROMPT_VERSION = 'dip-v6';   // v2 carried quotes, notes and link lines and asked two things; v3 was the bare facts and one ask; v4 put the note title before each fact and asked for concision; v5 added etymologies, pop-culture and historical references to the wanted list; v6 appends the author’s own line after a fact, in brackets
 const LABELS = ['yielded', 'generic', 'already-knew', 'wrong'];
 const INTRO = 'I value interesting, unexpected, and surprising connections, and lesser-known facts about well-known entities, including etymologies, pop-culture references, and interesting historical references if any. I know these facts:';
 const QUESTION = 'What I want you to do is illuminate the gaps between these facts: tell me things, in the manner I described above, that I would like to know but did not cover in the facts because I don’t know them yet. Be concise: no preamble, no restating my facts, no repetition, and no padding.';
@@ -20,9 +20,9 @@ const plain = s => String(s == null ? '' : s).replace(/\[\[([^\]|]+)(?:\|([^\]]+
 const clip = (s, n) => { s = String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
 
 // Pure. facts: [{ claim, quote, note }] in the order gathered; lines: link text between neighbour i and i+1 (or '').
-function buildPacket(facts) {
+function buildPacket(facts, lines) {
   const out = [INTRO, ''];
-  facts.forEach((f, i) => out.push((i + 1) + '. ' + (f.note ? clip(plain(f.note), 120) + ': ' : '') + clip(plain(f.claim), 400)));
+  facts.forEach((f, i) => out.push((i + 1) + '. ' + (f.note ? clip(plain(f.note), 120) + ': ' : '') + clip(plain(f.claim), 400) + (lines && lines[i] ? ' (' + clip(plain(lines[i]), 200) + ')' : '')));
   out.push('', QUESTION);
   return out.join('\n');
 }
@@ -46,14 +46,14 @@ function createDipaka({ file, model, callLLM, hasKey, priceFor, resolveModel = n
   return {
     PROMPT_VERSION, LABELS, provider, providers: () => choices.map(id => ({ id, key: !!hasKey(id) })),
     // The packet for the facts in the Collection, built from the database (not from what the browser says the facts are), plus what it would cost.
-    preview({ ids, provider: want }) {
+    preview({ ids, links, provider: want }) {
       const pv = pick(want);
       if (!Array.isArray(ids) || !ids.length) throw new DipakaError('Collect some facts first. Dipaka works on the facts in your Collection.');
       if (ids.length > MAX_FACTS || !ids.every(Number.isInteger) || new Set(ids).size !== ids.length) throw new DipakaError('A thread can hold up to ' + MAX_FACTS + ' different facts.');
-      const facts = [], missing = [];
-      ids.forEach(id => { const f = model.burrInfo(id); if (!f) { missing.push(id); return; } facts.push(f); });
+      const facts = [], missing = [], lines = [];
+      ids.forEach((id, i) => { const f = model.burrInfo(id); if (!f) { missing.push(id); return; } facts.push(f); const nxt = ids[i + 1]; lines.push(links && nxt != null ? String(links[id + '>' + nxt] || '') : ''); });
       if (!facts.length) throw new DipakaError('None of those facts are in this database.');
-      const packet = buildPacket(facts), est = estimate(packet, pv);
+      const packet = buildPacket(facts, lines), est = estimate(packet, pv);
       return { packet, facts: facts.length, missing, estimate: est, provider: pv, providers: this.providers(), promptVersion: PROMPT_VERSION, key: !!hasKey(pv), spentToday: spentToday(), cap };
     },
     // The same as preview, plus the model this provider would use right now (from llm-model-resolver, as a real call resolves it) and the estimate priced for that model.

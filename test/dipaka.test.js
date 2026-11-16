@@ -15,8 +15,9 @@ test('the packet is the intro, the facts in order, and the one ask, nothing else
   const { d } = mk(), p = d.preview({ ids: [1, 2], links: { '1>2': 'both opiates' } });
   assert.equal(p.facts, 2); assert.deepEqual(p.missing, []);
   assert.ok(p.packet.startsWith(INTRO)); assert.ok(p.packet.endsWith(QUESTION));
-  assert.match(p.packet, /\n1\. [^\n:]+: Thebaine is an opiate\.\n2\. /);
-  assert.ok(!/From my note|My own thought|both opiates|Please do two things/.test(p.packet), 'no quotes, note names or link lines');
+  assert.match(p.packet, /\n1\. [^\n:]+: Thebaine is an opiate\. \(both opiates\)\n2\. /);
+  assert.ok(!/From my note|My own thought|Please do two things/.test(p.packet), 'no quotes or link boilerplate');
+  assert.match(p.packet, /Thebaine is an opiate\. \(both opiates\)\n2\. /, 'the author’s line is appended to the fact before it');
   assert.ok(p.packet.indexOf('Thebaine') < p.packet.indexOf('Cirebon'));
   assert.ok(p.estimate.usd > 0 && p.estimate.tokensIn > 0);
 });
@@ -27,6 +28,10 @@ test('unknown ids are reported, and an empty, oversized or duplicated Collection
   assert.throws(() => d.preview({ ids: [99] }), /None of those facts/);
   assert.throws(() => d.preview({ ids: [1, 1] }), /different facts/);
   assert.throws(() => d.preview({ ids: Array.from({ length: MAX_FACTS + 1 }, (_, i) => i + 1) }), /different facts/);
+});
+test('a link line is appended in brackets to the fact it follows, cleaned of Markdown', () => {
+  const p = buildPacket([{ claim: 'A', note: 'N' }, { claim: 'B', note: 'M' }], ['**Thebaine** is an unusual name, look into it', '']);
+  assert.match(p, /1\. N: A \(Thebaine is an unusual name, look into it\)\n2\. M: B\n/);
 });
 test('facts are cleaned of Markdown litter before they are sent', () => {
   const p = buildPacket([{ claim: '- **Gold** bowls in [[Cirebon]] and ==bars of== opiates', quote: 'ignored', note: 'cirebon shipwreck' }]);
