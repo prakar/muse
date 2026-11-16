@@ -20,3 +20,20 @@ test('grok: without total_tokens, completion + reasoning is used; plain models a
   assert.strictEqual(grokBilledOutput({}), 0);
   assert.strictEqual(grokBilledOutput(undefined), 0);
 });
+
+// The resolver's profile is process-wide, so llm.js serialises resolves and sets the profile explicitly before each one.
+test('resolver profiles: a call can ask for flagship; the next call goes back to the default; overlapping calls never see each other’s profile', async () => {
+  const L = require('../code/lib/llm'), seen = []; let current = 'economy';
+  L.setResolver({ useProfile: n => { current = n; }, resolveModel: async () => { await new Promise(r => setTimeout(r, 5)); seen.push(current); return { id: current + '-model', source: 'live' }; }, markModelBad() {} });
+  const saved = { a: process.env.ANTHROPIC_API_KEY, x: process.env.XAI_API_KEY, p: process.env.LLM_MODEL_RESOLVER_PROFILE };
+  process.env.ANTHROPIC_API_KEY = 'k'; delete process.env.XAI_API_KEY; process.env.LLM_MODEL_RESOLVER_PROFILE = 'economy';
+  try {
+    const out = await Promise.all([L.modelFor('claude'), L.modelFor('claude', { profile: 'flagship' }), L.modelFor('claude'), L.modelFor('claude', { profile: 'flagship' })]);
+    assert.deepEqual(out.map(x => x.id), ['economy-model', 'flagship-model', 'economy-model', 'flagship-model']);
+    assert.deepEqual(seen, ['economy', 'flagship', 'economy', 'flagship']);
+    assert.equal(await L.modelFor('grok'), null, 'no key for that provider: nothing resolved');
+  } finally {
+    L.setResolver(require('llm-model-resolver'));
+    for (const [k, v] of [['ANTHROPIC_API_KEY', saved.a], ['XAI_API_KEY', saved.x], ['LLM_MODEL_RESOLVER_PROFILE', saved.p]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+});

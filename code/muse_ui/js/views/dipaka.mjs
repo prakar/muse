@@ -5,6 +5,7 @@ import { Prose } from '../components/prose.mjs';
 import { tray, loadTray } from '../components/tray.mjs';
 import { toast } from '../components/toast.mjs';
 import { parse } from '../markdown.mjs';
+import { getPref, setPref } from '../prefs.mjs';
 import { W } from '../words.mjs';
 
 // Dipaka: the lamp. The facts in your Collection go into a packet you can read and edit; one press sends it to the strongest model, which tells you related things
@@ -30,7 +31,9 @@ export async function dipakaView({ api }) {
   await loadTray();
   const items = tray.items(), ids = items.map(i => i.id), links = {};
   for (let i = 0; i < items.length - 1; i++) { const t = tray.link(items[i].id, items[i + 1].id); if (t) links[items[i].id + '>' + items[i + 1].id] = t; }
-  const [info, pv] = await Promise.all([api.dipaka(), ids.length ? api.dipakaPreview({ ids, links }).catch(e => ({ error: e.message })) : Promise.resolve(null)]);
+  const info = await api.dipaka(), usable = info.providers.filter(p => p.key).map(p => p.id), saved = getPref('dipakaProvider', null);
+  let chosen = usable.includes(saved) ? saved : usable.includes(info.provider) ? info.provider : usable[0] || info.provider;   // the saved choice, else the server's default, else any provider that has a key
+  let pv = ids.length ? await api.dipakaPreview({ ids, links, provider: chosen }).catch(e => ({ error: e.message })) : null;
   const head = h('div', { class: 'page-head' }, h('h1', { text: W.dipaka }),
     h('p', { text: 'Gather facts in your ' + W.collection + ', then ' + W.illuminate + ': one model call that tells you related things you did not think to ask. It is learning material for you, not a fact from your notes.' }));
   const out = h('section', { class: 'section', 'aria-live': 'polite' });
@@ -46,20 +49,24 @@ export async function dipakaView({ api }) {
 
   const box = h('textarea', { class: 'dipaka__packet', rows: '16', 'aria-label': 'What will be sent', spellcheck: 'false', maxlength: '30000' }); box.value = pv.packet;
   const money = h('p', { class: 'hint', role: 'status' });
-  const showMoney = () => { money.textContent = 'About ' + usd(pv.estimate.usd) + ' (' + pv.estimate.tokensIn + ' tokens in, answer up to a few thousand out) with ' + info.provider + '. Spent today: ' + usd(info.spentToday) + '.'
-    + (pv.key ? '' : ' No ' + info.provider + ' key is set on this machine, so this cannot run here.') + (pv.missing.length ? ' ' + pv.missing.length + ' fact(s) are not in this database and were left out.' : ''); };
+  const showMoney = () => { money.textContent = 'About ' + usd(pv.estimate.usd) + ' (' + pv.estimate.tokensIn + ' tokens in, answer up to a few thousand out) with ' + (pv.model ? pv.model.id + ' (' + (pv.profile || 'economy') + ' profile, ' + pv.model.source + ')' : chosen + ', model chosen when it runs') + '. Spent today: ' + usd(info.spentToday) + '.'
+    + (pv.key ? '' : ' No ' + chosen + ' key is set on this machine, so this cannot run with it.') + (pv.missing.length ? ' ' + pv.missing.length + ' fact(s) are not in this database and were left out.' : ''); };
   showMoney();
+  const sel = h('select', { id: 'dipaka-provider', class: 'dipaka__provider' }, info.providers.map(p => h('option', { value: p.id, text: p.id + (p.key ? '' : ' (no key on this machine)') })));
+  sel.value = chosen;
+  sel.addEventListener('change', async () => { chosen = sel.value; setPref('dipakaProvider', chosen);
+    try { const r = await api.dipakaPreview({ ids, links, provider: chosen }); pv.estimate = r.estimate; pv.key = r.key; pv.model = r.model; showMoney(); } catch (e) { money.textContent = e.message; } });
   const run = Button({ label: W.illuminate, ic: 'search', onClick: async () => {
     run.disabled = true; out.replaceChildren(h('p', { class: 'hint', text: 'Waiting for the model. This can take a minute.' }));
-    try { const r = await api.dipakaRun({ packet: box.value, seeds: ids }); info.threads.unshift(r.thread); info.spentToday += r.thread.cost || 0; showMoney(); drawHistory();
+    try { const r = await api.dipakaRun({ packet: box.value, seeds: ids, provider: chosen }); info.threads.unshift(r.thread); info.spentToday += r.thread.cost || 0; showMoney(); drawHistory();
       out.replaceChildren(h('h2', { text: 'The answer' }), Answer(r.thread, api, drawHistory)); }
-    catch (e) { out.replaceChildren(h('p', { class: 'notice', role: 'status', text: e.message })); }
+    catch (e) { out.replaceChildren(h('p', { class: 'notice', role: 'status', text: e.message }), h('p', { class: 'hint', text: 'Nothing was kept. If this is the provider’s own limit or an outage, choose another provider above and press ' + W.illuminate + ' again.' })); }
     finally { run.disabled = false; } } });
   const reset = Button({ label: 'Reset packet', variant: 'ghost', onClick: () => { box.value = pv.packet; } });
   const node = h('div', {}, head,
     h('section', { class: 'section' }, h('h2', {}, 'What will be sent', h('small', { text: String(pv.facts) + ' facts' })),
       h('p', { class: 'hint', text: 'Built from your ' + W.collection + ' and the lines you wrote between facts. Read it, change anything you like, then ' + W.illuminate + '. Nothing is sent until you press the button.' }),
-      box, money, h('div', { class: 'toolbar' }, run, reset)),
+      box, money, h('div', { class: 'toolbar' }, h('label', { for: 'dipaka-provider', class: 'toolbar__label', text: 'Provider' }), sel, run, reset)),
     out, history);
   return { node, title: W.dipaka };
 }

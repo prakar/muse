@@ -111,3 +111,35 @@ test('http: a model failure is reported plainly and nothing is kept', () => with
   const r = await call('/api/dipaka/run', { method: 'POST', headers: X, body: { packet: 'x'.repeat(40) } });
   assert.equal(r.status, 502); assert.match(r.json().error, /could not finish/); assert.equal((await call('/api/dipaka')).json().threads.length, 0);
 }, { over: { callLLM: async () => { throw new Error('boom'); } } }));
+
+test('the provider can be chosen per run: the estimate and the call use it, an unknown one is refused, one without a key is refused before any call', async () => {
+  const prices = { claude: { in: 3, out: 15 }, gemini: { in: 1, out: 2 } }, calls = [];
+  const d = createDipaka({ file: tmp(), model: { burrInfo: id => FACTS[id] || null }, hasKey: p => p !== 'grok', priceFor: p => prices[p] || { in: 0, out: 0 },
+    callLLM: async (p, pk) => { calls.push(p); return { text: 'ok', model: p + '-m', tokensIn: 1000, tokensOut: 100 }; } });
+  assert.deepEqual(d.providers(), [{ id: 'claude', key: true }, { id: 'gemini', key: true }, { id: 'grok', key: false }]);
+  const a = d.preview({ ids: [1], provider: 'claude' }), b = d.preview({ ids: [1], provider: 'gemini' });
+  assert.equal(a.provider, 'claude'); assert.equal(b.provider, 'gemini'); assert.ok(a.estimate.usd > b.estimate.usd, 'the estimate follows the provider’s price');
+  assert.equal(d.preview({ ids: [1] }).provider, 'claude', 'default when none is given'); assert.equal(d.preview({ ids: [1], provider: 'grok' }).key, false);
+  assert.throws(() => d.preview({ ids: [1], provider: 'nope' }), /Unknown provider/);
+  const t = await d.run({ packet: 'x'.repeat(40), provider: 'gemini' }); assert.deepEqual(calls, ['gemini']); assert.equal(t.provider, 'gemini'); assert.ok(Math.abs(t.cost - (1000 * 1 + 100 * 2) / 1e6) < 1e-12);
+  await assert.rejects(d.run({ packet: 'x'.repeat(40), provider: 'grok' }), /No grok key/); await assert.rejects(d.run({ packet: 'x'.repeat(40), provider: 'nope' }), /Unknown provider/);
+  assert.deepEqual(calls, ['gemini']);
+});
+
+test('the preview names the model the provider would use right now (from the resolver) and prices the estimate for it', async () => {
+  const seen = [], prices = { 'big-model': { in: 10, out: 50 }, 'small-model': { in: 1, out: 2 } };
+  const mkd = resolve => createDipaka({ file: tmp(), model: { burrInfo: id => FACTS[id] || null }, hasKey: () => true, priceFor: (p, m) => prices[m] || { in: 3, out: 15 }, callLLM: async () => ({ text: 'ok', model: 'big-model', tokensIn: 1, tokensOut: 1 }), resolveModel: resolve });
+  const a = await mkd(async p => { seen.push(p); return { id: 'big-model', source: 'resolver' }; }).previewResolved({ ids: [1] });
+  const b = await mkd(async () => ({ id: 'small-model', source: 'pinned (resolver error)' })).previewResolved({ ids: [1] });
+  assert.deepEqual(seen, ['claude']); assert.deepEqual(a.model, { id: 'big-model', source: 'resolver' }); assert.ok(a.estimate.usd > b.estimate.usd, 'priced for the resolved model');
+  assert.equal((await mkd(null).previewResolved({ ids: [1] })).model, null, 'no resolver: no model named, nothing breaks');
+  assert.equal((await mkd(async () => { throw new Error('offline'); }).previewResolved({ ids: [1] })).model, null, 'a resolver failure never blocks the preview');
+});
+
+test('dipaka asks the resolver for the economy profile, for the preview and for the call', async () => {
+  const asked = []; let sent = null;
+  const d = createDipaka({ file: tmp(), model: { burrInfo: id => FACTS[id] || null }, hasKey: () => true, priceFor: () => ({ in: 3, out: 15 }),
+    resolveModel: async (p, o) => { asked.push(o && o.profile); return { id: 'm', source: 'live' }; }, callLLM: async (p, pk, o) => { sent = o; return { text: 'ok', model: 'm', tokensIn: 1, tokensOut: 1 }; } });
+  const pv = await d.previewResolved({ ids: [1] }); const t = await d.run({ packet: 'x'.repeat(40) });
+  assert.deepEqual(asked, ['economy']); assert.equal(pv.profile, 'economy'); assert.equal(sent.profile, 'economy'); assert.equal(t.profile, 'economy');
+});

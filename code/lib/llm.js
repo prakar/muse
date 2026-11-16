@@ -28,6 +28,8 @@
  *   transientRetries extra attempts on transient failure, default 0 (fail fast)
  *   retryBackoffMs   attempt N waits N * this, default 30000
  *   label            tag added to log lines (e.g. 'mindful-wc')
+ *   profile          llm-model-resolver profile for THIS call: 'economy' (cheapest; the package default) or 'flagship' (newest, most capable). Default: the package's active profile.
+ *   model            pins an exact model id and BYPASSES the resolver. Only lab bake-offs may do this (test/llm_routing.test.js); everything else leaves it out.
  */
 
 const https = require('https');
@@ -36,6 +38,8 @@ const https = require('https');
 // below, so a missing package degrades instead of breaking). openrouter needs it.
 let resolver = null;
 try { resolver = require('llm-model-resolver'); } catch (_) {}
+// Tests inject a fake resolver here; nothing else should.
+function setResolver(r) { resolver = r; baseProfile = null; activeProfile = null; }
 
 const PROVIDERS = {
   claude:     { keyEnv: 'ANTHROPIC_API_KEY',  resolverId: 'anthropic', fallback: 'claude-sonnet-4-5', heartbeatMs: 0 },
@@ -121,16 +125,44 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 // ---------------------------------------------------------------------------
 // MODEL RESOLUTION
 // ---------------------------------------------------------------------------
-async function resolveFor(provider, key) {
+// The resolver's profile is process-wide (useProfile), so a call that wants another profile cannot simply switch it: a nuggetize batch resolving at the same moment would
+// see the wrong one. Every resolve therefore runs one at a time through this queue, and the profile is set explicitly before each (a no-op when it is already right, so
+// the resolver's model-list cache is only cleared when the profile really changes). A call with no profile gets the package's own default (settings.yml or the env var).
+let baseProfile = null, activeProfile = null, queue = Promise.resolve();
+function packageDefaultProfile() {
+  if (process.env.LLM_MODEL_RESOLVER_PROFILE) return process.env.LLM_MODEL_RESOLVER_PROFILE;
+  try { const f = require('path').join(require('path').dirname(require.resolve('llm-model-resolver')), 'profiles', 'settings.yml');
+    return /^\s*flagship_performance:\s*(yes|true)\b/mi.test(require('fs').readFileSync(f, 'utf8')) ? 'flagship' : 'economy'; } catch (e) { return 'economy'; }
+}
+function underProfile(profile, fn) {
+  const run = async () => {
+    if (resolver && resolver.useProfile) {
+      if (baseProfile === null) { baseProfile = packageDefaultProfile(); activeProfile = baseProfile; }
+      const want = profile || baseProfile;
+      if (want !== activeProfile) { resolver.useProfile(want); activeProfile = want; }
+    }
+    return fn();
+  };
+  const p = queue.then(run, run); queue = p.catch(function () {}); return p;
+}
+
+async function resolveFor(provider, key, profile) {
   const cfg = PROVIDERS[provider];
   if (!resolver) return { id: cfg.fallback, source: 'pinned (llm-model-resolver not installed)' };
   try {
-    const r = await resolver.resolveModel(cfg.resolverId, key, { fallback: cfg.fallback });
+    const r = await underProfile(profile, function () { return resolver.resolveModel(cfg.resolverId, key, { fallback: cfg.fallback }); });
     return { id: (r && r.id) || cfg.fallback, source: (r && r.source) || 'resolver' };
   } catch (e) {
     log('warn', 'resolveModel threw, using pinned fallback', { provider: provider, err: e.message });
     return { id: cfg.fallback, source: 'pinned (resolver error)' };
   }
+}
+
+// The model a call to this provider would use right now, resolved the same way a real call resolves it (llm-model-resolver, else the pinned fallback), without making
+// the call. Null when the provider has no key on this machine. Used to show the author which model a paid run will use before it is sent.
+async function modelFor(provider, opts) {
+  const cfg = PROVIDERS[provider]; if (!cfg || !process.env[cfg.keyEnv]) return null;
+  return resolveFor(provider, process.env[cfg.keyEnv], opts && opts.profile);
 }
 
 // A model can be genuinely listed by the provider's live /models endpoint and still fail
@@ -147,15 +179,15 @@ async function withResolvedModel(provider, key, opts, send) {
   const cfg = PROVIDERS[provider];
   // opts.model pins an exact model id (bake-offs, reproducing a past run): no resolver, no re-resolve; a failure is thrown as is.
   if (opts.model) { log('info', 'LLM model pinned', { provider: provider, model: opts.model, label: opts.label }); return await send(opts.model); }
-  let resolved = await resolveFor(provider, key);
-  log('info', 'LLM model resolved', { provider: provider, model: resolved.id, via: resolved.source, label: opts.label });
+  let resolved = await resolveFor(provider, key, opts.profile);
+  log('info', 'LLM model resolved', { provider: provider, model: resolved.id, via: resolved.source, profile: opts.profile || 'default', label: opts.label });
   try {
     return await send(resolved.id);
   } catch (e) {
     if (!resolver || !isModelFailure(provider, e.status)) throw e;
     log('warn', 'Resolved model failed, marking bad and re-resolving', { provider: provider, failedModel: resolved.id, err: e.message });
     resolver.markModelBad(cfg.resolverId, resolved.id);
-    const next = await resolveFor(provider, key);
+    const next = await resolveFor(provider, key, opts.profile);
     if (next.id === resolved.id) throw e;   // nothing else to try - don't repeat the same failing call
     log('info', 'LLM model re-resolved after failure', { provider: provider, model: next.id, via: next.source });
     resolved = next;
@@ -339,4 +371,4 @@ async function callLLM(provider, prompt, options) {
   }
 }
 
-module.exports = { callLLM, hasKey, setLogger, providers: Object.keys(PROVIDERS), grokBilledOutput };
+module.exports = { callLLM, modelFor, hasKey, setLogger, setResolver, providers: Object.keys(PROVIDERS), grokBilledOutput };

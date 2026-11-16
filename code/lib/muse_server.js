@@ -85,7 +85,7 @@ function createServer({ model, marks, notes, version, uiRoot, search = null, eve
       // Dipaka: one paid model call on the facts in the Collection. The answer is kept in muse-dipaka.jsonl and never goes into the vault. Preview costs nothing; run and label
       // change the author's data (and run spends money), so they need the login from other machines, and every POST needs the X-Muse header a cross-site page cannot send.
       if (!dipaka) return json(res, { error: 'Dipaka is not set up on this server.' }, 503);
-      if (u.pathname === '/api/dipaka' && req.method === 'GET') return json(res, { threads: dipaka.list(20), labels: dipaka.LABELS, provider: dipaka.provider, promptVersion: dipaka.PROMPT_VERSION, spentToday: dipaka.spentToday() });
+      if (u.pathname === '/api/dipaka' && req.method === 'GET') return json(res, { threads: dipaka.list(20), labels: dipaka.LABELS, provider: dipaka.provider, providers: dipaka.providers(), promptVersion: dipaka.PROMPT_VERSION, spentToday: dipaka.spentToday() });
       if (req.method !== 'POST' || !['/api/dipaka/preview', '/api/dipaka/run', '/api/dipaka/label'].includes(u.pathname)) return json(res, { error: 'not found' }, 404);
       if (req.headers['x-muse'] !== '1') return json(res, { error: 'missing X-Muse header' }, 403);
       if (!/application\/json/.test(req.headers['content-type'] || '')) return json(res, { error: 'json only' }, 415);
@@ -93,9 +93,9 @@ function createServer({ model, marks, notes, version, uiRoot, search = null, eve
       return readBody(req, b => {
         if (!b || typeof b !== 'object') return json(res, { error: 'bad request' }, 400);
         try {
-          if (u.pathname === '/api/dipaka/preview') return json(res, dipaka.preview({ ids: b.ids, links: b.links && typeof b.links === 'object' ? b.links : {} }));
+          if (u.pathname === '/api/dipaka/preview') return dipaka.previewResolved({ ids: b.ids, links: b.links && typeof b.links === 'object' ? b.links : {}, provider: b.provider }).then(r => json(res, r), fail);
           if (u.pathname === '/api/dipaka/label') return json(res, { thread: dipaka.label(String(b.id), String(b.label)) });
-          if (u.pathname === '/api/dipaka/run') return dipaka.run({ packet: b.packet, seeds: b.seeds }).then(t => json(res, { thread: t }), fail);
+          if (u.pathname === '/api/dipaka/run') return dipaka.run({ packet: b.packet, seeds: b.seeds, provider: b.provider }).then(t => json(res, { thread: t }), fail);
           return json(res, { error: 'not found' }, 404);
         } catch (e) { return fail(e); }
       }, 40000);

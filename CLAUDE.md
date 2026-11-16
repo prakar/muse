@@ -34,6 +34,7 @@ Project-only working papers (single copy, not duplicated): `nug-v6-backlog.md`, 
 - Lab work lives in `code/lab/`; lab outputs in `code/lab/out/`. Lab spend log: `code/lab/out/spend.jsonl`. Ask before raising spend caps beyond what was agreed.
 - Eval snapshots: use sqlite `.backup`, not `VACUUM INTO`.
 - Run tests with the repo's test command before saying work is done.
+- LLM calls (permanent, applies to every project): every LLM call goes through `code/lib/llm.js`, and the model is always chosen by `llm-model-resolver` (`resolveModel`), never hard-coded. Choose cost per call with `profile`: `economy` (default) or `flagship`. Only exception: lab bake-offs may pin a model via an explicit `--model` flag. Guard: `test/llm_routing.test.js`. Never bypass the resolver or add a direct provider call.
 
 ## Heuristic registry
 `code/data/heuristics.json` is GENERATED (`npm run heuristics`; `npm run heuristics:check`). Authored fields are in `code/data/heuristic_overlay.json`; names and tags come from the vault note `QUARRY - Heuristics Commons`, fragment counts from `QUARRY - Heuristics Illustrations`. It must hold no quiz text. Findings and plan: vault note `QUARRY - Heuristics Gap Analysis`. Set `QUARRY_VAULT_NOTES` if the vault notes are not at the default path.

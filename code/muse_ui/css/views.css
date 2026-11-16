@@ -131,3 +131,4 @@ details.flow__group > summary { cursor: pointer; padding: 0; list-style-position
 .dipaka__packet { width: 100%; max-width: 52rem; font-family: var(--mono, ui-monospace, monospace); font-size: var(--fs-1); padding: var(--s-3); border: 1px solid var(--line-strong); border-radius: var(--r-2, 6px); background: var(--surface, transparent); color: inherit; resize: vertical; }
 .dipaka__answer .prose { max-width: 52rem; }
 .dipaka__old { margin: var(--s-2) 0; } .dipaka__old > summary { cursor: pointer; }
+.dipaka__provider { padding: var(--s-1) var(--s-2); border: 1px solid var(--line-strong); border-radius: var(--r-2, 6px); background: transparent; color: inherit; font: inherit; }
