@@ -7,11 +7,11 @@
 // Everything outside is passed in (the model, the LLM call, the price table), so tests use fakes. The database is never touched; only the one file given.
 const fs = require('fs');
 
-const PROMPT_VERSION = 'dip-v2';   // v1 reused the research-session wording ("you have answered my questions"), which means nothing in a cold call
+const PROMPT_VERSION = 'dip-v3';   // v2 carried quotes, notes and link lines and asked two things; v3 is the bare facts and one ask
 const LABELS = ['yielded', 'generic', 'already-knew', 'wrong'];
-const INTRO = 'I write quiz questions and keep a large personal vault of notes. Below are facts taken from my notes, each with the passage it came from and the note it is in. Where I wrote a line between two facts, it is my own thought or question about how they connect; I have not found the answers.';
-const QUESTION = 'Please do two things.\n\nFirst, answer the questions and curiosities I wrote between the facts, as far as you reliably can, and say plainly where you are unsure.\n\nSecond, there are questions I have not asked because I don’t know enough to ask them. Tell me things that are related and important but that I didn’t ask because I don’t know enough to ask them. Name the specific people, places, substances, dates or terms I could look up to follow each one, and do not just repeat what the facts already say.\n\nDo not write quiz questions; I will write those myself.';
-const SYSTEM = 'You are a careful, widely read guide for one reader: an author who writes quiz questions and keeps notes. The facts below come from the reader’s own notes. Be concrete. Say plainly when you are unsure or when something is contested, and never invent a quotation, a source or a date.';
+const INTRO = 'I value interesting, unexpected, and surprising connections, and lesser-known facts about well-known entities. I know these facts:';
+const QUESTION = 'What I want you to do is illuminate the gaps between these facts: tell me things, in the manner I described above, that I would like to know but did not cover in the facts because I don’t know them yet.';
+const SYSTEM = null;   // dip-v3: no system prompt. The packet is the whole request.
 const MAX_FACTS = 20, MAX_PACKET = 30000, EXPECTED_OUT_TOKENS = 2500, MAX_OUT_TOKENS = 4000;
 
 class DipakaError extends Error { constructor(msg, status) { super(msg); this.name = 'DipakaError'; this.userError = true; this.status = status || 400; } }
@@ -20,13 +20,9 @@ const plain = s => String(s == null ? '' : s).replace(/\[\[([^\]|]+)(?:\|([^\]]+
 const clip = (s, n) => { s = String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
 
 // Pure. facts: [{ claim, quote, note }] in the order gathered; lines: link text between neighbour i and i+1 (or '').
-function buildPacket(facts, lines) {
-  const out = [INTRO, '', 'The facts:', ''];
-  facts.forEach((f, i) => {
-    out.push((i + 1) + '. ' + clip(plain(f.claim), 400));
-    out.push('   From my note “' + clip(plain(f.note), 120) + '”' + (f.quote ? ': “' + clip(plain(f.quote), 500) + '”' : '.'));
-    if (lines && lines[i]) out.push('   My own thought about how this links to the next fact: ' + clip(lines[i], 200));
-  });
+function buildPacket(facts) {
+  const out = [INTRO, ''];
+  facts.forEach((f, i) => out.push((i + 1) + '. ' + clip(plain(f.claim), 400)));
   out.push('', QUESTION);
   return out.join('\n');
 }
@@ -50,14 +46,14 @@ function createDipaka({ file, model, callLLM, hasKey, priceFor, resolveModel = n
   return {
     PROMPT_VERSION, LABELS, provider, providers: () => choices.map(id => ({ id, key: !!hasKey(id) })),
     // The packet for the facts in the Collection, built from the database (not from what the browser says the facts are), plus what it would cost.
-    preview({ ids, links, provider: want }) {
+    preview({ ids, provider: want }) {
       const pv = pick(want);
       if (!Array.isArray(ids) || !ids.length) throw new DipakaError('Collect some facts first. Dipaka works on the facts in your Collection.');
       if (ids.length > MAX_FACTS || !ids.every(Number.isInteger) || new Set(ids).size !== ids.length) throw new DipakaError('A thread can hold up to ' + MAX_FACTS + ' different facts.');
-      const facts = [], missing = [], lines = [];
-      ids.forEach((id, i) => { const f = model.burrInfo(id); if (!f) { missing.push(id); return; } facts.push(f); const nxt = ids[i + 1]; lines.push(links && nxt != null ? String(links[id + '>' + nxt] || '') : ''); });
+      const facts = [], missing = [];
+      ids.forEach(id => { const f = model.burrInfo(id); if (!f) { missing.push(id); return; } facts.push(f); });
       if (!facts.length) throw new DipakaError('None of those facts are in this database.');
-      const packet = buildPacket(facts, lines), est = estimate(packet, pv);
+      const packet = buildPacket(facts), est = estimate(packet, pv);
       return { packet, facts: facts.length, missing, estimate: est, provider: pv, providers: this.providers(), promptVersion: PROMPT_VERSION, key: !!hasKey(pv), spentToday: spentToday(), cap };
     },
     // The same as preview, plus the model this provider would use right now (from llm-model-resolver, as a real call resolves it) and the estimate priced for that model.

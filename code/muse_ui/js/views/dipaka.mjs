@@ -29,11 +29,10 @@ const Answer = (thread, api, onChange) => h('div', { class: 'dipaka__answer' }, 
 
 export async function dipakaView({ api }) {
   await loadTray();
-  const items = tray.items(), ids = items.map(i => i.id), links = {};
-  for (let i = 0; i < items.length - 1; i++) { const t = tray.link(items[i].id, items[i + 1].id); if (t) links[items[i].id + '>' + items[i + 1].id] = t; }
+  const items = tray.items(), ids = items.map(i => i.id);
   const info = await api.dipaka(), usable = info.providers.filter(p => p.key).map(p => p.id), saved = getPref('dipakaProvider', null);
   let chosen = usable.includes(saved) ? saved : usable.includes(info.provider) ? info.provider : usable[0] || info.provider;   // the saved choice, else the server's default, else any provider that has a key
-  let pv = ids.length ? await api.dipakaPreview({ ids, links, provider: chosen }).catch(e => ({ error: e.message })) : null;
+  let pv = ids.length ? await api.dipakaPreview({ ids, provider: chosen }).catch(e => ({ error: e.message })) : null;
   const head = h('div', { class: 'page-head' }, h('h1', { text: W.dipaka }),
     h('p', { text: 'Gather facts in your ' + W.collection + ', then ' + W.illuminate + ': one model call that tells you related things you did not think to ask. It is learning material for you, not a fact from your notes.' }));
   const out = h('section', { class: 'section', 'aria-live': 'polite' });
@@ -55,7 +54,7 @@ export async function dipakaView({ api }) {
   const sel = h('select', { id: 'dipaka-provider', class: 'dipaka__provider' }, info.providers.map(p => h('option', { value: p.id, text: p.id + (p.key ? '' : ' (no key on this machine)') })));
   sel.value = chosen;
   sel.addEventListener('change', async () => { chosen = sel.value; setPref('dipakaProvider', chosen);
-    try { const r = await api.dipakaPreview({ ids, links, provider: chosen }); pv.estimate = r.estimate; pv.key = r.key; pv.model = r.model; showMoney(); } catch (e) { money.textContent = e.message; } });
+    try { const r = await api.dipakaPreview({ ids, provider: chosen }); pv.estimate = r.estimate; pv.key = r.key; pv.model = r.model; showMoney(); } catch (e) { money.textContent = e.message; } });
   const run = Button({ label: W.illuminate, ic: 'search', onClick: async () => {
     run.disabled = true; out.replaceChildren(h('p', { class: 'hint', text: 'Waiting for the model. This can take a minute.' }));
     try { const r = await api.dipakaRun({ packet: box.value, seeds: ids, provider: chosen }); info.threads.unshift(r.thread); info.spentToday += r.thread.cost || 0; showMoney(); drawHistory();

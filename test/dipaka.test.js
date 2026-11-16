@@ -11,11 +11,12 @@ const mk = (over = {}) => {
   return { d, calls, tick: ms => { t += ms; } };
 };
 
-test('the packet is built from the database facts, in order, with the author’s link line and the question', () => {
+test('the packet is the intro, the facts in order, and the one ask, nothing else', () => {
   const { d } = mk(), p = d.preview({ ids: [1, 2], links: { '1>2': 'both opiates' } });
   assert.equal(p.facts, 2); assert.deepEqual(p.missing, []);
-  assert.match(p.packet, /1\. Thebaine is an opiate\./); assert.match(p.packet, /My own thought about how this links to the next fact: both opiates/); assert.ok(p.packet.endsWith(QUESTION)); assert.ok(p.packet.startsWith(INTRO));
-  assert.match(p.packet, /answer the questions and curiosities I wrote between the facts/); assert.match(p.packet, /Do not write quiz questions/); assert.ok(!/have answered my questions/.test(p.packet), 'no reference to a conversation that does not exist');
+  assert.ok(p.packet.startsWith(INTRO)); assert.ok(p.packet.endsWith(QUESTION));
+  assert.match(p.packet, /\n1\. Thebaine is an opiate\.\n2\. /);
+  assert.ok(!/From my note|My own thought|both opiates|Please do two things/.test(p.packet), 'no quotes, note names or link lines');
   assert.ok(p.packet.indexOf('Thebaine') < p.packet.indexOf('Cirebon'));
   assert.ok(p.estimate.usd > 0 && p.estimate.tokensIn > 0);
 });
@@ -27,10 +28,9 @@ test('unknown ids are reported, and an empty, oversized or duplicated Collection
   assert.throws(() => d.preview({ ids: [1, 1] }), /different facts/);
   assert.throws(() => d.preview({ ids: Array.from({ length: MAX_FACTS + 1 }, (_, i) => i + 1) }), /different facts/);
 });
-test('buildPacket omits a missing quote cleanly', () => assert.match(buildPacket([{ claim: 'A', quote: '', note: 'N' }], ['']), /1\. A\n   From my note “N”\./));
-test('quotes are cleaned of Markdown litter before they are sent', () => {
-  const p = buildPacket([{ claim: 'C', quote: '- **Ritual and Luxury Items:** the cargo had [[gold bowls]] and ==bars of== opiates', note: 'cirebon shipwreck' }], ['']);
-  assert.match(p, /“Ritual and Luxury Items: the cargo had gold bowls and bars of opiates”/); assert.ok(!/\*\*|\[\[|==/.test(p.split('The facts:')[1].split('Please do')[0]));
+test('facts are cleaned of Markdown litter before they are sent', () => {
+  const p = buildPacket([{ claim: '- **Gold** bowls in [[Cirebon]] and ==bars of== opiates', quote: 'ignored', note: 'ignored' }]);
+  assert.match(p, /\n1\. Gold bowls in Cirebon and bars of opiates\n/); assert.ok(!/ignored|\*\*|\[\[|==/.test(p));
 });
 
 test('a run calls the model once, keeps the thread, and records cost from the tokens', async () => {
@@ -85,8 +85,8 @@ async function withDipaka(fn, { access, over } = {}) {
 }
 const X = { 'X-Muse': '1' };
 test('http: preview, run, label and list work end to end; the packet comes from the database', () => withDipaka(async (call, calls) => {
-  const pv = await call('/api/dipaka/preview', { method: 'POST', headers: X, body: { ids: [3, 4], links: { '3>4': 'same year' } } });
-  assert.equal(pv.status, 200); assert.match(pv.json().packet, /Fact 3/); assert.match(pv.json().packet, /same year/);
+  const pv = await call('/api/dipaka/preview', { method: 'POST', headers: X, body: { ids: [3, 4] } });
+  assert.equal(pv.status, 200); assert.match(pv.json().packet, /Fact 3/);
   const run = await call('/api/dipaka/run', { method: 'POST', headers: X, body: { packet: pv.json().packet, seeds: [3, 4] } });
   assert.equal(run.status, 200); assert.equal(run.json().thread.response, 'A lamp-lit answer.'); assert.equal(calls.length, 1);
   const id = run.json().thread.id;
