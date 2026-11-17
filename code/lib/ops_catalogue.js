@@ -92,7 +92,7 @@ const TASKS = [
     params: [P('limit', 'int', 'How many notes', { min: 1, max: 5000, default: 20 }), P('note', 'int', 'Or one note id', { min: 1 }), P('provider', 'enum', 'Model provider', { values: PROVIDERS, default: 'gemini' }), P('ceiling', 'number', 'Spending ceiling, USD', { min: 0.01, max: 100 })],
     build: (p, go) => [script(go ? 'Tag notes' : 'Tag notes (dry run)', 'tagger.js', [...(p.note ? ['--note', String(p.note)] : ['--limit', String(p.limit)]), '--provider', p.provider, ...(p.ceiling ? ['--ceiling', String(p.ceiling)] : []), ...(go ? [] : ['--dry-run'])])],
     expectValue: (p, ctx) => I.tagCandidates({ dbPath: ctx.dbPath, limit: p.note ? 0 : p.limit, note: p.note || 0, log: () => {} }) },
-  { id: 'tag-writeback', area: 'prep', title: 'Write approved tags into your notes', does: 'Add the approved tags to the tags line of each note in your REAL vault (never Muse\u2019s copy). It only adds: tags a note already has are kept as they are. It never commits; Obsidian\u2019s git plugin sees the change. The check lists exactly what would change; a real run needs that count typed back. Afterwards run Bring the vault in.', effect: 'writes files', group: 'db', dry: true, safe: 'it only adds tags to note files and marks proposals as written; a note\u2019s own tags are never removed or reordered, and each change is logged in muse-tag-writeback.jsonl', needs: 'count',
+  { id: 'tag-writeback', area: 'prep', title: 'Write approved tags into your notes', does: 'Add the approved tags to the tags line of each note in your REAL vault (never Muse\u2019s copy). It only adds: tags a note already has are kept as they are. It never commits; Obsidian\u2019s git plugin sees the change. The check lists exactly what would change; a real run needs that count typed back. Afterwards run Bring Muse up to date.', effect: 'writes files', group: 'db', dry: true, safe: 'it only adds tags to note files and marks proposals as written; a note\u2019s own tags are never removed or reordered, and each change is logged in muse-tag-writeback.jsonl', needs: 'count',
     params: [P('limit', 'int', 'At most this many notes', { min: 1, max: 5000 })],
     build: (p, go) => [script(go ? 'Write tags into notes' : 'Tag writeback (dry run)', 'tagger.js', ['--writeback', ...(p.limit ? ['--limit', String(p.limit)] : []), ...(go ? ['--confirm'] : [])])],
     expectValue: (p, ctx) => I.tagWriteCount({ dbPath: ctx.dbPath, limit: p.limit || 0, log: () => {} }) },
@@ -179,7 +179,7 @@ FLOWS.tags = {
   groups: [{ id: 'tag-steps', title: 'Tag the untagged notes', ordered: true, steps: [
     { task: 'tag', why: 'Proposes tags for untagged notes. Start with the default 20 and look at what comes back before a bigger run.' },
     { note: 'review-tags', title: 'Review the new tags', why: 'Accept, reject, or use a tag you already have. Decisions are queued, then applied together. Tags already in your vocabulary need no review.' },
-    { task: 'tag-writeback', why: 'Adds the approved tags to your real notes (dry run first). Then run Bring the vault in, so Muse sees them.' }] }]
+    { task: 'tag-writeback', why: 'Adds the approved tags to your real notes (dry run first). Then run Bring Muse up to date, so Muse sees them.' }] }]
 };
 const catalogue = () => ({ areas: AREAS.map(([id, title]) => ({ id, title })), tasks: TASKS.map(describe), onPage: ON_PAGE, flows: FLOWS });
 

@@ -14,7 +14,7 @@
  *   node code/tagger.js --status
  *
  * Writes to the database (tag_proposals, api_budget) and, only with --writeback --confirm, to the `tags:` line of note frontmatter. The model is chosen by llm-model-resolver
- * (economy profile). Writeback is logged to muse-tag-writeback.jsonl beside the database, never inside the vault. The tags are written into the REAL vault (MUSE_VAULT_SRC, default ~/md-vaults/knowledge), never Muse's copy, which the next vault sync would overwrite. After a writeback, bring the vault in (vault-sync, then index) so vault.db sees the tags.
+ * (economy profile). Writeback is logged to muse-tag-writeback.jsonl beside the database, never inside the vault. The tags are written into the REAL vault (MUSE_VAULT_SRC, default ~/md-vaults/knowledge), never Muse's copy, which the next vault sync would overwrite. After a writeback, run Bring Muse up to date (vault-sync, then index) so vault.db sees the tags.
  */
 const fs = require('fs'), path = require('path'), readline = require('readline');
 const T = require('./lib/tagging'), Bud = require('./lib/budget'), Paths = require('./lib/note_path');
@@ -115,7 +115,7 @@ async function run(a, deps = {}) {
     const out = T.writeback(db, root, Paths.toAbs, { confirm: a.confirm, limit: a.limit, log: ev => fs.appendFileSync(logFile, JSON.stringify(ev) + '\n') });
     out.plan.slice(0, 40).forEach(p => console.log('  note ' + p.id + ' ' + p.rel_path + '  +' + p.added.join(', ') + (p.before.length ? '   (keeps: ' + p.before.join(', ') + ')' : '')));
     if (out.plan.length > 40) console.log('  … and ' + (out.plan.length - 40) + ' more');
-    console.log((a.confirm ? 'WRITTEN: ' + out.written : 'DRY RUN, nothing written. Would change: ' + out.would) + ' notes | already had the tags: ' + out.unchanged + ' | file missing: ' + out.missing + (a.confirm ? '\nLog: ' + logFile + '\nNow run Bring the vault in (vault-sync, then index) so Muse sees the tags.' : '\nRun again with --confirm to write.'));
+    console.log((a.confirm ? 'WRITTEN: ' + out.written : 'DRY RUN, nothing written. Would change: ' + out.would) + ' notes | already had the tags: ' + out.unchanged + ' | file missing: ' + out.missing + (a.confirm ? '\nLog: ' + logFile + '\nNow run Bring Muse up to date (vault-sync, then index) so Muse sees the tags.' : '\nRun again with --confirm to write.'));
     return out;
   }
   return tagNotes(db, a, deps);
