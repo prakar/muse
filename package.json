@@ -7,6 +7,7 @@
     "migrate": "node --no-warnings code/migrate.js",
     "index": "node --no-warnings code/indexer.js --diff",
     "nuggetize": "node --no-warnings code/nuggetizer.js",
+    "tagger": "node --no-warnings code/tagger.js",
     "dedupe": "node --no-warnings code/dedupe.js",
     "wordplay": "node --no-warnings code/wordplay.js",
     "muse": "node --no-warnings code/muse_view.js",

@@ -3,6 +3,7 @@ import { Button } from '../components/button.mjs';
 import { kindLabel } from '../kinds.mjs';
 import { W } from '../words.mjs';
 import { tasksSection } from './admin_tasks.mjs';
+import { tagsSection } from './admin_tags.mjs';
 
 // Admin, section 1: Status and health. It reads and reports; the one thing it runs is the drift check, which only reads too. The actions (ingest, pre-process,
 // back up and restore, restart) are added one section at a time from the coverage list in the vault note "QUARRY - Muse Admin Coverage", and each lands in the
@@ -28,8 +29,8 @@ export async function adminView({ api }) {
     driftBtn.disabled = true; out.replaceChildren(h('p', { class: 'hint', text: 'Checking the map against the code...' }));
     try {
       const r = await api.adminDrift();
-      out.replaceChildren(h('p', { class: r.ok ? 'drift__ok' : 'drift__bad', text: r.ok ? 'No drift: the Muse map matches the code.' : r.problems.length + ' problem' + (r.problems.length === 1 ? '' : 's') + ' found.' }),
-        r.problems.length ? h('ul', {}, r.problems.map(t => h('li', { text: t }))) : null, r.warnings.length ? h('ul', { class: 'drift__warn' }, r.warnings.map(t => h('li', { text: t }))) : null);
+      out.replaceChildren(...[h('p', { class: r.ok ? 'drift__ok' : 'drift__bad', text: r.ok ? 'No drift: the Muse map matches the code.' : r.problems.length + ' problem' + (r.problems.length === 1 ? '' : 's') + ' found.' }),
+        r.problems.length ? h('ul', {}, r.problems.map(t => h('li', { text: t }))) : null, r.warnings.length ? h('ul', { class: 'drift__warn' }, r.warnings.map(t => h('li', { text: t }))) : null].filter(Boolean));   // a null would show as the text "null"
     } catch (e) { out.replaceChildren(h('p', { class: 'drift__bad', text: 'The check could not run: ' + e.message })); }
     driftBtn.disabled = false;
   } });
@@ -49,7 +50,8 @@ export async function adminView({ api }) {
   fillBar(s);
   let tasks = null;   // the notice that Muse is behind the database is repainted with the numbers when a job ends
   const refreshBar = () => api.adminStatus().then(x => { fillBar(x); if (tasks) tasks.setFreshness(x.freshness); }).catch(() => {});
-  tasks = await tasksSection({ api, onJobEnd: refreshBar, freshness: s.freshness });
+  const tagsPanel = await tagsSection({ api, onDone: refreshBar });   // drawn inside step 2 of the Tags group (the note step 'review-tags')
+  tasks = await tasksSection({ api, onJobEnd: refreshBar, freshness: s.freshness, extras: { 'review-tags': tagsPanel } });
   const { actions, output } = tasks;
   const node = h('div', { class: 'admin' },
     h('div', { class: 'page-head' }, h('h1', { text: W.admin }), h('p', { text: 'What you can run from here comes first; the reports on the state of things are below. Every task checks first, shows what it would do, and asks before it spends money or deletes anything.' })),

@@ -151,6 +151,10 @@ function createServer({ model, marks, notes, version, uiRoot, search = null, eve
       // Maintenance jobs: the same catalogue and runner the `muse ops` command uses. Starting, watching and stopping are all here, so anything that can call HTTP can drive them.
       if (ops && u.pathname === '/api/admin/ops' && req.method === 'GET') { let pending = null; try { pending = I.candidates({ dbPath: ops.ctx.dbPath, args: ['--all'], log: () => {} }); } catch (e) { /* no database */ }
         return json(res, Object.assign(ops.catalogue(), { pending, setup: I.setupState({ dbPath: ops.ctx.dbPath, home: ops.ctx.home }), running: ops.running().map(j => j.id), backups: I.listBackups(ops.ctx.home).map(b => b.name) })); }
+      if (ops && u.pathname === '/api/admin/tags' && req.method === 'GET') {
+        const sp = u.searchParams, num = (k, d, lo, hi) => { const v = parseInt(sp.get(k), 10); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; }, f = sp.get('filter'), q = String(sp.get('q') || '').slice(0, 60);
+        return json(res, I.tagsWaiting({ dbPath: ops.ctx.dbPath, page: num('page', 1, 1, 100000), size: num('size', 24, 1, 200), filter: ['all', 'suggestion', 'ambiguous', 'once', 'none'].includes(f) ? f : 'all', q }));
+      }
       if (ops && u.pathname === '/api/admin/jobs' && req.method === 'GET') return json(res, { jobs: ops.list(30) });
       if (ops && u.pathname === '/api/admin/jobs' && req.method === 'POST') {
         if (!/application\/json/.test(req.headers['content-type'] || '')) return json(res, { error: 'json only' }, 415);

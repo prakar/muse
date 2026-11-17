@@ -22,7 +22,7 @@ test('ops catalogue: every task is wired to a real script, and the safety rules 
     if (t.needs) assert.ok(t.expectValue && t.dry, t.id + ' asks for confirmation only when it has a dry twin and a value to check');
     if (t.effect === 'spends money') assert.ok(t.needs && t.dry && (t.backup || t.safe), t.id + ': paid tasks have a dry run, a typed confirmation, and either a backup or a stated reason none is needed');
     if (t.effect === 'writes DB') assert.ok(t.backup || (t.safe && t.safe.length > 20) || t.id === 'restore', t.id + ': a task that writes the database backs up first, or says why what it writes can be rebuilt (restore does its own)');
-    const steps = Cat.plan(t.id, t.id === 'find-notes' ? { pattern: 'x' } : t.id === 'restore' ? { name: 'vault.db.bak-1' } : {}, { ctx: { home: f.home, dbPath: f.dbPath, version: f.version, env: f.env } }).steps;
+    const steps = Cat.plan(t.id, t.id === 'find-notes' ? { pattern: 'x' } : t.id === 'restore' ? { name: 'vault.db.bak-1' } : t.id === 'tag-decide' ? { decisions: 'x|accept|' } : {}, { ctx: { home: f.home, dbPath: f.dbPath, version: f.version, env: f.env } }).steps;
     steps.forEach(s => { if (s.script) assert.ok(fs.existsSync(path.join(__dirname, '..', 'code', s.script)), t.id + ' uses a script that exists: ' + s.script); });
   });
 });

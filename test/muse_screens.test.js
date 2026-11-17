@@ -108,3 +108,20 @@ test('screens: Admin opens on Initial setup for an install without notes and fac
   assert.strictEqual((at.match(/looks done/g) || []).length, 2, 'migrate and index are marked done');
   assert.ok(/Muse is behind the database/.test(at) && /2 new facts, 1 duplicate flag/.test(at) && /muse restart/.test(at), 'the staleness notice says what changed and what to run');
 });
+
+test('screens: Tags is its own tab: three numbered steps, the review list inside step 2 with its buttons, paged, and only the restart step shows the freshness notice', async () => {
+  D.install(); const { adminView } = await imp('views/admin.mjs'), Cat = require('../code/lib/ops_catalogue'), { planFlow } = await imp('views/admin_tasks.mjs');
+  const status = { counts: { notes: 3, version: 'nug-v6', byVersion: [], pending: 0, dupes: [], wordplay: [] }, database: { path: 'vault.db', bytes: 1000, at: null, migrations: { n: 20, last: 'M020' }, backups: [], backupBytes: 0 },
+    money: { spent: 0, ceiling: 10, lastCall: null, lastRun: null }, files: [], leftovers: [], server: { version: 'nug-v6', port: 3005, pid: 1, node: 'v24', upSeconds: 5, search: null }, freshness: { loadedAt: '2026-11-17T05:56:00.000Z', stale: false } };
+  const cat = { ...Cat.catalogue(), pending: 0, setup: { suggested: 'ongoing', done: {} } };
+  assert.deepStrictEqual(planFlow(cat, 'tags').groups[0].items.map(i => i.task ? i.task.id : i.note), ['tag', 'review-tags', 'tag-writeback']);
+  assert.ok(!planFlow(cat, 'ongoing').groups.some(g => g.items.some(i => i.task && (i.task.id === 'tag' || i.task.id === 'tag-writeback'))), 'the tag tasks are not in Ongoing maintenance any more');
+  const seen = []; const prefs = { adminMode: 'tags' }; global.localStorage = { getItem: k => k === 'muse.adminMode' ? JSON.stringify('tags') : null, setItem() {} };
+  const a = await adminView({ api: { ...stubApi([]), adminStatus: async () => status, adminDrift: async () => ({ ok: true, problems: [], warnings: [] }), adminOps: async () => cat, adminJobs: async () => ({ jobs: [] }),
+    adminTags: async p => { seen.push(p); return { available: true, total: 60, matching: 60, shown: 2, untagged: 10, approvedUnwritten: 2, waiting: [{ tag: 'craft', notes: 2, titles: ['Japanese Parquetry'], candidates: [], suggestions: ['arts/handicraft'] }, { tag: 'history', notes: 1, titles: ['X'], candidates: ['arts/history', 'sports/history'], suggestions: [] }] }; } }, store: {} });
+  const notes = D.all(a.node, e => String(e.className || '').split(' ').includes('task--note')), review = notes.find(n => /Review the new tags/.test(text(n))), at = text(a.node);
+  assert.ok(review && /craft/.test(text(review)) && /Accept tag/.test(text(review)) && /Reject tag/.test(text(review)) && /arts\/handicraft/.test(text(review)) && /arts\/history/.test(text(review)), 'the list is inside the review step');
+  assert.ok(/Apply decisions/.test(text(review)) && /Clear decisions/.test(text(review)) && /Per page/.test(text(review)) && /of 60/.test(text(review)), 'queued decisions and a pager with a per-page choice');
+  assert.deepStrictEqual(seen[0], { page: 1, size: 24, filter: 'all', q: '' }, 'the first page is asked for with the default size');
+  assert.ok(!/up to date|behind the database/.test(text(review)), 'the review step does not carry the restart notice'); assert.ok(/Tags/.test(at) && /Ongoing maintenance/.test(at) && /Initial setup/.test(at), 'three tabs');
+});

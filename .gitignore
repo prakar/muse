@@ -60,6 +60,8 @@ muse-cache.db*
 eval.db
 muse-events.jsonl
 muse-tray.json
+muse-dipaka.jsonl
+muse-tag-writeback.jsonl
 
 # Muse ops: job logs and reports (local, regenerated)
 logs/

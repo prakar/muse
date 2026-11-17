@@ -27,7 +27,7 @@ test('creating is idempotent: a second run changes nothing and applies nothing',
 test('the check on a missing database creates nothing and says what a real run would do', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'muse-parity-')), db = path.join(dir, 'vault.db');
   const r = migrate(db, '--status'); assert.strictEqual(r.status, 0, r.stderr);
-  assert.match(r.stdout, /No database yet/); assert.match(r.stdout, /Pending: 19 \/ 19/); assert.strictEqual(fs.existsSync(db), false, 'no file was made');
+  assert.match(r.stdout, /No database yet/); assert.match(r.stdout, /Pending: 20 \/ 20/); assert.strictEqual(fs.existsSync(db), false, 'no file was made');
 });
 
 test('the indexer refuses to run on a missing or unmigrated database, with one clear message and no file made', () => {

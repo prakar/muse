@@ -134,3 +134,12 @@ details.flow__group > summary { cursor: pointer; padding: 0; list-style-position
 .dipaka__provider { padding: var(--s-1) var(--s-2); border: 1px solid var(--line-strong); border-radius: var(--r-2, 6px); background: transparent; color: inherit; font: inherit; }
 
 .dipaka__caution { font-weight: 600; color: var(--text-2, inherit); }
+
+.tags__list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-3); }
+.tags__row { display: grid; gap: var(--s-2); padding: var(--s-3); border: 1px solid var(--line, currentColor); border-radius: var(--r-2, 6px); }
+.tags__n { color: var(--text-3); }
+
+.step--wide { grid-column: 1 / -1; flex-basis: 100%; width: 100%; }
+.tags__bar { display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; margin: var(--s-3) 0; }
+.tags__row.is-queued { border-style: dashed; }
+.tags__foot { margin-top: var(--s-3); }

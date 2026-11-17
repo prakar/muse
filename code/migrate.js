@@ -418,6 +418,16 @@ const MIGRATIONS = [
         log('  Dropped ' + t + ' (' + n + ' row' + (n === 1 ? '' : 's') + ')');
       });
     }
+  },
+
+  // -------------------------------------------------------------------------
+  // M020: tag_proposals, the waiting room of the slim tagger (code/tagger.js, lib/tagging.js). Creates a table only; nothing is dropped or rewritten, so no backup is needed
+  // (backup rule: only where data can be lost).
+  // -------------------------------------------------------------------------
+  {
+    id:   'M020',
+    desc: 'tag_proposals: tags the slim tagger proposes, approved (in vocabulary) or pending your review',
+    up: function(db) { db.exec(require('./lib/tagging').SCHEMA_SQL); log('  Added tag_proposals'); }
   }
 
 ];

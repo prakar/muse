@@ -138,6 +138,28 @@
    "foreignKeys": [],
    "indexes": []
   },
+  "tag_proposals": {
+   "columns": [
+    "id INTEGER PK1",
+    "note_id INTEGER NOT NULL",
+    "tag_full TEXT NOT NULL",
+    "in_vocabulary INTEGER NOT NULL DEFAULT 0",
+    "status TEXT NOT NULL DEFAULT 'pending'",
+    "decided_by TEXT",
+    "model TEXT",
+    "prompt_version TEXT",
+    "created_at TEXT NOT NULL",
+    "decided_at TEXT",
+    "written_at TEXT"
+   ],
+   "foreignKeys": [
+    "note_id -> vault_notes(id) ON DELETE CASCADE"
+   ],
+   "indexes": [
+    "UNIQUE note_id,tag_full",
+    "status,in_vocabulary"
+   ]
+  },
   "vault_meta": {
    "columns": [
     "key TEXT PK1",

@@ -115,6 +115,25 @@ function candidates({ dbPath, args = [], log = console.log, env = process.env, h
   } finally { db.close(); }
 }
 
+// Tagger numbers, for the paid run's typed confirmation and for the Admin page. Read-only, and tolerant of a database that has no tag_proposals yet (M020 not applied).
+function tagCandidates({ dbPath, limit = 0, note = 0, log = console.log }) {
+  const T = require('./tagging'), db = openRead(dbPath);
+  try { const n = T.candidates(db, { limit, note }).length; log('Notes this run would tag: ' + n); return n; } finally { db.close(); }
+}
+function tagWriteCount({ dbPath, limit = 0, log = console.log }) {
+  const db = openRead(dbPath);
+  try { const n = db.prepare("SELECT COUNT(DISTINCT note_id) n FROM tag_proposals WHERE status='approved' AND written_at IS NULL").get().n, k = limit && limit < n ? limit : n; log('Notes this run would write tags into: ' + k); return k; } finally { db.close(); }
+}
+function tagsWaiting({ dbPath, page = 1, size = 24, filter = 'all', q = '' }) {
+  const T = require('./tagging'); let db; try { db = openRead(dbPath); } catch (e) { return { available: false, total: 0, matching: 0, shown: 0, waiting: [] }; }
+  try {
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='tag_proposals'").get()) return { available: false, total: 0, matching: 0, shown: 0, waiting: [] };
+    const vocab = T.vocabularyWithApproved(db, T.loadVocabulary()), r = T.pending(db, vocab, { limit: size, offset: (Math.max(1, page | 0) - 1) * size, filter, q });
+    const one = s => db.prepare(s).get();   // not named q: q is the search text
+    return Object.assign({ available: true, approvedUnwritten: one("SELECT COUNT(DISTINCT note_id) n FROM tag_proposals WHERE status='approved' AND written_at IS NULL").n, untagged: one("SELECT COUNT(*) n FROM vault_notes WHERE has_tags=0 AND COALESCE(quarry_exclude,0)=0").n }, r);
+  } finally { db.close(); }
+}
+
 // Where an install stands, for the Admin page's two modes. Read-only and tolerant of a missing or half-built database. `suggested` is the mode to open on: a database
 // with notes and facts is "ongoing"; anything less is still "setup". `done` marks steps whose result is already in the database, so the setup list shows how far you are.
 function setupState({ dbPath, home }) {
@@ -131,4 +150,4 @@ function setupState({ dbPath, home }) {
 
 function pending({ dbPath, version, log = console.log }) { const n = pendingNotes(dbPath, version); log(`Pending notes: ${n}`); return n; }
 
-module.exports = { stamp, setupState, vaultDiff, candidates, pendingNotes, listBackups, backup, prune, restore, leftovers, clean, status, pending, BACKUP_RE };
+module.exports = { stamp, setupState, vaultDiff, candidates, tagCandidates, tagWriteCount, tagsWaiting, pendingNotes, listBackups, backup, prune, restore, leftovers, clean, status, pending, BACKUP_RE };

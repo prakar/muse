@@ -109,6 +109,22 @@
    "U": [],
    "D": []
   },
+  "tag_proposals": {
+   "C": [
+    "lib/tagging.js"
+   ],
+   "R": [
+    "lib/ops_internal.js",
+    "lib/tagging.js",
+    "tagger.js"
+   ],
+   "U": [
+    "lib/tagging.js"
+   ],
+   "D": [
+    "lib/tagging.js"
+   ]
+  },
   "vault_meta": {
    "C": [],
    "R": [],
@@ -128,10 +144,12 @@
     "lib/muse_model.js",
     "lib/note_store.js",
     "lib/ops_internal.js",
+    "lib/tagging.js",
     "muse_scratch.js",
     "nuggetizer.js",
     "private_scan.js",
     "rebase_note_paths.js",
+    "tagger.js",
     "wordplay.js"
    ],
    "U": [

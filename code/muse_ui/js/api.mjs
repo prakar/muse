@@ -42,6 +42,7 @@ export const api = {
   adminStatus: () => get('/api/admin/status', {}, 'admin', { 'X-Muse': '1' }),
   adminDrift: () => request('/api/admin/drift', { method: 'POST', headers: { 'X-Muse': '1' } }),
   adminOps: () => get('/api/admin/ops', {}, 'ops', { 'X-Muse': '1' }),
+  adminTags: p => get('/api/admin/tags', p || {}, null, { 'X-Muse': '1' }),
   adminJobs: () => get('/api/admin/jobs', {}, 'jobs', { 'X-Muse': '1' }),
   adminJob: (id, tail) => get('/api/admin/jobs/' + encodeURIComponent(id), { tail }, null, { 'X-Muse': '1' }),
   adminStart: body => request('/api/admin/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Muse': '1' }, body: JSON.stringify(body) }).then(r => r),

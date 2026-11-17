@@ -34,7 +34,8 @@ const when = iso => iso ? new Date(iso).toLocaleString('en-GB', { day: 'numeric'
 
 // Returns { actions, output }: the columns of tasks, and the panel that shows what a run says. The page puts the output beside the actions so it stays in view.
 // onJobEnd(job) runs when a job stops, so the status strip can refresh its numbers.
-export async function tasksSection({ api, onJobEnd = null, freshness = null }) {
+// extras: { [noteKey]: node } puts a panel inside the matching note step (the tag review list lives in step 2 of the Tags group).
+export async function tasksSection({ api, onJobEnd = null, freshness = null, extras = {} }) {
   let cat; try { cat = await api.adminOps(); } catch (e) { return { actions: h('p', { class: 'empty empty--error', text: 'The actions are not available: ' + e.message }), output: null }; }
   const log = h('pre', { class: 'log', tabindex: '0', role: 'log', 'aria-label': 'Job log', hidden: '' });
   const head = h('p', { class: 'job__head', role: 'status', text: 'Nothing has run yet. Start a task and its log shows here.' });
@@ -104,7 +105,7 @@ export async function tasksSection({ api, onJobEnd = null, freshness = null }) {
   const topFresh = freshBox();
 
   const stepOf = (it, i, group, done) => it.kind === 'note'
-    ? h('li', { class: 'step' }, h('span', { class: 'step__n', 'aria-hidden': 'true', text: String(i + 1) }), h('article', { class: 'task task--note' }, h('h3', {}, it.title), h('p', { class: 'task__does', text: it.why }), freshBox()))
+    ? h('li', { class: 'step' + (extras[it.note] ? ' step--wide' : '') }, h('span', { class: 'step__n', 'aria-hidden': 'true', text: String(i + 1) }), h('article', { class: 'task task--note' }, h('h3', {}, it.title), h('p', { class: 'task__does', text: it.why }), it.note === 'restart' ? freshBox() : null, extras[it.note] || null))
     : (() => { const c = card(it.task), body = h('div', { class: 'step__body' }, it.why ? h('p', { class: 'step__why', text: it.why }) : null, c);
         return group.ordered ? h('li', { class: 'step' + (it.why ? ' step--why' : '') }, h('span', { class: 'step__n', 'aria-hidden': 'true', text: String(i + 1) }), done && done[it.task.id] ? h('span', { class: 'step__done', text: 'looks done' }) : null, body) : h('li', { class: 'step step--plain' + (it.why ? ' step--why' : '') }, body); })();
   const groupEl = (g, mode, n = 0) => {
@@ -113,7 +114,7 @@ export async function tasksSection({ api, onJobEnd = null, freshness = null }) {
     return g.collapsed ? h('details', { class: 'flow__group band--' + (n % 3) }, h('summary', {}, h('span', { class: 'col__title', text: g.title }), g.hint ? h('small', { class: 'hint', text: '  ' + g.hint }) : null), list)
       : h('section', { class: 'flow__group band--' + (n % 3), 'aria-label': g.title }, ...head, list);
   };
-  let mode = getPref('adminMode', null); if (mode !== 'setup' && mode !== 'ongoing') mode = suggestedMode(cat);
+  let mode = getPref('adminMode', null); if (mode !== 'setup' && mode !== 'ongoing' && mode !== 'tags') mode = suggestedMode(cat);
   const flowBox = h('div', { class: 'flow' }), modeBox = h('div', { class: 'modes' });
   const drawFlow = () => {
     const plan = planFlow(cat, mode);
@@ -121,7 +122,7 @@ export async function tasksSection({ api, onJobEnd = null, freshness = null }) {
     paintFresh(freshnessNow);
   };
   let freshnessNow = freshness;
-  const drawModes = () => modeBox.replaceChildren(Segmented({ label: 'Admin mode', options: [{ label: 'Ongoing maintenance', value: 'ongoing' }, { label: 'Initial setup', value: 'setup' }], value: mode, onChange: v => { mode = v; setPref('adminMode', v); drawModes(); drawFlow(); } }));
+  const drawModes = () => modeBox.replaceChildren(Segmented({ label: 'Admin mode', options: [{ label: 'Ongoing maintenance', value: 'ongoing' }, { label: 'Initial setup', value: 'setup' }, { label: 'Tags', value: 'tags' }], value: mode, onChange: v => { mode = v; setPref('adminMode', v); drawModes(); drawFlow(); } }));
   const actions = h('div', { class: 'tasks' }, modeBox, topFresh,
     cat.pending != null ? h('p', { class: 'hint tasks__pending', text: `Notes ready to process right now: ${cat.pending}. A paid run asks for this number back.` }) : null, flowBox);
   drawModes(); drawFlow();

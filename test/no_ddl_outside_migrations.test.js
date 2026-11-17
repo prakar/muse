@@ -10,6 +10,7 @@ const DDL_OK = {
   'lib/base_schema.js': 'definition text, executed only by migrate.js',
   'lib/burrs.js': 'definition text (SCHEMA_SQL), executed only by migrate.js',
   'lib/dedupe.js': 'definition text (SCHEMA_SQL), executed only by migrate.js',
+  'lib/tagging.js': 'definition text (SCHEMA_SQL), executed only by migrate.js',
   'lib/wordplay_edges.js': 'definition text (SCHEMA_SQL), executed only by migrate.js',
   'lib/search_cache.js': 'its own cache file (muse-cache.db), never vault.db',
   'lib/search_core.js': 'an in-memory search index, rebuilt each time',

@@ -88,6 +88,17 @@ const TASKS = [
       return [internal('Notes to process', 'candidates', a.sel), script(go || free ? 'Extract facts' : 'Extract facts (dry run)', 'nuggetizer.js', [...a.sel, ...a.opts, ...(go || free ? [] : ['--dry-run'])])];
     },
     expectValue: (p, ctx) => p.mode === 'review-list' ? null : I.candidates({ dbPath: ctx.dbPath, args: nuggetArgs(p, ctx).sel, log: () => {} }) },
+  { id: 'tag', area: 'prep', title: 'Tag untagged notes (paid)', does: 'Ask the model for tags for notes that have none (shortest first, cheapest model). Tags already in the vocabulary are approved by rules; new ones wait for your review below. Nothing is written to your notes here. The check shows how many notes and the estimated cost; a real run needs that count typed back.', effect: 'spends money', group: 'db', dry: true, safe: 'it only adds proposals to the tag_proposals table, and skips notes that already have some; nothing is replaced', needs: 'count',
+    params: [P('limit', 'int', 'How many notes', { min: 1, max: 5000, default: 20 }), P('note', 'int', 'Or one note id', { min: 1 }), P('provider', 'enum', 'Model provider', { values: PROVIDERS, default: 'gemini' }), P('ceiling', 'number', 'Spending ceiling, USD', { min: 0.01, max: 100 })],
+    build: (p, go) => [script(go ? 'Tag notes' : 'Tag notes (dry run)', 'tagger.js', [...(p.note ? ['--note', String(p.note)] : ['--limit', String(p.limit)]), '--provider', p.provider, ...(p.ceiling ? ['--ceiling', String(p.ceiling)] : []), ...(go ? [] : ['--dry-run'])])],
+    expectValue: (p, ctx) => I.tagCandidates({ dbPath: ctx.dbPath, limit: p.note ? 0 : p.limit, note: p.note || 0, log: () => {} }) },
+  { id: 'tag-writeback', area: 'prep', title: 'Write approved tags into your notes', does: 'Add the approved tags to the tags line of each note in your REAL vault (never Muse\u2019s copy). It only adds: tags a note already has are kept as they are. It never commits; Obsidian\u2019s git plugin sees the change. The check lists exactly what would change; a real run needs that count typed back. Afterwards run Bring the vault in.', effect: 'writes files', group: 'db', dry: true, safe: 'it only adds tags to note files and marks proposals as written; a note\u2019s own tags are never removed or reordered, and each change is logged in muse-tag-writeback.jsonl', needs: 'count',
+    params: [P('limit', 'int', 'At most this many notes', { min: 1, max: 5000 })],
+    build: (p, go) => [script(go ? 'Write tags into notes' : 'Tag writeback (dry run)', 'tagger.js', ['--writeback', ...(p.limit ? ['--limit', String(p.limit)] : []), ...(go ? ['--confirm'] : [])])],
+    expectValue: (p, ctx) => I.tagWriteCount({ dbPath: ctx.dbPath, limit: p.limit || 0, log: () => {} }) },
+  { id: 'tag-decide', area: 'prep', title: 'Decide new tags', does: 'Apply decisions on new tags (accept: it joins the vocabulary; reject; or use a vocabulary tag instead). Run from the Tags tab, which queues decisions and applies them together.', effect: 'writes DB', group: 'db', safe: 'it only changes the status of waiting proposals in tag_proposals, and a decision can be reversed by editing that table',
+    params: [P('decisions', 'string', 'Decisions: tag|action|use-instead, separated by ;', { required: true, max: 8000, pattern: /^[a-z0-9\-\/|;]+$/ })],
+    build: p => [script('Decide tags', 'tagger.js', ['--decide-batch', p.decisions])] },
   { id: 'dedupe', area: 'prep', title: 'Flag duplicate facts', does: 'Report duplicates (default), record the flags, or clear them. No fact is ever deleted. Free.', effect: 'writes DB', group: 'db', safe: 'only the duplicate flags change, and a re-run rebuilds them; no fact is deleted', dry: true,
     params: [P('mode', 'enum', 'Real run does', { values: ['apply', 'undo'], default: 'apply' })],
     build: (p, go) => [script(go ? (p.mode === 'undo' ? 'Clear flags' : 'Record flags') : 'Duplicate report', 'dedupe.js', go ? [p.mode === 'undo' ? '--undo' : '--apply'] : [])] },
@@ -132,7 +143,7 @@ const describe = t => ({ id: t.id, area: t.area, title: t.title, does: t.does, e
 // The order a person works in, for the two situations Admin serves. The server owns this, so the page, the CLI and any bot calling the API all see the same order; a front
 // door only draws it. A step is { task, why } or { note, ... } for something done outside Admin. A group with `ordered` is numbered 1, 2, 3. A task may appear in more than
 // one place. Every task that is not shown elsewhere on the page must appear in the Ongoing view (test/muse_ops.test.js checks), so a new task cannot vanish from Admin.
-const ON_PAGE = ['status', 'drift'];   // shown as the status strip and the drift button, not as task cards
+const ON_PAGE = ['status', 'drift', 'tag', 'tag-writeback', 'tag-decide'];   // shown elsewhere on the page: the status strip, the drift button, the Tags tab   // shown as the status strip and the drift button, not as task cards
 const FLOWS = {
   setup: {
     id: 'setup', title: 'Initial setup',
@@ -161,6 +172,14 @@ const FLOWS = {
       { id: 'care', title: 'Recovery and cleanup', hint: 'Rare: something went wrong, or the backups folder is full.', tasks: ['backups-prune', 'restore', 'clean-leftovers', 'check'] },
       { id: 'pieces', title: 'Individual steps', hint: 'The parts of the routine, one at a time, for options such as redo or a single note.', collapsed: true, tasks: ['vault-sync', 'index', 'nuggetize', 'dedupe', 'wordplay'] }]
   }
+};
+FLOWS.tags = {
+  id: 'tags', title: 'Tags',
+  hint: 'Notes that have no tags. The model proposes tags, rules approve what is already in your vocabulary, and you decide the new ones. Nothing reaches your notes until the last step.',
+  groups: [{ id: 'tag-steps', title: 'Tag the untagged notes', ordered: true, steps: [
+    { task: 'tag', why: 'Proposes tags for untagged notes. Start with the default 20 and look at what comes back before a bigger run.' },
+    { note: 'review-tags', title: 'Review the new tags', why: 'Accept, reject, or use a tag you already have. Decisions are queued, then applied together. Tags already in your vocabulary need no review.' },
+    { task: 'tag-writeback', why: 'Adds the approved tags to your real notes (dry run first). Then run Bring the vault in, so Muse sees them.' }] }]
 };
 const catalogue = () => ({ areas: AREAS.map(([id, title]) => ({ id, title })), tasks: TASKS.map(describe), onPage: ON_PAGE, flows: FLOWS });
 

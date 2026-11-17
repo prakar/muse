@@ -26,6 +26,11 @@ const MUSE = {
   items: [
     { cmd: 'npm run migrate -- --status | --run', does: 'Show or apply pending migrations (M012 adds the burr tables, M013 the perishable flag, M014 the duplicate flags). Back up vault.db first: <code>cp vault.db vault.db.bak-$(date +%Y%m%d-%H%M)</code>.', effect: 'writes DB' },
     { cmd: 'npm run nuggetize -- --dry-run', does: 'Count the pending notes and estimate the cost. No LLM call, nothing written.', effect: 'free' },
+    { cmd: 'npm run tagger -- --dry-run [--limit N]', does: 'Slim tagger: count the notes without tags and estimate the cost. No LLM call, nothing written.', effect: 'free' },
+    { cmd: 'npm run tagger -- --limit N', does: 'Tag N untagged notes from the approved vocabulary (shortest first, economy model). Tags in the vocabulary are approved at once; new tags wait for review. Writes proposals to the database only.', effect: 'spends money (cents)' },
+    { cmd: 'npm run tagger -- --review', does: 'Decide the new (out-of-vocabulary) tags one at a time: accept, reject, skip. Accepted tags join the vocabulary.', effect: 'writes DB' },
+    { cmd: 'npm run tagger -- --writeback [--confirm] [--limit N]', does: 'Without --confirm: a DRY RUN listing the tags that would be added to note frontmatter. With --confirm: add them (only adds, never removes; never commits; logged beside the database). Then run the indexer.', effect: 'dry run is free; --confirm writes note files in the vault' },
+    { cmd: 'npm run tagger -- --status', does: 'Untagged notes, proposals by state, and approved tags not yet written to notes.', effect: 'free' },
     { cmd: 'npm run nuggetize -- --limit N', does: 'Extract burrs from N pending notes, shortest first. Empty and title-only notes are skipped with no LLM call and flagged for review.', effect: 'spends money (Gemini, about $0.0005 per note)' },
     { cmd: 'npm run nuggetize -- --all', does: 'Every pending note, any length. Resumable: finished notes are skipped. Run it in tmux. Stops at the budget ceiling or after 5 errors in a row.', effect: 'spends money (whole vault about $2 to $3)' },
     { cmd: 'npm run nuggetize -- --all --min-words N --shuffle --limit N', does: 'A spread-out trial on fuller notes instead of the shortest ones.', effect: 'spends money (cents)' },
