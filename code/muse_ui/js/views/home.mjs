@@ -29,11 +29,11 @@ import { W, SHELF_NAME } from '../words.mjs';
 const SHELVES = [{ key: 'all', label: SHELF_NAME.all, ic: 'grid', tip: 'Every fact' }, { key: 'veins', label: SHELF_NAME.veins, ic: 'veins', tip: 'Three or more hooks into other notes' },
   { key: 'grip', label: SHELF_NAME.grip, ic: 'grip', tip: 'One or two hooks, a thin flow' }, { key: 'lone', label: SHELF_NAME.lone, ic: 'lone', tip: 'No hooks yet, a trickle: the link may be in your head' }];
 const TRICK_ICON = { all: 'grid', 'anagram-pair': 'shuffle', 'one-letter-off': 'differ', 'head-tail': 'drop', homophone: 'sound', 'anagram-of-word': 'toword', 'hidden-word': 'eye', reversal: 'reverse', 'digit-lookalike': 'digits' };
-export const FACT_SIZES = [12, 24, 48, 96], PAIR_SIZES = [12, 24, 48, 96], PAIR_SIZE = 24, KINDS_SHOWN = 6;
+export const FACT_SIZES = [12, 24, 48, 96], PAIR_SIZES = [12, 24, 48, 96], PAIR_SIZE = 24;
 
 // How the facts can be ordered. Shuffle and Surprise are random; the rest are lenses, each with the two directions in plain words (asc is the first, desc the second).
 export const SORTS = [
-  { key: 'shuffle', name: 'Shuffle', group: 'Random' }, { key: 'surprise', name: 'Surprise', group: 'Random' },
+  { key: 'shuffle', name: 'Random order', group: 'Random' }, { key: 'surprise', name: 'Surprise', group: 'Random' },
   { key: 'hooks', name: 'Hooks', asc: 'fewest first', desc: 'most first' }, { key: 'kinds', name: 'Kinds', asc: 'fewest first', desc: 'most first' },
   { key: 'rarest', name: 'Rarest hook', asc: 'scarcest first', desc: 'commonest first' }, { key: 'length', name: 'Claim length', asc: 'shortest first', desc: 'longest first' },
   { key: 'note', name: 'Note A to Z', asc: 'A to Z', desc: 'Z to A' }, { key: 'order', name: 'Extraction order', asc: 'earliest first', desc: 'latest first' },
@@ -85,17 +85,12 @@ export async function homeView({ route, api, store, nav, actions }) {
   const shelfRow = h('div', { class: 'row' }, h('div', { class: 'seg seg--joined', role: 'group', 'aria-label': 'How well connected' }, SHELVES.map(s => {
     const c = r.shelves[s.key], dead = c === 0 && s.key !== 'all';
     return withCount(Button({ label: s.label, ic: s.ic, size: 'sm', pressed: !pairsMode && s.key === F.shelf, current: pairsMode && s.key === F.shelf, href: fHref({ shelf: s.key, page: 1 }),
-      title: dead && F.type.length ? SHELF_NAME.lone + ' have no hooks, so no kind applies to them' : s.tip, extra: dead ? 'btn--dead' : '' }), c);
+      title: dead && F.type.length ? SHELF_NAME.lone + ' have no hooks, so no kind applies to them' : s.tip, extra: (dead ? 'btn--dead' : '') + (s.key === 'all' ? ' btn--nolabel' : '') }), c);
   })));
-  // The six commonest kinds show; the rest sit behind "More" (and any kind you have chosen always shows). Open or shut is remembered in this browser.
+  // Every kind shows as a chip with its count; the counts say they filter. The group has an accessible name instead of a visible "Connects by" label.
   const kindChip = ([t, c]) => ToggleChip({ label: `${typeLabel(t)} ${n(c)}`, href: fHref({ type: toggleType(t), page: 1 }), on: F.type.includes(t) });
-  const inline = ranked.filter(([t], i) => i < KINDS_SHOWN || F.type.includes(t)), rest = ranked.filter(([t], i) => !(i < KINDS_SHOWN || F.type.includes(t)));
-  const open = getPref('kindsOpen', false) === true;
-  const moreWrap = rest.length ? h('span', { class: 'chips__more', hidden: open ? null : '' }, rest.map(kindChip)) : null;
-  const moreBtn = rest.length ? h('button', { type: 'button', class: 'chip chip--more', 'aria-expanded': String(open), title: 'Show or hide the less common kinds', text: open ? 'Fewer' : 'More ' + rest.length,
-    onclick: e => { const on = moreWrap.hidden; moreWrap.hidden = !on; e.currentTarget.setAttribute('aria-expanded', String(on)); e.currentTarget.textContent = on ? 'Fewer' : 'More ' + rest.length; setPref('kindsOpen', on); } }) : null;
-  const kindRow = h('div', { class: 'row row--top' }, h('span', { class: 'row__label', text: 'Connects by' }), h('div', { class: 'chips chips--tight', role: 'group', 'aria-label': 'What connects them' },
-    ToggleChip({ label: 'All kinds', href: fHref({ type: [], page: 1 }), on: !F.type.length, all: true }), inline.map(kindChip), moreWrap, moreBtn));
+  const kindRow = h('div', { class: 'row row--top' }, h('div', { class: 'chips chips--tight', role: 'group', 'aria-label': 'Connects by' },
+    ToggleChip({ label: 'All kinds', href: fHref({ type: [], page: 1 }), on: !F.type.length, all: true }), ranked.map(kindChip)));
   const matchRow = F.type.length > 1 ? h('div', { class: 'row' }, h('span', { class: 'row__label', text: 'Match' }), h('span', { class: 'seg' },
     Button({ label: 'Any chosen', size: 'sm', pressed: F.match === 'any', href: fHref({ match: 'any', page: 1 }) }), Button({ label: 'Every chosen', size: 'sm', pressed: F.match === 'every', href: fHref({ match: 'every', page: 1 }) }))) : null;
   const startOver = changed ? Button({ label: 'Start over', size: 'sm', href: pairsMode ? factsHref({}, P) : factsHref({}) }) : null;
@@ -120,12 +115,12 @@ export async function homeView({ route, api, store, nav, actions }) {
     const dirBtn = dirText ? Button({ label: dirText, size: 'sm', title: 'Reverse the order', onClick: () => nav.go(fHref({ sort: cur.key, dir: cur.dir === 'asc' ? 'desc' : 'asc', page: 1 })) }) : null;
     const lensNote = rolled && lens ? h('span', { class: 'hint', text: 'Lens: ' + lens.name.toLowerCase() }) : null;
     return [select, lensNote, dirBtn,
-      Button({ label: 'Shuffle', ic: 'shuffle', size: 'sm', title: 'A new random order, facts you have not seen first', onClick: () => nav.go(fHref({ sort: 'shuffle', dir: '', seed: fresh(), page: 1 })) }),
+      F.sort === 'shuffle' ? Button({ label: 'Shuffle', ic: 'shuffle', size: 'sm', title: 'A new random order, facts you have not seen first', onClick: () => nav.go(fHref({ sort: 'shuffle', dir: '', seed: fresh(), page: 1 })) }) : null,
       F.sort === 'surprise' ? Button({ label: 'Re-roll', size: 'sm', title: 'Pick another lens at random', onClick: () => nav.go(fHref({ sort: 'surprise', dir: '', seed: fresh(), page: 1 })) }) : null,
       Button({ label: 'Starred only', ic: 'star', size: 'sm', pressed: F.yours, title: 'Only facts you have starred', href: fHref({ yours: !F.yours, page: 1 }) })];
   };
 
-  let results, pager = null, recentNav = null, headExtra = [];
+  let results, pager = null, recentNav = null, headExtra = [], resultsTip = null, skippedNote = null;
   let opened = null, focused = null;      // a pair you opened: its facts show in Results, under the same Facts and Wordplay panels
   if (focusId && !pairsMode) {      // a fact put in focus: what clings to it shows in Results, under the same Facts and Wordplay panels
     focused = await stickView({ route: { ...route, query: { ...route.query, id: focusId } }, api, nav, actions, embedded: true });
@@ -142,9 +137,18 @@ export async function homeView({ route, api, store, nav, actions }) {
     if (!opened) pager = Pager({ page, pages: pr.pages, total: pr.total, size: P.size, hrefFor: ph, onSize: s => nav.go(wHref(kind, { size: s })), onGo: p => nav.go(ph(p)) });
   } else {
     const recent = !touched ? getPref('heldRecent', []).slice(0, 6) : [];
-    if (recent.length) recentNav = h('nav', { class: 'chips chips--also', 'aria-label': 'Recently in focus' }, h('span', { class: 'chips__label', text: W.recentFocus }), recent.map(x => h('a', { class: 'chip', href: build('stick', {}, { id: x.id, from: 'home' }), title: x.note || '', text: x.claim.length > 60 ? x.claim.slice(0, 58) + '…' : x.claim })));
-    headExtra = [h('span', { class: 'hint panel__tip' }, h('span', { class: 'btn__emoji', 'aria-hidden': 'true', text: W.focusEmoji }), ' ' + W.focusHintShort),
-      h('span', { class: 'panel__aside' }, r.hiddenFragments ? h('span', { class: 'hint', text: `${n(r.hiddenFragments)} short fragments skipped` }) : null, sortControls())];
+    if (recent.length) {   // one line: the label, the two latest, and "More N" opening a popover over the page (it never pushes the Results down)
+      const link = x => h('a', { class: 'chip', href: build('stick', {}, { id: x.id, from: 'home' }), title: x.note || x.claim, text: x.claim.length > 60 ? x.claim.slice(0, 58) + '…' : x.claim });
+      const rest = recent.slice(2), pop = rest.length ? h('div', { class: 'recent__pop', id: 'recentPop', hidden: '' }, rest.map(link)) : null;
+      const btn = rest.length ? h('button', { type: 'button', class: 'chip chip--more', 'aria-expanded': 'false', 'aria-controls': 'recentPop', title: 'More recently focused facts', text: 'More ' + rest.length,
+        onclick: () => { const on = pop.hidden; pop.hidden = !on; btn.setAttribute('aria-expanded', String(on)); },
+        onkeydown: e => { if (e.key === 'Escape') { pop.hidden = true; btn.setAttribute('aria-expanded', 'false'); } } }) : null;
+      if (pop) document.addEventListener('click', e => { if (!pop.hidden && !e.target.closest?.('.recent')) { pop.hidden = true; btn.setAttribute('aria-expanded', 'false'); } });
+      recentNav = h('nav', { class: 'chips chips--also recent', 'aria-label': 'Recently in focus' }, h('span', { class: 'chips__label', text: W.recentFocus }), recent.slice(0, 2).map(link), btn ? h('span', { class: 'recent__more' }, btn, pop) : null);
+    }
+    resultsTip = W.focusHintShort;
+    skippedNote = r.hiddenFragments ? `${n(r.hiddenFragments)} short fragments skipped` : null;
+    headExtra = [h('span', { class: 'panel__aside' }, sortControls())];
     results = h('div', {},
       r.items.length ? h('ol', { class: 'facts' }, r.items.map(ShelfCard)) : h('div', { class: 'empty' }, h('p', { text: F.yours && !r.total ? 'Nothing starred matches. Press ' + W.star + ' on a fact, or switch Starred only off.' : 'No facts match all of these.' }),
         touched ? h('p', {}, 'Try ', F.type.length ? h('a', { href: fHref({ type: [], page: 1 }), text: 'All kinds' }) : null, F.type.length && F.shelf !== 'all' ? ' or ' : null, F.shelf !== 'all' ? h('a', { href: fHref({ shelf: 'all', page: 1 }), text: 'All shelves' }) : null, '.') : null),
@@ -152,7 +156,7 @@ export async function homeView({ route, api, store, nav, actions }) {
     if (r.pages > 1) pager = Pager({ page: r.page, pages: r.pages, total: r.total, size: r.size, hrefFor: p => fHref({ page: p }), onSize: s => nav.go(fHref({ size: s, page: 1 })), onGo: p => nav.go(fHref({ page: p })) });
   }
   const count = focused ? 'in focus' : opened ? (opened.surface || 'A hidden pair') : pairsMode ? `${n(pr.total)} ${pr.total === 1 ? 'pair' : 'pairs'}` : `${n(r.total)} ${r.total === 1 ? 'fact' : 'facts'}`;
-  const resultsBox = h('section', { class: 'panel panel--results', 'aria-label': 'Results', 'data-zone': 'results' }, h('div', { class: 'panel__head' }, h('h2', { text: 'Results' }), h('small', { text: count +  (pairsMode && !opened ? ' of wordplay' : '') }), headExtra), results);
+  const resultsBox = h('section', { class: 'panel panel--results', 'aria-label': 'Results', 'data-zone': 'results' }, h('div', { class: 'panel__head' }, resultsTip ? InfoTip({ text: resultsTip, about: 'About Results' }, h('h2', { text: 'Results' })) : h('h2', { text: 'Results' }), h('small', { text: count +  (pairsMode && !opened ? ' of wordplay' : '') + (skippedNote ? ' · ' + skippedNote : '') }), headExtra), results);
   const node = h('div', {}, h('h1', { class: 'sr-only', text: W.home }), h('div', { class: 'deck' }, factsBlock, wordBlock), recentNav, resultsBox, pager);
   return { node, title: W.home, announce: count + (changed || pairsMode ? '' : ' in all'), after: ({ keepScroll } = {}) => { if (opened || focused) { const r = resultsBox.getBoundingClientRect(); if (r.top > window.innerHeight - 160) resultsBox.scrollIntoView({ block: 'start' }); }   /* only when Results starts below the fold; never yank the page when you can already see it, so Facts and Wordplay stay put */ else if (!keepScroll) node.querySelector('.is-selected')?.scrollIntoView({ block: 'center' }); } };
 }

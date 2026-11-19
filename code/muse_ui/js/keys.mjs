@@ -61,15 +61,15 @@ export function installKeys({ content, go, build, panelOpen = () => false, toggl
     const r = el.getBoundingClientRect(), edge = (document.querySelector('.top')?.getBoundingClientRect().bottom || 0) + 10, low = window.innerHeight - 14;
     if (top || r.top < edge || r.height > low - edge) window.scrollBy(0, r.top - edge); else if (r.bottom > low) window.scrollBy(0, r.bottom - low);
   };
-  const paintArea = a => { clearMarks(); areaLabel = areaName(a); level = 'areas'; idx = -1; label = ''; a.classList.add('is-zone'); focusEl(a); reveal(a, true); };
-  const paintItem = (a, i, quiet = false) => {   // quiet: put the cursor back after a redraw without moving the page unless it is out of sight
+  const paintArea = (a, quiet = false) => { clearMarks(); areaLabel = areaName(a); level = 'areas'; idx = -1; label = ''; a.classList.add('is-zone'); focusEl(a); if (!quiet) reveal(a, true); };   // quiet: a redraw after a click puts the mark back without moving the page
+  const paintItem = (a, i, quiet = false) => {   // quiet: put the cursor back after a click redraws the page, and never move the page
     const list = itemsOf(a), el = list[i]; clearMarks(); areaLabel = areaName(a); level = 'items'; a.classList.add('is-zone'); if (!el) return focusEl(a);
-    idx = i; label = textOf(el); el.classList.add('is-cursor'); focusEl(el); if (i === 0 && !quiet && content.contains(a)) reveal(a, true); else reveal(el);
+    idx = i; label = textOf(el); el.classList.add('is-cursor'); focusEl(el); if (quiet) return; if (i === 0 && content.contains(a)) reveal(a, true); else reveal(el);
   };
   const reset = () => { level = 'items'; areaLabel = ''; idx = -1; label = ''; clearMarks(); };
   // After a click redraws the page in place, put the cursor (and focus) back on the same area and control, found again by name.
   const refresh = () => {
-    if (level === 'areas') { if (areaLabel) paintArea(curArea()); return; }
+    if (level === 'areas') { if (areaLabel) paintArea(curArea(), true); return; }
     if (idx < 0) return;
     const a = curArea(), list = itemsOf(a), at = label ? list.findIndex(e => textOf(e) === label) : -1;
     paintItem(a, at >= 0 ? at : Math.min(idx, list.length - 1), true);

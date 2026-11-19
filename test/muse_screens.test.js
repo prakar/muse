@@ -17,7 +17,7 @@ test('screens: Home keeps Facts and Wordplay on screen together, whichever is ch
   D.install(); const { homeView } = await imp('views/home.mjs'), { parse } = await imp('router.mjs'), calls = [];
   const run = async hash => homeView({ route: parse(hash), api: { ...stubApi(calls), pairs: async () => ({ total: 42, page: 1, pages: 2, size: 24, items: [{ id: 'A ~ B', a: 'A', b: 'B', df: 3, grade: 2, wp: 'homophone' }] }) }, store, nav: { go() { } } });
   let { node } = await run('#/'), t = text(node), links = D.all(node, e => e.tag === 'a').map(a => a.attrs.href);
-  assert.ok(/Facts/.test(t) && /Wordplay/.test(t) && /Connects by/.test(t) && /Veins/.test(t) && /Rivulets/.test(t));
+  assert.ok(/Facts/.test(t) && /Wordplay/.test(t) && /Veins/.test(t) && /Rivulets/.test(t));
   assert.ok(links.includes('#/?shelf=veins') && links.includes('#/?type=place') && links.includes('#/?yours=1'));
   assert.ok(!/Overlays|Loops/.test(t) && /Starred only/.test(t) && /Shuffle/.test(t), 'no Overlays row or Loops: Starred only and Shuffle sit in Results');
   assert.strictEqual(calls[0].name, 'all');
@@ -38,7 +38,7 @@ test('screens: Facts offers All shelves and All kinds, toggles kinds in the addr
   const run = async hash => homeView({ route: parse(hash), api: stubApi(calls), store, nav: { go() { } } });
   let { node } = await run('#/?type=place&shelf=veins'), links = D.all(node, e => e.tag === 'a'), byText = s => links.find(a => text(a).startsWith(s));
   assert.deepStrictEqual([byText('All shelves').attrs.href, byText('All kinds').attrs.href], ['#/?type=place', '#/?shelf=veins'], 'each All drops only its own filter');
-  assert.strictEqual(byText('Places').attrs['aria-pressed'], 'true'); assert.strictEqual(byText('Years and dates').attrs.href, '#/?shelf=veins&type=place%2Ctime');
+  assert.strictEqual(byText('Places').attrs['aria-pressed'], 'true'); assert.strictEqual(byText('Years & dates').attrs.href, '#/?shelf=veins&type=place%2Ctime');
   assert.strictEqual(byText('Places').attrs.href, '#/?shelf=veins', 'choosing a chosen kind removes it');
   assert.ok(/Match/.test(text(node)) === false, 'Match appears only with two kinds');
   ({ node } = await run('#/?type=place,time&match=every')); assert.ok(/Match/.test(text(node)) && /Every chosen/.test(text(node)));
@@ -46,18 +46,18 @@ test('screens: Facts offers All shelves and All kinds, toggles kinds in the addr
   ({ node } = await run('#/?yours=1')); assert.ok(/Nothing starred matches/.test(text(node)));
 });
 
-test('screens: Results holds the order controls, kinds fold behind More, Facts and Wordplay carry a tip, and Start over sits in the Facts header', async () => {
+test('screens: Results holds the order controls, every kind shows (no More fold, no Connects by label), Facts and Wordplay carry a tip, and Start over sits in the Facts header', async () => {
   D.install(); const { homeView } = await imp('views/home.mjs'), { parse } = await imp('router.mjs'), calls = [];
   const api = { ...stubApi(calls), shelf: o => stubApi(calls).shelf({ ...o, manyKinds: true }) };
   const run = async hash => homeView({ route: parse(hash), api, store, nav: { go() { } } }), zone = (node, z) => D.all(node, e => e.attrs && e.attrs['data-zone'] === z)[0];
   let { node } = await run('#/'); let t = text(node);
   assert.strictEqual(calls[calls.length - 1].sort, '', 'the default order is asked for as a shuffle');
-  const select = D.all(node, e => e.tag === 'select')[0]; assert.ok(select && /Shuffle/.test(text(select)) && /Surprise/.test(text(select)) && /Rarest hook/.test(text(select)) && /Note A to Z/.test(text(select)) && /Note date/.test(text(select)), 'the sorter lists every dimension');
+  const select = D.all(node, e => e.tag === 'select')[0]; assert.ok(select && /Random order/.test(text(select)) && /Surprise/.test(text(select)) && /Rarest hook/.test(text(select)) && /Note A to Z/.test(text(select)) && /Note date/.test(text(select)), 'the sorter lists every dimension');
   const star = z => D.all(zone(node, z), e => e.tag === 'a' && /^Starred only/.test(text(e))).length; assert.ok(star('results') === 1 && star('facts') === 0, 'the Starred only button and the order live in Results, not in Facts');
   assert.ok(!/Start over/.test(t), 'Start over appears only when something is chosen');
-  const more = D.all(node, e => /chips__more/.test(e.className || ''))[0]; assert.ok(more && more.attrs.hidden === '', 'the less common kinds are folded away');
-  assert.ok(/More 2/.test(text(zone(node, 'facts'))) && D.all(node, e => e.tag === 'button' && /^More/.test(text(e))).length === 1);
-  assert.strictEqual(D.all(node, e => e.className === 'infotip__btn').length, 2, 'Facts and Wordplay each carry a ? tip');
+  assert.ok(!D.all(node, e => /chips__more|chip--more/.test(e.className || '')).length && !/Connects by|Fewer/.test(text(zone(node, 'facts'))), 'no kinds fold and no Connects by label');
+  assert.ok(!D.all(node, e => e.tag === 'button' && /^More/.test(text(e))).length, 'no More button');
+  assert.strictEqual(D.all(node, e => e.className === 'infotip__btn').length, 3, 'Facts, Wordplay and Results each carry a ? tip');
   assert.ok(/Pairs of names that look or sound alike/.test(t) && !/Your facts choices stay where they are\.$/.test(text(zone(node, 'words')).trim()), 'the helper line moved into the tip');
   ({ node } = await run('#/?sort=hooks&dir=asc')); assert.strictEqual(calls[calls.length - 1].sort, 'hooks'); assert.strictEqual(calls[calls.length - 1].dir, 'asc');
   assert.ok(/↑ fewest first/.test(text(zone(node, 'results'))) && /Start over/.test(text(zone(node, 'facts'))), 'a chosen order shows its direction and offers Start over in the Facts header');

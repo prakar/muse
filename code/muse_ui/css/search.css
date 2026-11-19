@@ -86,7 +86,7 @@
 .toolbar__h { margin: 0; font-size: var(--fs-3); }
 
 /* Home: two blocks of equal height that never move; the results sit below. */
-.deck { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: var(--s-4); align-items: stretch; margin-bottom: var(--s-4); }
+.deck { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: var(--s-4); align-items: stretch; margin-bottom: var(--s-4); }
 @media (max-width: 900px) { .deck { grid-template-columns: 1fr; } }
 .panel { display: flex; flex-direction: column; gap: var(--s-3); padding: var(--s-4); border: 1px solid var(--line); border-radius: var(--r-3, 12px); background: var(--surface); }
 .panel--on { border-color: var(--accent, #f08a5d); }
@@ -111,11 +111,11 @@
 /* Results header: count, a one-line tip and the shuffle all on one line, so the first match shows above the fold. */
 .panel__tip { margin: 0; flex: 1 1 18rem; min-width: 0; } .panel__aside { margin-left: auto; display: inline-flex; align-items: center; gap: var(--s-3); }
 
-/* Facts and Wordplay headings carry a "?" tip; Start over sits beside "Showing below"; the less common kinds fold behind More. */
+/* Facts and Wordplay headings carry a "?" tip; Start over sits beside "Showing below". */
 .panel__tools { margin-left: auto; display: inline-flex; align-items: center; gap: var(--s-2); } .panel__tools .panel__on { margin-left: 0; }
 .panel__aside { flex-wrap: wrap; justify-content: flex-end; }
 .field--sm { height: 1.9rem; font-size: var(--fs-1, .85rem); }
-.chips__more { display: contents; } .chips__more[hidden] { display: none; }
+
 .chip--more { cursor: pointer; background: transparent; border-style: dashed; font: inherit; color: inherit; }
 .tricks .btn svg { display: none; }   /* the labels carry the meaning; without icons three tricks fit on a line */
 .infotip { position: relative; display: inline-flex; align-items: baseline; gap: var(--s-2); }
@@ -124,3 +124,15 @@
 .infotip__btn:hover, .infotip__btn:focus-visible, .infotip.is-open .infotip__btn { color: var(--accent, #f08a5d); border-color: var(--accent, #f08a5d); }
 .infotip__text { display: none; position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; width: max-content; max-width: min(24rem, 80vw); padding: var(--s-2) var(--s-3); border: 1px solid var(--line-strong); border-radius: var(--r-2); background: var(--surface); box-shadow: 0 6px 18px rgba(0, 0, 0, .35); font-size: .8rem; font-weight: 400; line-height: 1.4; color: var(--text-2, inherit); }
 .infotip:hover .infotip__text, .infotip:focus-within .infotip__text, .infotip.is-open .infotip__text { display: block; }
+
+/* "All shelves" shows as its icon and count only; the words stay for screen readers. */
+.btn--nolabel > span:not(.btn__n) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* Recently in focus: one line; the older ones open in a popover that floats over the Results. Kind chips sit a little tighter so all fit in three rows. */
+.recent { position: relative; flex-wrap: nowrap; }
+.recent > .chip:not(.chip--more) { max-width: 26rem; min-width: 0; } .recent > .chip:not(.chip--more) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; line-height: 1.7; }
+.recent__more { position: relative; display: inline-flex; }
+.recent__pop { position: absolute; z-index: 20; top: 100%; right: 0; left: auto; width: max-content; margin-top: var(--s-2); display: grid; gap: var(--s-2); padding: var(--s-3); max-width: min(46rem, 90vw); background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-3, 12px); box-shadow: 0 8px 24px rgba(0, 0, 0, .45); }
+.recent__pop[hidden] { display: none; }
+.recent__pop .chip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+.chips--tight { gap: .35rem; } .chips--tight .chip { padding-left: .5rem; padding-right: .5rem; }

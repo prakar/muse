@@ -143,3 +143,4 @@ details.flow__group > summary { cursor: pointer; padding: 0; list-style-position
 .tags__bar { display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; margin: var(--s-3) 0; }
 .tags__row.is-queued { border-style: dashed; }
 .tags__foot { margin-top: var(--s-3); }
+.panel--results > div > .facts { margin-top: 0; }   /* the panel's own gap already spaces the header from the first fact */
