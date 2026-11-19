@@ -128,7 +128,7 @@ function createServer({ model, marks, notes, version, uiRoot, search = null, eve
       });
     }
     if (u.pathname === '/api/shelf') {
-      const r = model.shelf(q.get('name') || 'all', { type: q.get('type') || '', match: q.get('match') === 'every' ? 'every' : 'any', loops: q.get('loops') === '1', only: q.get('yours') === '1' ? starredIds() : null, page: parseInt(q.get('page'), 10) || 1, size: parseInt(q.get('size'), 10) || 12, seed: parseInt(q.get('seed'), 10) || 1 });
+      const r = model.shelf(q.get('name') || 'all', { type: q.get('type') || '', match: q.get('match') === 'every' ? 'every' : 'any', sort: q.get('sort') || '', dir: q.get('dir') || '', only: q.get('yours') === '1' ? starredIds() : null, page: parseInt(q.get('page'), 10) || 1, size: parseInt(q.get('size'), 10) || 12, seed: parseInt(q.get('seed'), 10) || 1 });
       if (!r) return json(res, { error: 'unknown shelf' }, 404);
       const st = starredIds(); (r.items || []).forEach(i => { i.starred = st.has(i.id); });
       return json(res, r);

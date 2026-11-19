@@ -7,7 +7,7 @@ import { W } from './words.mjs';
 // exactly the state you left it in (same page, same size, the item you came from still highlighted), so each crumb is also a zoom-out.
 // ctx.surface: the title of the open set; ctx.hidden: true in reveal-last mode, so the trail does not give the answer away.
 import { SHELF_NAME } from './words.mjs';
-export const SHELF_LABEL = { veins: SHELF_NAME.veins, grip: SHELF_NAME.grip, lone: SHELF_NAME.lone, loops: 'Loops' };
+export const SHELF_LABEL = { veins: SHELF_NAME.veins, grip: SHELF_NAME.grip, lone: SHELF_NAME.lone };
 export function trail(route, ctx = {}) {
   const root = { label: W.home, href: build('home') };
   if (route.name === 'home') return homeTrail(route, root);
@@ -27,7 +27,7 @@ export function trail(route, ctx = {}) {
   return [{ label: W.home }];
 }
 
-// Home's trail follows whichever block you used last. Facts: Home > shelf > kinds > overlays. Wordplay: Home > Wordplay > the trick.
+// Home's trail follows whichever block you used last. Facts: Home > shelf > kinds > Starred only. Wordplay: Home > Wordplay > the trick.
 // "All shelves", "All kinds" and "All wordplay" are not steps. Clicking a step drops everything after it, so each crumb is one zoom-out.
 function homeTrail(route, root) {
   const q = route.query;
@@ -40,8 +40,7 @@ function homeTrail(route, root) {
   const shelf = SHELF_LABEL[q.shelf] ? q.shelf : '', types = String(q.type || '').split(',').filter(Boolean), every = q.match === 'every' && types.length > 1, steps = [], at = {};
   if (shelf) { at.shelf = shelf; steps.push({ label: SHELF_LABEL[shelf], href: build('home', {}, { ...at }) }); }
   if (types.length) { at.type = types.join(','); if (every) at.match = 'every'; steps.push({ label: types.map(typeLabel).join(every ? ' + ' : ' or '), href: build('home', {}, { ...at }) }); }
-  if (q.loops) { at.loops = '1'; steps.push({ label: 'Loops', href: build('home', {}, { ...at }) }); }
-  if (q.yours) { at.yours = '1'; steps.push({ label: 'Yours', href: build('home', {}, { ...at }) }); }
+  if (q.yours) { at.yours = '1'; steps.push({ label: 'Starred only', href: build('home', {}, { ...at }) }); }
   if (!steps.length) return [{ label: W.home }];
   return [root, ...steps.map((st, i) => i === steps.length - 1 ? { label: st.label } : st)];
 }

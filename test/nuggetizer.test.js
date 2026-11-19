@@ -288,3 +288,15 @@ test('nug-v6: a repeated number is not flagged ("between 200 BC and 200 AD"); a 
   assert.strictEqual(v.accepted[1].hooks[0].grain, 'century');
   assert.strictEqual(v.accepted[1].hooks[0].xc, undefined);
 });
+
+test('nug-v6 no longer asks for a loop; replies with or without one still verify, and no loop is kept', () => {
+  const p = B.buildPrompt(note, 'Quokkas on Rottnest Island became a selfie craze in 2015.');
+  assert.ok(!/loop/i.test(p), 'the extraction prompt must not mention loops');
+  assert.strictEqual(B.PROMPT_VERSION, 'nug-v6');
+  const base = { claim: 'Quokkas became a selfie craze in 2015.', quote: 'selfie craze in 2015', kind: 'fact', hooks: [{ type: 'time', value: '2015', era: 'AD' }] };
+  for (const b of [base, Object.assign({ loop: 'Why quokkas?' }, base)]) {
+    const v = B.verifyBurrs([b], note);
+    assert.strictEqual(v.accepted.length, 1);
+    assert.strictEqual(v.accepted[0].loop_text, undefined);
+  }
+});

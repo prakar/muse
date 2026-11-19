@@ -259,7 +259,6 @@ function fillDetail(v, r, box, tr) {
     box.appendChild(h('div', {}, [r.claim]));
     box.appendChild(h('div', { class: 'mute' }, ['evidence: “' + r.quote + '”']));
     box.appendChild(h('div', { class: 'mute' }, ['note: ' + r.note + ' · burr ' + r.rank + ' of ' + r.noteBurrs + (r.perishable ? ' · perishable' : '')]));
-    if (r.loop) box.appendChild(h('div', {}, ['loop: ' + r.loop]));
     box.appendChild(h('div', {}, [h('b', {}, ['bristles: '])].concat(r.bristles.length ? r.bristles.map(function (b) { return h('span', { class: 'chip t', title: 'shared by ' + b.df + ' note(s); source ' + b.src }, [b.t + ': ' + b.s + ' (' + b.df + ')']); }) : ['none'])));
   } else if (v === 'bristles' || v === 'slices') {
     box.appendChild(h('div', { class: 'mute' }, ['loading burrs…']));

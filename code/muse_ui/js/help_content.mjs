@@ -38,12 +38,8 @@ RAW.RECIPES = [
     then: 'If a seam is dry, press the browser Back button; you return to the same shelf and page.' },
   { key: 'lone', title: 'I want a surprise from facts with no links', goal: 'Let a lone fact set off a connection in your own head.',
     start: { t: '{home}, {rivulets}', href: '#/?shelf=lone' },
-    steps: ['Press Shuffle for a fresh handful. Muse skips ones it has shown you this run.', 'Read until one sets off an idea. Rivulets show no hooks, because the vault has no other note sharing them.', 'Press {collect} to start a cluster with it.', 'Use Search (top box) for the name or topic the fact made you think of, and {focus} or {collect} what turns up.', '{collect} a second fact, then write the link in the dashed ↳ field between them: that is the question.'],
+    steps: ['Press Shuffle for a fresh order. Muse puts facts it has not shown you this run first.', 'Read until one sets off an idea. Rivulets show no hooks, because the vault has no other note sharing them.', 'Press {collect} to start a cluster with it.', 'Use Search (top box) for the name or topic the fact made you think of, and {focus} or {collect} what turns up.', '{collect} a second fact, then write the link in the dashed ↳ field between them: that is the question.'],
     then: '{focus} on a rivulet fact shows an empty clings list. That is a finding, not a bug.' },
-  { key: 'loop', title: 'I want questions the vault itself leaves unanswered', goal: 'Start from a fact whose own note leaves a “why” open.',
-    start: { t: '{home}, Loops', href: '#/?loops=1' },
-    steps: ['Each card shows the unanswered question under the fact, in italics.', '{focus} on the ones whose why you can answer, or want to.', '{collect} the fact plus any clinging fact that supplies the answer.', 'Copy cluster.'],
-    then: 'A loop with nothing clinging is still useful: the why is the question; the answer is yours.' },
   { key: 'handle', title: 'I have a name, place or pair of look-alike words and want every fact that shares it', goal: 'See all the facts joined by one handle.',
     start: { t: '{home}', href: '#/' },
     steps: ['Search for the handle, or browse the wordplay kinds on {home} (anagrams, hidden words, sound-alikes…). Choose a suggestion to open its set.', 'Set how many facts you want and the order (hard to easy, or easy to hard).', 'Press {star} on the facts you want, or {star} this pair / handle for the whole set.', 'Press Copy as text for the list, or open {starred} later to browse everything you starred.'],
@@ -65,7 +61,7 @@ RAW.RECIPES = [
     steps: ['Switch Search by meaning off.', 'Search. Muse matches the words you typed (a fact can match on just one of them).', 'A note above the results reminds you that this mode cannot say whether the vault has an answer.'],
     then: 'Your choice is remembered in this browser. The address of a search remembers it too, so a bookmark behaves the same way.' },
   { key: 'resume', title: 'I want to pick up where I left off', goal: 'Return to a cluster or to a fact you were exploring.',
-    start: { t: '{home}, Yours', href: '#/?yours=1' },
+    start: { t: '{home}, Starred only', href: '#/?yours=1' },
     steps: ['The {collection} is saved automatically. Open it with the button at the top of any page.', '{recentFocus} lists the last facts you put in focus. {focus} on one to continue.', '{starred} lists facts you starred in sets, {home} and {stick}. {focus} on one to explore it.'],
     then: 'Clear in the {collection} empties it. There is no undo, so Copy cluster first if you might want it.' },
   { key: 'dipaka', title: 'I want to know what I did not think to ask', goal: 'Have the strongest model tell you related, important things about a handful of facts, which you would not have known to ask.',
@@ -90,13 +86,13 @@ export const GLOSSARY = fill([
   ['Set', 'The facts that share one handle, shown on one page.'],
   ['{inFocus}', 'The one fact you have put in focus. The {stick} page shows what clings to it.'],
   ['Cling', 'A fact from another note that shares a hook with the fact in focus. Clings are grouped by the kind of hook.'],
-  ['Shelf', 'How well connected a fact is, used to narrow facts on {home}: {veins} (3 or more hooks), {vesicles} (1 or 2), {rivulets} (none). Each fact is on exactly one shelf, so the shelf counts add up. Loops (an unanswered why) and Yours are overlays, not shelves.'],
+  ['Shelf', 'How well connected a fact is, used to narrow facts on {home}: {veins} (3 or more hooks), {vesicles} (1 or 2), {rivulets} (none). Each fact is on exactly one shelf, so the shelf counts add up. Starred only narrows the results to facts you starred; it is a filter, not a shelf.'],
+  ['Order', 'Results open shuffled: a fresh random order each visit, facts you have not seen first, so the long tail gets as much daylight as the head. Surprise picks one lens at random and names it; Hooks, Kinds, Rarest hook, Claim length, Note A to Z, Extraction order, Place in note, Note size and Note date order strictly, with a button to reverse them. Facts that tie come in random order.'],
   ['Keyboard', 'Press Shift + ? anywhere to see every shortcut.'],
   ['Kind', 'The type of a hook: a name, place, year, day, number. A fact can have several kinds, so kind counts overlap and do not add up. On {home} you pick any kinds; Match says whether a fact needs any chosen kind or every one.'],
   ['All shelves, All kinds', 'Zoom back out. All shelves drops the shelf choice and All kinds clears the chosen kinds. Clicking an earlier step in the trail at the top of a page does the same.'],
   ['{collection}', 'The working pile of facts you have chosen to build a question from, plus the lines you write about how they link. The button at the top opens it over any page.'],
   ['{starred}', 'Everything you have starred, across sets, {home} and {stick}. Starring is permanent; the {collection} is a working pile.'],
-  ['Loop', 'A question the note itself raises and leaves open.'],
   ['{dipaka}', 'The lamp (Sanskrit dipaka: illuminator). It sends your {collection} to the cheapest (economy) model of the provider you choose and asks what is related and important that you did not know to ask. The answer is learning material, unverified, kept apart from your notes.'],
   ['Far apart', 'A badge on a cling whose note shares no tag with the note of the fact in focus. Roughly half of all clings get it, so read it as “different subject area”, not “surprising”.'],
   ['Banner, closeness, best match', 'On a search by meaning: the banner rates the best match by its closeness to your question (0 to 1). 0.50 and above is Closest matches, 0.40 to 0.50 Weak matches, under 0.40 Nothing close. Best match marks the fact the rating is based on.'],
@@ -105,7 +101,7 @@ export const GLOSSARY = fill([
 
 export const COMING = fill([
   ['Live now', '{home}, {stick}, Search, {starred}, {dipaka}, Admin, Help.'],
-  ['Planned modes', 'Thread (follow a chain hook by hook), Slice (everything touching a year or day), Shelf (etymology and other typed shelves), Loops (the vault’s unanswered whys, as a mode), Drift (one unprompted spark a day), Wander (a random walk over words with several meanings).'],
+  ['Planned modes', 'Thread (follow a chain hook by hook), Slice (everything touching a year or day), Shelf (etymology and other typed shelves), Drift (one unprompted spark a day), Wander (a random walk over words with several meanings).'],
   ['Planned features', 'Reflection (a button that inspects Muse for weak facts and fills a review queue: star, retire, fix); {star} on search results; a report of which shelves your finished questions came from; help for each mode as it arrives.']
 ]);
 

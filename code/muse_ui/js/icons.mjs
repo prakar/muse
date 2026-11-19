@@ -15,7 +15,6 @@ const ICONS = {
   veins: [['path', { d: 'M12 3v8M12 11l-6 9M12 11l6 9' }]],
   grip: [['path', { d: 'M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1' }]],
   lone: [['circle', { cx: 12, cy: 12, r: 3 }]],
-  loop: [['path', { d: 'M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5' }]],
   shuffle: [['path', { d: 'M3 7h4l10 10h4M3 17h4l3-3M14 10l3-3h4' }]],
   differ: [['path', { d: 'M5 9h14M5 15h14M9 20l6-16' }]],
   drop: [['path', { d: 'M5 12h10M18 12h1' }]],

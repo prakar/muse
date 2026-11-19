@@ -28,7 +28,7 @@
 .shelf { display: inline-flex; gap: var(--s-2); align-items: baseline; padding: var(--s-2) var(--s-3); border-bottom: 2px solid transparent; color: var(--text-2); }
 .shelf small { color: var(--text-3); } .shelf[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
 .shelf__blurb { color: var(--text-2); margin: var(--s-2) 0 var(--s-4); }
-.fact--lone { border-style: dashed; } .fact__loop { color: var(--text-2); font-style: italic; }
+.fact--lone { border-style: dashed; }
 .chip--static { cursor: default; }
 .chips .chip[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
 .tray { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-2); padding: var(--s-3) var(--s-4); margin: var(--s-4) 0; }
@@ -110,3 +110,17 @@
 
 /* Results header: count, a one-line tip and the shuffle all on one line, so the first match shows above the fold. */
 .panel__tip { margin: 0; flex: 1 1 18rem; min-width: 0; } .panel__aside { margin-left: auto; display: inline-flex; align-items: center; gap: var(--s-3); }
+
+/* Facts and Wordplay headings carry a "?" tip; Start over sits beside "Showing below"; the less common kinds fold behind More. */
+.panel__tools { margin-left: auto; display: inline-flex; align-items: center; gap: var(--s-2); } .panel__tools .panel__on { margin-left: 0; }
+.panel__aside { flex-wrap: wrap; justify-content: flex-end; }
+.field--sm { height: 1.9rem; font-size: var(--fs-1, .85rem); }
+.chips__more { display: contents; } .chips__more[hidden] { display: none; }
+.chip--more { cursor: pointer; background: transparent; border-style: dashed; font: inherit; color: inherit; }
+.tricks .btn svg { display: none; }   /* the labels carry the meaning; without icons three tricks fit on a line */
+.infotip { position: relative; display: inline-flex; align-items: baseline; gap: var(--s-2); }
+.infotip > h2 { text-decoration: underline dotted; text-decoration-color: var(--muted); text-underline-offset: 5px; }
+.infotip__btn { width: 1.15rem; height: 1.15rem; padding: 0; border: 1px solid var(--line-strong); border-radius: 50%; background: transparent; color: var(--muted); font-size: .7rem; line-height: 1; cursor: pointer; align-self: center; }
+.infotip__btn:hover, .infotip__btn:focus-visible, .infotip.is-open .infotip__btn { color: var(--accent, #f08a5d); border-color: var(--accent, #f08a5d); }
+.infotip__text { display: none; position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; width: max-content; max-width: min(24rem, 80vw); padding: var(--s-2) var(--s-3); border: 1px solid var(--line-strong); border-radius: var(--r-2); background: var(--surface); box-shadow: 0 6px 18px rgba(0, 0, 0, .35); font-size: .8rem; font-weight: 400; line-height: 1.4; color: var(--text-2, inherit); }
+.infotip:hover .infotip__text, .infotip:focus-within .infotip__text, .infotip.is-open .infotip__text { display: block; }

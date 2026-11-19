@@ -184,8 +184,7 @@ function buildPrompt(note, cleaned) {
 6. "hooks": handles another note could share: [{"type": T, "value": V, "cat": C}] where T is one of: entity, time, number, etymon, material, place, homonym, set, uniqueness, mechanism, former-role. For entity, time, number, etymon, material, place and homonym, V must be copied exactly from the note. For set, uniqueness, mechanism and former-role, V is a short phrase. For entity, place and material add "cat", the kind of thing V is here, one of: person, place, organisation, work, event, food, animal, plant, substance, object, concept, language, myth, other (so "Mercury" the planet and "Mercury" the metal differ: place vs substance).
 6b. nug-v6, time hooks: V is a calendar year or decade as written in the note ("1066", "476", "1960s"); add "era": "AD" or "BC". Use "AD" for a year after 1000 when the note gives no era; if you cannot tell the era, leave the hook out. A duration or an age ("150 years", "three decades", "1400 years ago", "aged 30", "2000 years old") is NOT a time hook: make it a number hook with unit "year". A century ("the 2nd century BC") is a time hook whose value is the century as written and whose era is AD or BC.
 6c. nug-v6, number hooks: V is a quantity written in the note; add "unit": what is counted or measured, as one lowercase singular word or a standard symbol (km, kg, usd, %, °c, run, person, tiger, page, year). Do not invent a unit the note does not imply. A number that is only a label or identifier (Windows 95, store #2000, Route 66, a jersey number, a year used as part of a name) is NOT a number hook: leave it out. Only number hooks carry "unit" and only time hooks carry "era".
-7. "loop": ONE open question the note raises but does not answer (an unexplained name, a "why?", a gap, a surprising coincidence). Write one whenever the note leaves something unexplained; use "" only when nothing is left open.
-7b. "perishable": true if the claim is a present-tense figure or status that can go stale (a population, price, record, office holder, "currently", "today", "latest"); otherwise false.
+7. "perishable": true if the claim is a present-tense figure or status that can go stale (a population, price, record, office holder, "currently", "today", "latest"); otherwise false.
 8. Telegraphic notes are fine: turn shorthand into a sentence using only the words and facts in the note.
 9a. Skip text that documents software, markup or website features (for example how links or headers work); it is not a fact about the world.
 9. If the note holds no specific citable claim, return {"burrs": [], "reason": "<short reason>"}.
@@ -194,9 +193,9 @@ function buildPrompt(note, cleaned) {
 
 Example note:
 [T] Quokka selfie craze, Rottnest, 2015
-Reply: {"burrs":[{"claim":"Quokkas on Rottnest Island became a selfie craze in 2015.","src":["T"],"kind":"fact","hooks":[{"type":"entity","value":"Quokka","cat":"animal"},{"type":"place","value":"Rottnest","cat":"place"},{"type":"time","value":"2015","era":"AD"}],"loop":"Why did quokkas, not other animals, become the selfie craze?","perishable":false}],"reason":""}
+Reply: {"burrs":[{"claim":"Quokkas on Rottnest Island became a selfie craze in 2015.","src":["T"],"kind":"fact","hooks":[{"type":"entity","value":"Quokka","cat":"animal"},{"type":"place","value":"Rottnest","cat":"place"},{"type":"time","value":"2015","era":"AD"}],"perishable":false}],"reason":""}
 
-Schema: {"burrs":[{"claim":"","src":[],"kind":"fact","hooks":[{"type":"","value":"","cat":"","unit":"","era":""}],"loop":"","perishable":false}],"reason":""}
+Schema: {"burrs":[{"claim":"","src":[],"kind":"fact","hooks":[{"type":"","value":"","cat":"","unit":"","era":""}],"perishable":false}],"reason":""}
 
 ${buildInput(note, cleaned)}`;
   return { system, prompt };
@@ -334,7 +333,7 @@ function qualifyHook(type, value, claim, h) {
 /**
  * Verify what the model proposed against the note's own text.
  * note = { title, cleaned }  (cleaned = cleanBody output)
- * Returns { accepted: [{claim, quote, kind, hooks, loop_text}], rejected: [{reason, claim}], hooksDropped }
+ * Returns { accepted: [{claim, quote, kind, hooks, perishable}], rejected: [{reason, claim}], hooksDropped }
  */
 function verifyBurrs(burrsIn, note, opts) {
   const requireUnits = !opts || opts.requireUnits !== false;
@@ -416,9 +415,8 @@ function verifyBurrs(burrsIn, note, opts) {
     }
 
     const kind = KINDS.indexOf(b.kind) >= 0 ? b.kind : 'fact';
-    const loop = typeof b.loop === 'string' ? squash(b.loop).slice(0, 200) : '';
     seen.add(key);
-    accepted.push({ claim: claim, quote: quote, kind: kind, hooks: hooks, loop_text: loop, perishable: b.perishable === true ? 1 : 0 });
+    accepted.push({ claim: claim, quote: quote, kind: kind, hooks: hooks, perishable: b.perishable === true ? 1 : 0 });
   }
   return { accepted: accepted, rejected: rejected, hooksDropped: hooksDropped };
 }

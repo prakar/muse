@@ -21,7 +21,7 @@ test('duration pattern matches durations, not dates or centuries', () => {
   ['16th century', 'March 15, 1896', 'in 1952'].forEach(s => assert.ok(!M.DURATION.test(s), s));
 });
 test('every recommendation tag used by the rules is documented', () => {
-  ['dead-end-type', 'split-time', 'title-hub', 'common-word', 'needs-category', 'hub', 'year-slice', 'raise-cap', 'dating-regex', 'loop-restates', 'no-bristle', 'clone-of', 'verify-collision', 'url-in-quote']
+  ['dead-end-type', 'split-time', 'title-hub', 'common-word', 'needs-category', 'hub', 'year-slice', 'raise-cap', 'dating-regex', 'no-bristle', 'clone-of', 'verify-collision', 'url-in-quote']
     .forEach(t => assert.ok(M.REC[t] && M.REC[t].label && M.REC[t].finding && M.REC[t].fix, t));
 });
 test('every recommendation has a plain question and two verb buttons; item labels are complete', () => {

@@ -28,7 +28,6 @@ const REC = {
   'year-slice': { label: 'year: Slice mode, not a spark', fix: 'deterministic', finding: 'A year shared by more than 8 notes is a calendar slice, not a rare link.' },
   'raise-cap': { label: 'cap: raise', fix: 'nug-v5 prompt', finding: 'Last-ranked burrs (9+) in capped notes join as often as the first ones (60% vs 53%), so the cap is cutting good material.' },
   'dating-regex': { label: 'dating: regex-flag perishable', fix: 'deterministic', finding: 'Only 1.4% of claims have relative-time wording; flag perishable by regex instead of a prompt change.' },
-  'loop-restates': { label: 'tighten loop rule', fix: 'nug-v5 prompt', finding: 'The loop mostly repeats the claim as a question. A loop should be what the note leaves unexplained.' },
   'url-in-quote': { label: 'URLs inside evidence quote', fix: 'nug-v5 preprocessing', finding: 'Evidence units can be markdown link blobs (a 300-character quote of search-engine URL). Turn [text](url) into text and drop bare URLs before numbering lines; also cuts input tokens.' },
   'no-bristle': { label: 'burr has no bristle', fix: 'review', finding: 'Nothing to join on: hooks absent or unusable.' },
   'clone-of': { label: 'near-duplicate fact', fix: 'deterministic', finding: 'Two notes state nearly the same fact (context cosine >= 0.5). A clone-of relation, not a spark.' },
@@ -48,7 +47,6 @@ const ASK = {
   'year-slice': { ask: 'Should {x} be a spark?', yes: 'Keep out of sparks', no: 'Allow in sparks', pick: ['time'] },
   'raise-cap': { ask: 'This is a late fact from a long note. Is it worth keeping?', yes: 'Keep, raise the limit', no: 'Fine to cut', pick: [] },
   'dating-regex': { ask: 'The claim has time-relative wording. Mark it as may-go-stale?', yes: 'Mark may-go-stale', no: 'Not time-sensitive', pick: [] },
-  'loop-restates': { ask: 'The open question just repeats the claim. Should it ask what the note leaves unexplained instead?', yes: 'Rewrite it', no: 'Leave it', pick: [] },
   'url-in-quote': { ask: 'The evidence contains a web link. Strip links before it is used?', yes: 'Strip links', no: 'Leave as is', pick: [] },
   'no-bristle': { ask: 'This fact has nothing to link on.', yes: 'Flag for review', no: 'Keep anyway', pick: [] },
   'clone-of': { ask: 'Two notes state the same fact: {x}.', yes: 'Treat as duplicate', no: 'Treat as a spark', pick: [] },
@@ -128,9 +126,11 @@ function build(db, version, opts) {
   // Burrs flagged as duplicates by code/dedupe.js are hidden unless opts.showDupes (nothing is ever deleted).
   let hasDupes = false; try { hasDupes = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='burr_dupes'").get(); } catch (e) {}
   const dupClause = hasDupes && !opts.showDupes ? " AND b.id NOT IN (SELECT burr_id FROM burr_dupes WHERE status='dup')" : '';
-  const burrsRaw = db.prepare('SELECT b.id, b.note_id, b.claim, b.quote, b.kind, b.hooks_json, b.loop_text, b.perishable, n.title FROM burrs b JOIN vault_notes n ON n.id=b.note_id WHERE b.prompt_version=? AND COALESCE(n.quarry_exclude,0)=0' + dupClause + ' ORDER BY b.id').all(version);
+  const burrsRaw = db.prepare('SELECT b.id, b.note_id, b.claim, b.quote, b.kind, b.hooks_json, b.perishable, n.title FROM burrs b JOIN vault_notes n ON n.id=b.note_id WHERE b.prompt_version=? AND COALESCE(n.quarry_exclude,0)=0' + dupClause + ' ORDER BY b.id').all(version);
   const noteTitle = new Map(), noteTags = new Map();
   db.prepare('SELECT id,title FROM vault_notes').all().forEach(function (r) { noteTitle.set(r.id, r.title); });
+  const noteDate = new Map();   // the note's file date (when it was last saved), for the Note date lens; a database without the column just has no dates
+  try { db.prepare('SELECT id, file_mtime FROM vault_notes WHERE file_mtime IS NOT NULL').all().forEach(function (r) { const t = Date.parse(r.file_mtime); if (!isNaN(t)) noteDate.set(r.id, t); }); } catch (e) { /* no file_mtime column */ }
   db.prepare('SELECT note_id, tag_root FROM note_tags WHERE tag_root IS NOT NULL').all().forEach(function (r) {
     if (!noteTags.has(r.note_id)) noteTags.set(r.note_id, new Set()); noteTags.get(r.note_id).add(r.tag_root); });
   const NN = new Set(burrsRaw.map(function (b) { return b.note_id; })).size;
@@ -185,13 +185,12 @@ function build(db, version, opts) {
     const add = function (r) { if (recs.indexOf(r) < 0) recs.push(r); };
     if (rank.get(b.id) >= 9) add('raise-cap');
     if (REL.test(b.claim)) add('dating-regex');
-    if (b.loop_text) { const lt = new Set(L.tokens(b.loop_text).filter(function (w) { return !L.STOP.has(w) && w.length > 2; })), ct = new Set(toks.get(b.id)); if (lt.size && jaccard(lt, ct) >= 0.5) add('loop-restates'); }
     if (!brs.length) add('no-bristle');
     if (/https?:\/\//.test(b.quote || '')) add('url-in-quote');
     brs.forEach(function (x) { keyRecs.get(x.k).forEach(function (r) { if (r === 'dead-end-type' || r === 'split-time' || r === 'needs-category') add(r); }); });
     return { id: b.id, note: b.title, noteId: b.note_id, rank: rank.get(b.id), noteBurrs: perNote.get(b.note_id), kind: b.kind, claim: b.claim, quote: b.quote,
-      loop: b.loop_text || '', perishable: b.perishable, nB: brs.length, bestDf: bestDf, band: jb, bristles: brs, recs: recs,
-      _s: (b.claim + ' ' + b.title + ' ' + (b.loop_text || '')).toLowerCase() };
+      perishable: b.perishable, nB: brs.length, bestDf: bestDf, band: jb, bristles: brs, recs: recs,
+      _s: (b.claim + ' ' + b.title).toLowerCase() };
   });
 
   // ----- bristle rows (one per key)
@@ -337,54 +336,75 @@ function build(db, version, opts) {
       .sort(function (a, c) { return c.hooks.length - a.hooks.length || (a.type < c.type ? -1 : 1); });
     return { burr: held, groups: out, clings: out.reduce(function (s, g) { return s + g.hooks.length; }, 0), common: common };
   };
-  // Shelves for Stick: every fact sits on exactly one of veins (3+ hooks), grip (1 or 2), lone (none); loops is a cross-cut (facts with an unanswered "why").
+  // Shelves for Stick: every fact sits on exactly one of veins (3+ hooks), grip (1 or 2), lone (none).
   // A hook is one the fact shares with 2 to 60 notes. Shuffled shelves (grip, lone) use a seed so paging is stable and a new seed gives a fresh handful;
   // they skip fragments (under 30 characters or under 5 words), which Reflection will deal with properly.
   let shelfCache = null;
   const shelfIndex = function () {
     if (shelfCache) return shelfCache;
-    const c = { veins: [], grip: [], lone: [], loops: [] };
+    const c = { veins: [], grip: [], lone: [] };
     burrRows.forEach(function (r) {
       const hs = r.bristles.filter(function (x) { return x.df >= 2 && x.df <= 60; }), n = new Set(hs.map(function (x) { return x.k; })).size;
-      const e = { r: r, n: n, types: Array.from(new Set(hs.map(function (x) { return x.t; }))), hs: hs };
-      e.sh = n >= 3 ? 'veins' : n >= 1 ? 'grip' : 'lone'; c[e.sh].push(e); if (r.loop) c.loops.push(e);
+      const e = { r: r, n: n, rare: hs.length ? Math.min.apply(null, hs.map(function (x) { return x.df; })) : null, types: Array.from(new Set(hs.map(function (x) { return x.t; }))), hs: hs };
+      e.sh = n >= 3 ? 'veins' : n >= 1 ? 'grip' : 'lone'; c[e.sh].push(e);
     });
-    c.veins.sort(function (a, b) { return b.n - a.n || b.types.length - a.types.length || a.r.id - b.r.id; });
     shelfCache = c; return c;
   };
   const rng = function (seed) { let t = (seed >>> 0) + 0x6D2B79F5; return function () { t = (t + 0x6D2B79F5) >>> 0; let x = Math.imul(t ^ (t >>> 15), 1 | t); x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x; return ((x ^ (x >>> 14)) >>> 0) / 4294967296; }; };
   const isFragment = function (claim) { const c = String(claim || '').trim(); return c.length < 30 || c.split(/\s+/).length < 5; };
   const seenLive = new Set(), seedSnap = new Map();     // facts already shown on a shuffled shelf (this run); each seed freezes its own view so paging stays stable
-  // shelf(name, o): name is veins, grip, lone, loops, or all (veins, then grip, then lone). Options: type (one kind, or several separated by commas), match ('any' of them, or 'every' one),
-  // loops (only facts with an unanswered why), only (a Set of fact ids, for "Yours"), page, size, seed. Lone facts have no kinds, so any kind filter leaves them out.
+  // shelf(name, o): name is veins, grip, lone, or all. Options: type (one kind, or several separated by commas), match ('any' of them, or 'every' one),
+  // only (a Set of fact ids, for "Starred only"), page, size, seed, sort, dir. Lone facts have no kinds, so any kind filter leaves them out.
+  // sort: 'shuffle' (the default: a seeded shuffle of the whole list, facts not yet shown first), 'surprise' (the seed picks one lens and a direction, and the answer says which),
+  // or one lens: hooks, kinds, rarest (the fewest notes sharing a hook), length, note (A to Z), order (when extracted), rank (place within its note), notesize, date (the note's file date).
+  // A lens sort is strict; facts that tie come in seeded random order. Facts a lens cannot measure (no hook, no date) come last in either direction.
   // The counts it returns are conditional on the other filters: typeCounts for the kind chips, shelves for the shelf tabs.
+  const LENSES = {
+    hooks: { dir: 'desc', val: function (e) { return e.n; } }, kinds: { dir: 'desc', val: function (e) { return e.types.length; } },
+    rarest: { dir: 'asc', val: function (e) { return e.rare; } }, length: { dir: 'desc', val: function (e) { return e.r.claim.length; } },
+    note: { dir: 'asc', val: function (e) { return String(e.r.note || '').toLowerCase(); } }, order: { dir: 'asc', val: function (e) { return e.r.id; } },
+    rank: { dir: 'asc', val: function (e) { return e.r.rank; } }, notesize: { dir: 'desc', val: function (e) { return e.r.noteBurrs; } },
+    date: { dir: 'desc', val: function (e) { const t = noteDate.get(e.r.noteId); return t == null ? null : t; } }
+  };
+  const flip = function (d) { return d === 'asc' ? 'desc' : 'asc'; };
+  const rollLens = function (seed) { const keys = Object.keys(LENSES), r = rng((seed >>> 0) ^ 0x9E3779B9), key = keys[Math.floor(r() * keys.length)]; return { key: key, dir: r() < 0.5 ? LENSES[key].dir : flip(LENSES[key].dir) }; };
+  const mix = function (arr, seed) { const rnd = rng(seed), a = arr.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)), t = a[i]; a[i] = a[j]; a[j] = t; } return a; };
+  // Sort by one lens: each fact's value is read once (not on every comparison), unmeasurable ones go last, and the sort is stable so ties keep their seeded random order.
+  const orderBy = function (list, lens, dir) {
+    const sign = dir === 'asc' ? 1 : -1, dec = list.map(function (e) { return { e: e, v: lens.val(e) }; });
+    dec.sort(function (a, b) { const x = a.v, y = b.v; if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1; return x < y ? -sign : x > y ? sign : 0; });
+    return dec.map(function (d) { return d.e; });
+  };
   const shelf = function (name, o) {
     o = o || {}; const idx = shelfIndex(); if (name !== 'all' && !idx[name]) return null;
     const size = [12, 24, 48, 96].indexOf(o.size) >= 0 ? o.size : 12, types = String(o.type || '').split(',').filter(Boolean), every = o.match === 'every', only = o.only instanceof Set ? o.only : null;
-    const overlay = function (e) { return (!o.loops || e.r.loop) && (!only || only.has(e.r.id)); };
+    const overlay = function (e) { return !only || only.has(e.r.id); };
     const kindOk = function (e) { return !types.length || (every ? types.every(function (t) { return e.types.indexOf(t) >= 0; }) : types.some(function (t) { return e.types.indexOf(t) >= 0; })); };
     const typeCounts = {}; let list = [], hiddenFragments = 0; const counts = {};
     ['veins', 'grip', 'lone'].forEach(function (sn) { counts[sn] = idx[sn].filter(overlay).filter(kindOk).length; });
-    counts.all = counts.veins + counts.grip + counts.lone; counts.loops = idx.loops.length;
+    counts.all = counts.veins + counts.grip + counts.lone;
     (name === 'all' ? ['veins', 'grip', 'lone'] : [name]).forEach(function (sn) {
       const base = idx[sn].filter(overlay);
       if (sn !== 'lone') base.forEach(function (e) { e.types.forEach(function (t) { typeCounts[t] = (typeCounts[t] || 0) + 1; }); });
       let part = base.filter(kindOk);
-      if (sn === 'grip' || sn === 'lone') {
-        const kept = only ? part : part.filter(function (e) { return !isFragment(e.r.claim); }); hiddenFragments += part.length - kept.length; part = kept;
-        const sk = sn + ':' + (o.seed == null ? 1 : o.seed); if (!seedSnap.has(sk)) seedSnap.set(sk, new Set(seenLive)); const snap = seedSnap.get(sk);
-        const mix = function (arr) { const rnd = rng(o.seed == null ? 1 : o.seed), a = arr.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)), t = a[i]; a[i] = a[j]; a[j] = t; } return a; };
-        part = mix(part.filter(function (e) { return !snap.has(e.r.id); })).concat(mix(part.filter(function (e) { return snap.has(e.r.id); })));   // unseen first; seen ones only after those run out
-      }
+      if (sn === 'grip' || sn === 'lone') { const kept = only ? part : part.filter(function (e) { return !isFragment(e.r.claim); }); hiddenFragments += part.length - kept.length; part = kept; }
       list = list.concat(part);
     });
+    const seed = o.seed == null ? 1 : o.seed;
+    let sortKey = o.sort === 'surprise' || LENSES[o.sort] ? o.sort : 'shuffle', dir = o.dir === 'asc' || o.dir === 'desc' ? o.dir : null, rolled = false;
+    if (sortKey === 'surprise') { const pick = rollLens(seed); sortKey = pick.key; dir = pick.dir; rolled = true; }
+    if (LENSES[sortKey] && !dir) dir = LENSES[sortKey].dir;
+    if (sortKey === 'shuffle') {       // each seed freezes the set of facts already shown when it was first used, so paging stays stable and a new seed puts the unseen first
+      const sk = name + ':' + seed; if (!seedSnap.has(sk)) seedSnap.set(sk, new Set(seenLive)); const snap = seedSnap.get(sk);
+      list = mix(list.filter(function (e) { return !snap.has(e.r.id); }), seed).concat(mix(list.filter(function (e) { return snap.has(e.r.id); }), seed));
+    } else list = orderBy(mix(list, seed), LENSES[sortKey], dir);
     const pages = Math.max(1, Math.ceil(list.length / size)), page = Math.min(Math.max(o.page || 1, 1), pages);
-    const pageRows = list.slice((page - 1) * size, page * size); pageRows.forEach(function (e) { if (e.sh !== 'veins') seenLive.add(e.r.id); });
+    const pageRows = list.slice((page - 1) * size, page * size); if (sortKey === 'shuffle') pageRows.forEach(function (e) { seenLive.add(e.r.id); });
     const items = pageRows.map(function (e) {
-      const r = e.r; return { id: r.id, noteId: r.noteId, note: r.note, claim: r.claim, quote: r.quote, loop: r.loop || null, nHooks: e.n, types: e.types, shelf: e.sh,
+      const r = e.r; return { id: r.id, noteId: r.noteId, note: r.note, claim: r.claim, quote: r.quote, nHooks: e.n, types: e.types, shelf: e.sh,
         hooks: e.hs.slice().sort(function (a, b) { return a.df - b.df; }).filter(function (x, i, arr) { return arr.findIndex(function (y) { return y.k === x.k; }) === i; }).slice(0, 4).map(function (x) { return { id: x.k, label: x.s, type: x.t, df: x.df }; }) };
     });
-    return { name: name, total: list.length, page: page, pages: pages, size: size, items: items, hiddenFragments: hiddenFragments, typeCounts: typeCounts, shelves: counts };
+    return { name: name, total: list.length, page: page, pages: pages, size: size, items: items, hiddenFragments: hiddenFragments, typeCounts: typeCounts, shelves: counts, sort: { key: sortKey, dir: LENSES[sortKey] ? dir : null, rolled: rolled } };
   };
   // A random fact that has at least `min` hooks to cling to, for "Surprise me".
   const stickRandom = function (min, pick) {
