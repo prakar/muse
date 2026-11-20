@@ -1,5 +1,5 @@
 'use strict';
-// KNOWN GAPS: tests that pin today's behaviour where the Extraction Mechanism Register
+// KNOWN GAPS (and, once fixed, FIXED notes): tests that pin today's behaviour where the Extraction Mechanism Register
 // (vault note "QUARRY - Extraction Mechanism Register") found a weakness.
 // Each test passes while the gap exists. When a gap is fixed on purpose, the test fails;
 // flip the assertion to the new rule and drop the "KNOWN GAP" label. Do not fix a gap by editing this file alone.
@@ -25,10 +25,10 @@ test('S1-03 (holds): a decimal point does not split a unit', () => {
   assert.ok(B.segment('It was 3.5 km long.').map(txt).includes('It was 3.5 km long.'));
 });
 
-test('KNOWN GAP S3-05: a single-digit number that differs from the note is accepted', () => {
+test('FIXED 19 Nov 2026, S3-05: a single-digit number that differs from the note is rejected', () => {
   const note = { title: 'Zoo', cleaned: 'The zoo keeps 5 tigers near the north gate.' };
   const v = B.verifyBurrs([{ claim: 'The zoo keeps 3 tigers near the north gate.', quote: 'keeps 5 tigers near the north gate' }], note);
-  assert.strictEqual(v.accepted.length, 1, 'accepted although 3 is not in the note');
+  assert.deepStrictEqual(v.rejected.map(r => r.reason), ['number_not_in_note']);
 });
 test('S3-05 (holds): a two-digit number that differs from the note is rejected', () => {
   const note = { title: 'Zoo', cleaned: 'The zoo keeps 50 tigers near the north gate.' };
@@ -61,8 +61,7 @@ test('KNOWN GAP S5-05: two near-identical claims are never compared if their thr
   assert.deepStrictEqual(D.findDupes([a, c]), [], 'but findDupes never compares them');
 });
 
-test('KNOWN GAP D-01: the extraction cache key has the provider but not the model id', () => {
-  const k1 = B.cacheKey('gemini', 'input');
-  assert.notStrictEqual(k1, B.cacheKey('grok', 'input'), 'provider is in the key');
-  assert.strictEqual(B.cacheKey.length, 2, 'signature is (provider, input): there is no model parameter');
+test('D-01: the cache key still holds the provider; the model is checked on a hit (see nuggetizer.test.js, "cached answer from another model")', () => {
+  assert.notStrictEqual(B.cacheKey('gemini', 'input'), B.cacheKey('grok', 'input'));
+  assert.strictEqual(B.cacheKey.length, 2, 'signature is (provider, input); the model check lives in nuggetizer.processNote');
 });

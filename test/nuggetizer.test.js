@@ -300,3 +300,35 @@ test('nug-v6 no longer asks for a loop; replies with or without one still verify
     assert.strictEqual(v.accepted[0].loop_text, undefined);
   }
 });
+
+test('S3-05: lone digits are checked as whole numbers; number words, decimals, clock hours and superscripts are handled', () => {
+  const ok = (claim, cleaned, src) => B.verifyBurrs([src ? { claim, src } : { claim, quote: cleaned.slice(0, 40) }], { title: 'T', cleaned }).accepted.length === 1;
+  assert.strictEqual(ok('The zoo keeps 3 tigers.', 'The zoo keeps three tigers.'), true, 'number word');
+  assert.strictEqual(ok('The zoo keeps 3 tigers.', 'The zoo keeps 13 tigers.'), false, 'a digit inside a longer number is not a match');
+  assert.strictEqual(ok('The rod is 3.5 km long.', 'The rod is 3.5 km long.'), true, 'decimals are not split');
+  assert.strictEqual(ok('Tea is served at 6:30pm.', 'Tea is served at 18:30.'), true, 'the hour of a clock time is not checked on its own');
+  assert.strictEqual(ok('Its value is 1.75 x 10^6 A/m.', 'Its value is 1.75 x 10\u2076 A/m.'), true, 'superscripts count as digits');
+  assert.strictEqual(ok('The water is H2O.', 'The water is H2O.'), true, 'digit inside a formula');
+  assert.deepStrictEqual(B.singleDigitsIn('3 tigers, 3.5 km at 6:30pm, 10^6, H2O, 1,000'), ['3', '6', '2']);
+});
+test('S3-05: a lone digit found elsewhere in the note extends the quote, as larger numbers do', () => {
+  const n = { title: 'Zoo', cleaned: 'The zoo opened in 1999.\nIt keeps 5 tigers.' };
+  const v = B.verifyBurrs([{ claim: 'The zoo that opened in 1999 keeps 5 tigers.', src: [1] }], n);
+  assert.strictEqual(v.accepted.length, 1, JSON.stringify(v.rejected));
+  assert.ok(v.accepted[0].quote.indexOf('5 tigers') >= 0, v.accepted[0].quote);
+});
+test('D-01: a cached answer from another model is asked again on a normal run; --redo still replays it free', async () => {
+  const { db, dir } = fixture();
+  await Nug.run(Nug.parseArgs([]), { db, root: dir, callLLM: fake });          // answer cached from model 'fake-1'
+  let calls = 0; const counting = async () => { calls++; return fake(); };
+  const same = { db, root: dir, callLLM: counting, modelFor: async () => ({ id: 'fake-1' }) };
+  db.exec('DELETE FROM nuggetize_status');
+  await Nug.run(Nug.parseArgs([]), same);
+  assert.strictEqual(calls, 0, 'same model: cache reused');
+  db.exec('DELETE FROM nuggetize_status');
+  await Nug.run(Nug.parseArgs([]), { ...same, modelFor: async () => ({ id: 'fake-2' }) });
+  assert.strictEqual(calls, 1, 'another model: asked again');
+  calls = 0;
+  await Nug.run(Nug.parseArgs(['--redo']), { ...same, modelFor: async () => ({ id: 'fake-3' }) });
+  assert.strictEqual(calls, 0, '--redo replays whatever the cache holds');
+});

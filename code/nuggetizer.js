@@ -15,7 +15,7 @@
  * Flags: --provider gemini|claude|grok|openrouter (default gemini)  --ceiling USD  --max-words N
  *
  * Contract (Muse Constitution, Art. 3, 4, 6, 8): the model proposes, lib/burrs.js verifies against the
- * note's own text; responses are cached by input+prompt+schema+provider; spend goes through api_budget;
+ * note's own text; responses are cached by input+prompt+schema+provider and reused only for the same model (except --redo); spend goes through api_budget;
  * 5 errors in a row or the budget ceiling stop the run. READ-ONLY on the vault: never edits a note.
  */
 const fs   = require('fs');
@@ -114,6 +114,9 @@ async function processNote(db, row, a, runId, deps) {
   const input = B.buildInput(note, note.cleaned);
   const key = B.cacheKey(a.provider, input);
   let hit = db.prepare('SELECT response_text, model FROM nuggetize_cache WHERE cache_key=?').get(key);
+  // Constitution Decision 4: a different model is a different answer. The key holds the provider; the model is checked here. --redo is the free replay of cached
+  // answers (re-verify after a verifier change), so it keeps them whatever model made them; a normal run asks the current model again.
+  if (hit && deps.model && hit.model && hit.model !== deps.model && !a.redo) { console.warn('note ' + row.id + ': cached answer is from ' + hit.model + ', current model is ' + deps.model + '; asking again'); hit = undefined; }
   let text, model, cost = 0, fresh = false;
   if (hit) { text = hit.response_text; model = hit.model; }
   else {
@@ -179,6 +182,11 @@ async function run(a, deps) {
 
   const root = rootOf();
   const callLLM = deps.callLLM || require('./lib/llm').callLLM;
+  // The model a paid call would use now. Tests that inject callLLM get no model check unless they inject modelFor too.
+  const modelFor = deps.modelFor || (deps.callLLM ? null : require('./lib/llm').modelFor);
+  let curModel = null;
+  if (modelFor) { try { const m = await modelFor(a.provider, {}); curModel = (m && m.id) || null; } catch (e) { curModel = null; } }
+  if (curModel) console.log('Model: ' + curModel);
   if (!deps.callLLM && !require('./lib/llm').hasKey(a.provider)) throw new Error('No API key for provider ' + a.provider);
   const runId = 'nug-' + now().replace(/[-:.TZ]/g, '').slice(0, 17) + '-' + Math.random().toString(16).slice(2, 6);
   db.prepare('INSERT INTO muse_runs (run_id,kind,started_at,seed,params_json,versions_json) VALUES (?,?,?,?,?,?)')
@@ -188,7 +196,7 @@ async function run(a, deps) {
   let consec = 0, stopped = '';
   for (let i = 0; i < cands.length; i++) {
     try {
-      const r = await processNote(db, cands[i], a, runId, { callLLM: callLLM, root: root });
+      const r = await processNote(db, cands[i], a, runId, { callLLM: callLLM, root: root, model: curModel });
       tally[r.status] = (tally[r.status] || 0) + 1; tally.burrs += r.n; tally.rejected += (r.rejected || 0); tally.cost += r.cost;
       consec = r.status === 'error' ? consec + 1 : 0;
     } catch (e) {

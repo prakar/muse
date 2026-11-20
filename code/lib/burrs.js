@@ -110,6 +110,20 @@ function hasNum(text, n) {
   return w.some(function (x) { return new RegExp('\\b' + x + '\\b').test(low); });
 }
 
+// S3-05: lone digits (the 3 in "3 tigers") are checked too, as whole numbers: never inside a longer number, never a decimal part (3.5),
+// never the hour of a clock time (6:30; the minutes are checked as a two-digit number). Superscripts count as digits (10⁶ = 10^6).
+const SMALL_WORDS = { 1: ['one', 'first'], 2: ['two', 'second'], 3: ['three', 'third'], 4: ['four', 'fourth'], 5: ['five', 'fifth'],
+  6: ['six', 'sixth'], 7: ['seven', 'seventh'], 8: ['eight', 'eighth'], 9: ['nine', 'ninth'] };
+const SUPERSCRIPT = { '⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4', '⁵': '5', '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9' };
+function plainDigits(s) { return String(s).replace(/(\d),(?=\d)/g, '$1').replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹]/g, function (c) { return '^' + SUPERSCRIPT[c]; }); }
+function singleDigitsIn(text) { return plainDigits(text).match(/(?<![\d.])\d(?!\d|\.\d|:\d\d)/g) || []; }
+function hasSingleDigit(text, d) {
+  const t = plainDigits(text);
+  if (new RegExp('(?<![\\d.])' + d + '(?!\\d|\\.\\d)').test(t)) return true;
+  const low = t.toLowerCase();
+  return (SMALL_WORDS[d] || []).some(function (w) { return new RegExp('\\b' + w + '\\b').test(low); });
+}
+
 function sha256(s) { return crypto.createHash('sha256').update(s).digest('hex'); }
 function squash(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); }
 
@@ -383,13 +397,14 @@ function verifyBurrs(burrsIn, note, opts) {
     if (/^(https?:\/\/\S+|[\d\s.,\-\/]+)$/i.test(quote)) { rejected.push({ reason: 'bare_quote', claim: claim.slice(0, 80) }); continue; }
 
     const nums = claim.replace(/(\d),(?=\d)/g, '$1').match(/\d{2,}/g) || [];
+    const checks = nums.map(function (n) { return [n, hasNum]; }).concat(singleDigitsIn(claim).map(function (n) { return [n, hasSingleDigit]; }));
     // Every number must be in the cited evidence. If it is elsewhere in the note, the unit that holds it
     // is added to the evidence (deterministic), so the stored quote always contains the number.
     let numFail = false;
     const extra = [];
-    for (const n of nums) {
-      if (hasNum(evidence + ' ' + title + ' ' + extra.join(' '), n)) continue;
-      const hit = Array.isArray(b.src) ? units.find(function (u) { return hasNum(u, n); }) : null;
+    for (const [n, has] of checks) {
+      if (has(evidence + ' ' + title + ' ' + extra.join(' '), n)) continue;
+      const hit = Array.isArray(b.src) ? units.find(function (u) { return has(u, n); }) : null;
       if (hit && extra.length < 2) extra.push(hit); else { numFail = true; break; }
     }
     if (numFail) { rejected.push({ reason: 'number_not_in_note', claim: claim.slice(0, 80) }); continue; }
@@ -424,5 +439,5 @@ function verifyBurrs(burrsIn, note, opts) {
 module.exports = {
   PROMPT_VERSION, SCHEMA_VERSION, MAX_BODY_CHARS, MAX_BURRS, MAX_BURRS_LONG, MAX_BURRS_XL, CATEGORIES, burrCap, KINDS, HOOK_TYPES, SCHEMA_SQL,
   sha256, squash, splitFrontmatter, cleanBody, stripLinks, realWordCount, buildInput, buildPrompt,
-  cacheKey, parseModelJson, locateQuote, segment, hasNum, verifyBurrs
+  cacheKey, parseModelJson, locateQuote, segment, hasNum, hasSingleDigit, singleDigitsIn, verifyBurrs
 };
