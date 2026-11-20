@@ -24,7 +24,7 @@ export const api = {
   set: (id, { n, o, r, h }) => get('/api/connect', { id, n, order: o, reveal: r, hidden: h }, 'set'),
   note: (id, at) => get('/api/note', { id, at }, 'note'),
   noteByTitle: title => get('/api/note', { title }, 'note'),
-  search: (q, meaning) => get('/api/search', { q, meaning: meaning ? '1' : '0' }, 'search', { 'X-Muse': '1' }),
+  search: (q, meaning, page, size) => get('/api/search', Object.assign({ q, meaning: meaning ? '1' : '0' }, page > 1 ? { page } : {}, size ? { size } : {}), 'search', { 'X-Muse': '1' }),
   searchStatus: () => get('/api/search/status'),
   stick: id => get('/api/stick', { id }, 'stick'),
   event: body => fetch('/api/event', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), keepalive: true }).catch(() => {}),

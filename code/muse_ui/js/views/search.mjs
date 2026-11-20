@@ -3,6 +3,7 @@ import { NoteLink, ClaimLink } from '../components/notelink.mjs';
 import { h } from '../dom.mjs';
 import { build } from '../router.mjs';
 import { Button } from '../components/button.mjs';
+import { Pager } from '../components/pager.mjs';
 import { FocusButton, FocusHint } from '../components/focus.mjs';
 import { StarButton } from '../components/star.mjs';
 import { CollectButton } from '../components/tray.mjs';
@@ -35,9 +36,12 @@ export async function searchView({ route, api, nav }) {
   const head = h('div', { class: 'page-head' }, h('h1', { text: 'Search' }), form, h('p', { id: 'switch-hint', class: 'hint', text: SWITCH_HINT }));
   if (!q) return { node: h('div', {}, head, h('p', { class: 'empty', text: 'Ask a question of your notes. Muse will say how close the best match is, and when there is nothing.' })), title: 'Search', after: () => input.focus() };
 
-  const r = await api.search(q, meaning);
+  const page = parseInt(route.query.page, 10) || 1, size = parseInt(route.query.size, 10) || 0;
+  const r = await api.search(q, meaning, page, size);
+  const pageHref = (p, s = size) => build('search', {}, { q, meaning: meaning ? '' : 'off', page: p > 1 ? p : '', size: s || '' });
+  const offset = r.paged ? (r.page - 1) * r.size : 0;
   const card = (it, n) => h('li', { class: 'fact', 'data-burr': it.burrId },
-    h('div', { class: 'fact__top' }, h('span', { class: 'fact__n', text: String(n + 1) }), NoteLink({ text: it.note || '', noteId: it.noteId, at: it.burrId }),
+    h('div', { class: 'fact__top' }, h('span', { class: 'fact__n', text: String(offset + n + 1) }), NoteLink({ text: it.note || '', noteId: it.noteId, at: it.burrId }),
       it.basis ? h('span', { class: 'badge badge--basis', title: 'The confidence rating above is based on this fact: the closest to your question', text: 'best match' }) : null, h('span', { class: 'badge', title: 'How this fact was found', text: viaLabel(it.via) }), it.sim != null ? h('span', { class: 'badge', title: 'Closeness of this fact to the rewritten question (0 to 1)', text: 'closeness ' + it.sim.toFixed(2) }) : null),
     ClaimLink({ text: it.claim, noteId: it.noteId, at: it.burrId }), it.quote ? h('p', { class: 'fact__quote', text: '“' + tidyQuote(it.quote) + '”' }) : null,
     h('div', { class: 'fact__actions' }, StarButton({ id: it.burrId, note: it.note, starred: it.starred }, 'search'), CollectButton({ id: it.burrId, noteId: it.noteId, note: it.note, claim: it.claim }, 'search'), FocusButton({ id: it.burrId, from: 'search' })));
@@ -49,6 +53,6 @@ export async function searchView({ route, api, nav }) {
   const body = r.folded && r.results.length ? h('details', { class: 'folded' }, h('summary', { text: 'Show the nearest ' + r.results.length + ' facts anyway' }), list) : list;
   const read = r.understoodAs ? h('details', { class: 'understood' }, h('summary', { text: 'How Muse read your question' + (r.cachedRewrite === false ? ' (new question, cost $' + r.cost.toFixed(4) + ')' : '') }),
     h('p', { text: r.understoodAs }), h('p', { class: 'hint', text: 'An AI guess at what a matching note might say, used only to find facts. It is not an answer and it does not come from your notes; it may contain invented details.' })) : null;
-  const node = h('div', {}, head, banner, disclaimer, read, r.notices.map(n => h('p', { class: 'notice notice--' + n.kind, role: 'status', text: n.text })), r.results.length ? FocusHint() : null, r.results.length ? body : null);
+  const node = h('div', {}, head, banner, disclaimer, read, r.notices.map(n => h('p', { class: 'notice notice--' + n.kind, role: 'status', text: n.text })), r.results.length ? FocusHint() : null, r.results.length ? body : null, r.paged && r.pages > 1 ? Pager({ page: r.page, pages: r.pages, total: r.total, size: r.size, hrefFor: p => pageHref(p), onSize: s => nav.go(pageHref(1, s)), onGo: p => nav.go(pageHref(p)) }) : null);
   return { node, title: 'Search: ' + q };
 }

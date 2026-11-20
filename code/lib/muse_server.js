@@ -173,7 +173,7 @@ function createServer({ model, marks, notes, version, uiRoot, search = null, eve
       // A cross-site page can make a browser send a plain GET here, and a search can spend money (one cheap rewrite). A custom header cannot ride a cross-site simple request.
       if (!search) return json(res, { error: 'Search is not set up on this server.' }, 503);
       if (req.headers['x-muse'] !== '1') return json(res, { error: 'missing X-Muse header' }, 403);
-      return search.search({ q: q.get('q'), meaning: q.get('meaning') !== '0' }).then(r => { const st = starredIds(); (r.results || []).forEach(x => { x.starred = st.has(x.burrId); }); json(res, r); }, e => json(res, { error: e.message }, e.code === 'bad_request' ? 400 : 500));
+      return search.search({ q: q.get('q'), meaning: q.get('meaning') !== '0', page: q.get('page'), size: q.get('size') }).then(r => { const st = starredIds(); (r.results || []).forEach(x => { x.starred = st.has(x.burrId); }); json(res, r); }, e => json(res, { error: e.message }, e.code === 'bad_request' ? 400 : 500));
     }
     json(res, { error: 'not found' }, 404);
   };

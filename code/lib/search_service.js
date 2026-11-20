@@ -13,7 +13,7 @@ const bad = msg => Object.assign(new Error(msg), { code: 'bad_request' });
 // burrs: [{ id, noteId, claim, quote, note }]. words: buildWordIndex(burrs). vectors: search_vectors.load(...) or null.
 // embedder: { model, embed(texts) } or null. rewriter: createRewriter(...) or null. cache: search_cache handle or null.
 function createSearchService({ burrs, words, vectors = null, embedder = null, rewriter = null, cache = null, config = {} }) {
-  const bands = config.bands || Core.BANDS, perNote = config.perNote || 2, topK = config.topK || 10, pool = config.pool || 80;
+  const bands = config.bands || Core.BANDS, perNote = config.perNote || 2, topK = config.topK || 10, pool = config.pool || 80, pageSize = config.pageSize || 12, wordMax = config.wordMax || Math.max(burrs.length, pool);
   const byId = new Map(burrs.map(b => [b.id, b]));
   const prompts = E.promptsFor(embedder ? embedder.model : '');
 
@@ -25,11 +25,11 @@ function createSearchService({ burrs, words, vectors = null, embedder = null, re
     return v;
   }
 
-  async function search({ q, meaning = true }) {
+  async function search({ q, meaning = true, page = 1, size = 0 }) {
     q = String(q || '').trim();
     if (!q) throw bad('type a question first');
     if (q.length > MAX_Q) throw bad('questions are limited to ' + MAX_Q + ' characters');
-    const notices = [], lists = [], wordHits = words.search(q, pool).map(h => h.id), wordSet = new Set(wordHits);
+    const notices = [], lists = [], wordAll = words.search(q, wordMax).map(h => h.id), wordHits = wordAll.slice(0, pool), wordSet = new Set(wordAll);   // wordHits (the best 80) feed the fusion; wordAll is every word match, for paging
     let rwTop = null, mode = 'words', band = null, understoodAs = null, rewriteSims = new Map(), meaningSet = new Set(), cost = 0, cachedRewrite = null;
 
     if (!meaning) notices.push({ kind: 'info', text: 'Search by meaning is off: matching the words you typed.' });
@@ -52,16 +52,24 @@ function createSearchService({ burrs, words, vectors = null, embedder = null, re
       }
     }
     lists.push(wordHits);
-    const fused = Core.rrf(lists.filter(l => l.length), pool);
-    let ids = Core.groupByNote(fused, id => byId.get(id).noteId, perNote, topK);
-    // The confidence band is about ONE fact, the closest to the rewritten question. Put it first so the banner and the first result always agree.
-    if (rwTop) ids = [rwTop.id].concat(ids.filter(x => x !== rwTop.id)).slice(0, topK);
+    let ids, paged = false, total = 0, pages = 1, pg = 1, sz = Math.min(100, Math.max(1, parseInt(size, 10) || pageSize));
+    if (mode === 'words') {
+      // Words only: every match, best first, at most perNote from each note, in pages. (Meaning search keeps its short ranked list: similarity tails off, so a page 9 would mean little.)
+      const all = Core.groupByNote(wordAll, id => byId.get(id).noteId, perNote, Infinity);
+      total = all.length; pages = Math.max(1, Math.ceil(total / sz)); pg = Math.min(Math.max(1, parseInt(page, 10) || 1), pages); ids = all.slice((pg - 1) * sz, pg * sz); paged = true;
+    } else {
+      const fused = Core.rrf(lists.filter(l => l.length), pool);
+      ids = Core.groupByNote(fused, id => byId.get(id).noteId, perNote, topK);
+      // The confidence band is about ONE fact, the closest to the rewritten question. Put it first so the banner and the first result always agree.
+      if (rwTop) ids = [rwTop.id].concat(ids.filter(x => x !== rwTop.id)).slice(0, topK);
+    }
     const results = ids.map(function (id) {
       const b = byId.get(id);
       return { burrId: id, noteId: b.noteId, claim: b.claim, quote: b.quote || null, note: b.note || null, basis: !!rwTop && rwTop.id === id, via: { words: wordSet.has(id), meaning: meaningSet.has(id) }, sim: rewriteSims.has(id) ? Math.round(rewriteSims.get(id) * 1000) / 1000 : null };
     });
     if (!results.length) notices.push({ kind: 'info', text: 'No notes matched.' });
-    return { q, mode, band, bandText: band && Core.BAND_TEXT[band] || null, folded: band === 'nothing', understoodAs, bestSim: rwTop ? Math.round(rwTop.sim * 1000) / 1000 : null, cachedRewrite, cost, notices, results, counts: { burrs: burrs.length, vectors: vectors ? vectors.count : 0 } };
+    else if (!paged && results.length >= topK) notices.push({ kind: 'info', text: 'Showing the closest ' + topK + ' by meaning. Turn search by meaning off to page through every word match.' });
+    return { q, mode, band, bandText: band && Core.BAND_TEXT[band] || null, folded: band === 'nothing', understoodAs, bestSim: rwTop ? Math.round(rwTop.sim * 1000) / 1000 : null, cachedRewrite, cost, notices, results, paged, page: pg, pages, size: sz, total: paged ? total : results.length, counts: { burrs: burrs.length, vectors: vectors ? vectors.count : 0 } };
   }
 
   function status() {

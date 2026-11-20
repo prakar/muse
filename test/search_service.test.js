@@ -181,3 +181,19 @@ test('Help: every recipe is complete, every link is a real screen, and every but
   // Which buttons exist is checked against the real UI source by the Muse map audit (test/muse_map.test.js), the one place that owns it.
   const HV = await import(pathToFileURL(path.join(base, 'views', 'help.mjs')).href); assert.strictEqual(typeof HV.helpView, 'function'); assert.strictEqual(R.parse('#/help?r=know').name, 'help');
 });
+
+test('words search pages through every match (not just the best 10), 2 per note, with a total; meaning search stays a short ranked list', async () => {
+  const many = []; for (let n = 0; n < 40; n++) for (let k = 0; k < 3; k++) many.push({ id: n * 3 + k + 1, noteId: 100 + n, claim: 'India fact ' + n + '-' + k + ' about trade.', note: 'Note ' + n });
+  const svc = createSearchService({ burrs: many, words: Core.buildWordIndex(many) });
+  const p1 = await svc.search({ q: 'india', meaning: false });
+  assert.deepStrictEqual([p1.paged, p1.total, p1.pages, p1.page, p1.size, p1.results.length], [true, 80, 7, 1, 12, 12], '40 notes x 2 per note = 80 results, 12 a page');
+  const p2 = await svc.search({ q: 'india', meaning: false, page: 2 });
+  assert.strictEqual(p2.page, 2); assert.ok(p2.results.every(r => !p1.results.some(x => x.burrId === r.burrId)), 'page 2 has different facts');
+  const perNote = {}; for (let p = 1; p <= 7; p++) (await svc.search({ q: 'india', meaning: false, page: p })).results.forEach(r => { perNote[r.noteId] = (perNote[r.noteId] || 0) + 1; });
+  assert.ok(Object.values(perNote).every(c => c <= 2) && Object.keys(perNote).length === 40, 'every note shows, at most 2 each, across all pages');
+  const last = await svc.search({ q: 'india', meaning: false, page: 99, size: 50 });
+  assert.deepStrictEqual([last.page, last.pages, last.results.length], [2, 2, 30], 'a page past the end lands on the last; size 50 is honoured');
+  assert.strictEqual((await svc.search({ q: 'india', meaning: false, size: 9999 })).size, 100, 'size is capped at 100');
+  const { svc: ms } = fixture(); const m = await ms.search({ q: 'What kind of ore is halite?' });
+  assert.strictEqual(m.paged, false, 'meaning search is not paged'); assert.ok(m.results.length <= 10);
+});
