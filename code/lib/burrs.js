@@ -115,13 +115,21 @@ function hasNum(text, n) {
 const SMALL_WORDS = { 1: ['one', 'first'], 2: ['two', 'second'], 3: ['three', 'third'], 4: ['four', 'fourth'], 5: ['five', 'fifth'],
   6: ['six', 'sixth'], 7: ['seven', 'seventh'], 8: ['eight', 'eighth'], 9: ['nine', 'ninth'] };
 const SUPERSCRIPT = { '⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4', '⁵': '5', '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9' };
-function plainDigits(s) { return String(s).replace(/(\d),(?=\d)/g, '$1').replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹]/g, function (c) { return '^' + SUPERSCRIPT[c]; }); }
+function plainDigits(s) { return String(s).replace(/(\d),(?=\d)/g, '$1').replace(/(?<![\d.])0(\d)(?!\d)/g, '$1').replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹]/g, function (c) { return '^' + SUPERSCRIPT[c]; }); }
 function singleDigitsIn(text) { return plainDigits(text).match(/(?<![\d.])\d(?!\d|\.\d|:\d\d)/g) || []; }
 function hasSingleDigit(text, d) {
   const t = plainDigits(text);
-  if (new RegExp('(?<![\\d.])' + d + '(?!\\d|\\.\\d)').test(t)) return true;
+  if (new RegExp('(?<!\\d)(?<!\\d\\.)' + d + '(?!\\d|\\.\\d)').test(t)) return true;
   const low = t.toLowerCase();
   return (SMALL_WORDS[d] || []).some(function (w) { return new RegExp('\\b' + w + '\\b').test(low); });
+}
+
+// n (a digit string) as a whole number in text: not inside a longer number, not a decimal part; or as a number word. Used to choose evidence units (S3-05b).
+function wholeNumber(text, n) {
+  const t = plainDigits(text);
+  if (new RegExp('(?<!\\d)(?<!\\d[.:])' + n.replace(/\./g, '\\.') + '(?!\\d|[.:]\\d)').test(t)) return true;
+  if (/[.:]/.test(n)) return false;
+  return n.length === 1 ? hasSingleDigit(text, n) : (!!NUM_WORDS[parseInt(n, 10)] && hasNum(text.replace(/\d/g, ' '), n));
 }
 
 function sha256(s) { return crypto.createHash('sha256').update(s).digest('hex'); }
@@ -396,17 +404,29 @@ function verifyBurrs(burrsIn, note, opts) {
     if (META_CLAIM.test(claim) || claim.split(' ').length < 3) { rejected.push({ reason: 'meta_claim', claim: claim.slice(0, 80) }); continue; }
     if (/^(https?:\/\/\S+|[\d\s.,\-\/]+)$/i.test(quote)) { rejected.push({ reason: 'bare_quote', claim: claim.slice(0, 80) }); continue; }
 
-    const nums = claim.replace(/(\d),(?=\d)/g, '$1').match(/\d{2,}/g) || [];
-    const checks = nums.map(function (n) { return [n, hasNum]; }).concat(singleDigitsIn(claim).map(function (n) { return [n, hasSingleDigit]; }));
+    // S3-05c (opt-in): numbers of 2 to 3 digits match as whole numbers, a decimal (10.5), a dotted identifier (2.20.1, 01.07.1976) or a clock time (7:30) is one token that must appear as written, 4 or more digits keep the substring match.
+    const nums = opts && opts.wholeNumbers
+      ? (plainDigits(claim).match(/\d+(?:[.:]\d+)*/g) || []).filter(function (t) { return /[.:]/.test(t) || (t.length >= 2 && t.length <= 3) || t.length >= 4; })
+      : claim.replace(/(\d),(?=\d)/g, '$1').match(/\d{2,}/g) || [];
+    const checks = nums.map(function (n) { return [n, opts && opts.wholeNumbers && (/[.:]/.test(n) || n.length <= 3) ? wholeNumber : hasNum]; }).concat(singleDigitsIn(claim).map(function (n) { return [n, hasSingleDigit]; }));
     // Every number must be in the cited evidence. If it is elsewhere in the note, the unit that holds it
     // is added to the evidence (deterministic), so the stored quote always contains the number.
-    let numFail = false;
+    // S3-05b: which unit to add is chosen by how many of the still-missing numbers it holds AS WHOLE NUMBERS (a substring such as "10" inside "$100" is only a last
+    // resort), so one unit can cover several numbers and the two slots are not spent on unrelated lines.
     const extra = [];
-    for (const [n, has] of checks) {
-      if (has(evidence + ' ' + title + ' ' + extra.join(' '), n)) continue;
-      const hit = Array.isArray(b.src) ? units.find(function (u) { return has(u, n); }) : null;
-      if (hit && extra.length < 2) extra.push(hit); else { numFail = true; break; }
+    const missingNow = function () { const ev = evidence + ' ' + title + ' ' + extra.join(' '); return checks.filter(function (c) { return !c[1](ev, c[0]); }); };
+    let missing = missingNow();
+    while (missing.length && extra.length < 2 && Array.isArray(b.src)) {
+      let best = null, bestScore = 0;
+      units.forEach(function (u) {
+        if (evidence.indexOf(u) >= 0 || extra.indexOf(u) >= 0) return;
+        const score = missing.reduce(function (t, c) { return t + (wholeNumber(u, c[0]) ? 1 : (c[1](u, c[0]) ? 0.01 : 0)); }, 0);
+        if (score > bestScore) { best = u; bestScore = score; }
+      });
+      if (!best) break;
+      extra.push(best); missing = missingNow();
     }
+    const numFail = missing.length > 0;
     if (numFail) { rejected.push({ reason: 'number_not_in_note', claim: claim.slice(0, 80) }); continue; }
     if (extra.length) quote = (quote + ' ' + extra.join(' ')).trim();
 

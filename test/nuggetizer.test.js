@@ -355,3 +355,52 @@ test('redo and re-asking keep the ids, created_at and loop_text of burrs that ar
   await Nug.run(Nug.parseArgs(['--redo']), { db, root: dir, callLLM: reply([]), modelFor: async () => ({ id: 'fake-9' }) });   // --redo replays the cache
   assert.strictEqual(db.prepare('SELECT id FROM burrs').get().id, b2.id, '--redo keeps ids');
 });
+
+test('S3-05b: evidence units are chosen by whole-number match, and one unit can cover several numbers (rule of 72)', () => {
+  const n = { title: 'Proof of Rule of 72', cleaned: ['The Rule of 72', 'If you invest $100 at 9% per annum, it doubles.', 'The rule is accurate for a range of interest rate (from 6% to 10%).', 'Outside that range the error will vary from 2.4% to 14.0%.'].join('\n') };
+  const v = B.verifyBurrs([{ claim: 'Outside the 6% to 10% range, the error of the rule of 72 will vary from 2.4% to 14.0%.', src: [4] }], n);
+  assert.strictEqual(v.accepted.length, 1, JSON.stringify(v.rejected));
+  const q = v.accepted[0].quote;
+  assert.ok(q.indexOf('from 6% to 10%') >= 0, q);
+  assert.ok(q.indexOf('$100') < 0, 'the unrelated "$100" line is not attached: ' + q);
+});
+test('S3-05b: a number found nowhere still rejects, and at most two units are added', () => {
+  const n = { title: 'T', cleaned: ['Alpha 11 here.', 'Beta 22 here.', 'Gamma 33 here.', 'The claim line.'].join('\n') };
+  const none = B.verifyBurrs([{ claim: 'The claim has 11 and 99 in it.', src: [4] }], n);
+  assert.deepStrictEqual(none.rejected.map(r => r.reason), ['number_not_in_note']);
+  const three = B.verifyBurrs([{ claim: 'The claim has 11, 22 and 33 in it.', src: [4] }], n);
+  assert.deepStrictEqual(three.rejected.map(r => r.reason), ['number_not_in_note'], 'three separate units needed, only two slots');
+});
+
+test('S3-05: a leading zero is not a different number (04 = 4); a sidebar date is then grounded like any other', () => {
+  const n = { title: 'T', cleaned: 'On This Day: John Adams and Thomas Jefferson Die July 04, 2014 06:00 AM' };
+  const v = B.verifyBurrs([{ claim: 'John Adams and Thomas Jefferson died on July 4, 2014.', quote: 'Jefferson Die July 04, 2014' }], n);
+  assert.strictEqual(v.accepted.length, 1, JSON.stringify(v.rejected));
+  assert.strictEqual(B.hasSingleDigit('02 FEB 2018', '2'), true);
+  assert.strictEqual(B.hasSingleDigit('08045', '8'), false, 'only a two-character 0d is a leading zero');
+});
+test('S3-05c: opt-in whole-number matching rejects "10" found only inside "$100"; the default still accepts it', () => {
+  const n = { title: 'T', cleaned: 'You invest $100 at 9% per annum.' };
+  const b = { claim: 'The rate is 10 percent per annum.', quote: 'invest $100 at 9%' };
+  assert.strictEqual(B.verifyBurrs([b], n).accepted.length, 1, 'default: substring');
+  assert.deepStrictEqual(B.verifyBurrs([b], n, { wholeNumbers: true }).rejected.map(r => r.reason), ['number_not_in_note']);
+});
+
+test('S3-05c: opt-in rule: decimals are single tokens that must appear as written; 4-digit numbers and the default are unchanged', () => {
+  const n = { title: 'T', cleaned: 'The statue is 10.2 cm high and was made around 1846 near Rs.350 of tin.' };
+  const ok = (claim, quote, o) => B.verifyBurrs([{ claim, quote }], n, o).accepted.length === 1;
+  const q = 'The statue is 10.2 cm high';
+  assert.strictEqual(ok('The statue is 10.5 cm high.', q), true, 'default: "10" is found, 10.5 vs 10.2 slips through');
+  assert.strictEqual(ok('The statue is 10.5 cm high.', q, { wholeNumbers: true }), false, 'opt-in: 10.5 is not in the note');
+  assert.strictEqual(ok('The statue is 10.2 cm high.', q, { wholeNumbers: true }), true);
+  assert.strictEqual(ok('It was made around 1846 for Rs.350.', 'was made around 1846 near Rs.350 of tin', { wholeNumbers: true }), true, 'year by substring, Rs.350 as a whole number');
+});
+
+test('S3-05c: opt-in rule: versions, dotted dates and clock times are single tokens (not split into decimals)', () => {
+  const n = { title: 'T', cleaned: 'The shipped version of git is 2.20.1 and the slot was 7:30 am, order dated 01.07.1976.' };
+  const ok = (claim, quote) => B.verifyBurrs([{ claim, quote }], n, { wholeNumbers: true }).accepted.length === 1;
+  assert.strictEqual(ok('The shipped version of git is 2.20.1.', 'The shipped version of git is 2.20.1'), true);
+  assert.strictEqual(ok('The shipped version of git is 2.20.2.', 'The shipped version of git is 2.20.1'), false);
+  assert.strictEqual(ok('The slot was 7:30 am.', 'the slot was 7:30 am'), true);
+  assert.strictEqual(ok('The order was dated 01.07.1976.', 'order dated 01.07.1976'), true);
+});

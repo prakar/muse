@@ -27,19 +27,23 @@ function run(db, opts) {
   const dupes = D.findDupes(burrs);
   const runId = 'dedupe-' + Date.now().toString(36);
   const clear = "DELETE FROM burr_dupes WHERE burr_id IN (SELECT id FROM burrs WHERE prompt_version = ?)";
-  if (opts.undo) { needTables(db, ['burr_dupes']); db.prepare(clear).run(version); }
+  // Links whose burr or original is gone (a burr dropped by a re-run) match no live burr, so `clear` never reaches them: clear them too, or they inflate every count forever.
+  const stale = "DELETE FROM burr_dupes WHERE burr_id NOT IN (SELECT id FROM burrs) OR dup_of NOT IN (SELECT id FROM burrs)";
+  let staleCleared = 0;
+  if (opts.undo) { needTables(db, ['burr_dupes']); db.prepare(clear).run(version); staleCleared = Number(db.prepare(stale).run().changes); }
   else if (opts.apply) {
     needTables(db, ['burr_dupes']);
     db.exec('BEGIN');
     try {
       db.prepare(clear).run(version);
+      staleCleared = Number(db.prepare(stale).run().changes);
       const ins = db.prepare('INSERT INTO burr_dupes (burr_id, dup_of, kind, score, status, run_id) VALUES (?, ?, ?, ?, ?, ?)');
       dupes.forEach(function (d) { ins.run(d.id, d.dup_of, d.kind, d.score, 'dup', runId); });
       db.exec('COMMIT');
     } catch (e) { db.exec('ROLLBACK'); throw e; }
   }
   const echo = dupes.filter(function (d) { return d.kind === 'echo'; }).length;
-  return { burrs: burrs.length, dupes: dupes.length, echo: echo, clone: dupes.length - echo, runId: runId, rows: dupes };
+  return { burrs: burrs.length, dupes: dupes.length, echo: echo, clone: dupes.length - echo, runId: runId, rows: dupes, staleCleared: staleCleared };
 }
 
 if (require.main === module) {
@@ -49,6 +53,7 @@ if (require.main === module) {
   const dbPath = process.env.QUARRY_DB || path.join(process.env.QUARRY_HOME || path.join(__dirname, '..'), 'vault.db');
   const db = new DatabaseSync(dbPath);
   const r = run(db, { apply: flag('--apply'), undo: flag('--undo') });
+  if (r.staleCleared) console.log('Cleared ' + r.staleCleared + ' stale links (their burr or original no longer exists).');
   console.log((flag('--apply') ? 'APPLIED ' : flag('--undo') ? 'UNDONE ' : 'report only · ') + 'burrs ' + r.burrs + ' · duplicates ' + r.dupes + ' (echo ' + r.echo + ', clone ' + r.clone + ')' + (flag('--apply') ? ' · run ' + r.runId : ''));
   if (!flag('--apply') && !flag('--undo')) {
     const byId = new Map(db.prepare('SELECT id, note_id, claim FROM burrs WHERE prompt_version = ?').all(B.PROMPT_VERSION).map(function (b) { return [b.id, b]; }));

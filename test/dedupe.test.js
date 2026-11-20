@@ -74,3 +74,15 @@ test('claims that differ only in a symbol are different facts, not echoes', () =
   const r = D.findDupes([{ id: 1, note_id: 1, claim: "The ']' key goes to the next page in a multi-page document in Lynx." }, { id: 2, note_id: 2, claim: "The '+' key goes to the next page in a multi-page document in Lynx." }]);
   assert.strictEqual(r.length, 0);
 });
+
+test('--apply and --undo also clear links whose burr or original no longer exists', () => {
+  const db = new DatabaseSync(':memory:'); db.exec(B.SCHEMA_SQL); db.exec(D.SCHEMA_SQL);
+  const ins = db.prepare("INSERT INTO burrs (id, note_id, claim, quote, kind, hooks_json, loop_text, provenance, method, prompt_version, model, run_id, created_at) VALUES (?, ?, ?, 'q', 'fact', '[]', '', '{}', 'llm', ?, 'm', 'r', '2026-10-24')");
+  ins.run(1, 1, 'Pharaoh Hounds weigh 45 to 55 pounds.', B.PROMPT_VERSION); ins.run(2, 2, 'Pharaoh Hounds weigh 45 to 55 pounds.', B.PROMPT_VERSION);
+  const link = db.prepare("INSERT INTO burr_dupes (burr_id, dup_of, kind, score, status, run_id) VALUES (?, ?, 'clone', 1, 'dup', 'old')");
+  link.run(900, 1); link.run(1, 901);            // burr gone / original gone
+  const r = run(db, { apply: true });
+  assert.strictEqual(r.staleCleared, 1, 'the row whose burr is gone; the row whose burr is live is replaced by the normal clear');
+  assert.deepStrictEqual(db.prepare('SELECT burr_id FROM burr_dupes').all().map(x => x.burr_id), [2], 'only the live link remains');
+  link.run(902, 1); assert.strictEqual(run(db, { undo: true }).staleCleared, 1);
+});
