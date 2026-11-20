@@ -5,7 +5,7 @@ import { getPref, setPref } from '../prefs.mjs';
 // Admin actions, drawn from the one catalogue the server sends (the same list `muse ops` uses). Nothing here knows what a task does: it shows the title, the cost,
 // the options, and starts a job. A task with a dry run offers only "Check first"; "Do it for real" appears once that check has finished, and asks for the number
 // or name you saw when the run spends money or deletes. The server enforces every rule again, so this page cannot skip one.
-const EFFECT = { 'read-only': 'Reads only', 'writes files': 'Writes files', 'writes DB': 'Writes the database', 'spends money': 'Spends money' };
+const EFFECT = { 'read-only': 'Reads only', 'writes files': 'Writes files', 'writes DB': 'Writes the database', 'spends money': 'Spends money', 'starts a program': 'Starts a program' };
 // The ORDER lives on the server (the catalogue's `flows`), so the page, the `muse ops` command and a bot calling the API all see the same one; this file only draws it.
 // Two modes: "Initial setup" (a vault and no database yet: do these once, in order) and "Ongoing maintenance" (the weekly routine first, then the rest by how often
 // you need it). planFlow is pure: it turns a catalogue and a mode into groups of steps. A task the server lists but no flow places still appears, under "More", so a

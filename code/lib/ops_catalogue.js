@@ -110,6 +110,8 @@ const TASKS = [
   { id: 'search-build', area: 'prep', title: 'Rebuild search by meaning', does: 'Compute vectors for new or changed facts (needs the embedding server), or use only what is cached. Safe to repeat.', effect: 'writes files', group: 'search',
     params: [P('noEmbed', 'bool', 'Cached vectors only, no embedding server', { default: false })],
     build: p => [script('Build vectors', 'search_build.js', p.noEmbed ? ['--no-embed'] : [])] },
+  { id: 'ollama-start', area: 'dev', title: 'Start the embedding server (Ollama)', does: 'Search by meaning needs Ollama running on this machine. If it is not answering, start it (no sudo; it keeps running after the job ends) and check the embedding model is installed. If it already runs, only says so.', effect: 'starts a program', group: null, params: [],
+    build: () => [internal('Start Ollama', 'ollama-start')] },
   { id: 'refresh', area: 'ingest', title: 'Bring Muse up to date', does: 'Copy the vault in, index what changed, then count the new notes waiting and the notes you have edited, and estimate the cost. Stops before anything paid.', effect: 'writes DB', group: 'db', dry: true, safe: 'copies files, then indexes; the indexer takes its own copy before it removes notes', params: [],
     build: (p, go, ctx) => [...byId('vault-sync').build({}, go, ctx), ...byId('index').build({ mode: 'diff' }, go, ctx), internal('Notes waiting', 'candidates', ['--all']), internal('Edited notes waiting', 'candidates', ['--edited']), script('Estimate the cost', 'nuggetizer.js', ['--all', '--dry-run'])] },
   { id: 'refresh-process', area: 'prep', title: 'Process what is waiting (paid)', does: 'Extract facts from every pending note, then flag duplicates, store wordplay, rebuild search. Needs the pending count typed back.', effect: 'spends money', group: 'db', dry: true, safe: 'fills notes that have no facts yet, then rebuilds flags, wordplay and the search index; nothing existing is replaced', needs: 'count',
@@ -167,7 +169,7 @@ const FLOWS = {
         { task: 'refresh-process', why: 'Only if notes are waiting. Extracts facts, flags duplicates, stores wordplay and rebuilds search. Paid; you type the count back.' },
         { task: 'reprocess-edited', why: 'Only if the check above found edited notes. Re-sends just those, never the unchanged ones. Paid; you type the count back.' },
         { note: 'restart', title: 'Restart Muse', why: 'Muse loads its facts when it starts, so new ones appear after a restart: run `muse restart`. This page tells you when it is behind the database.' }] },
-      { id: 'sometimes', title: 'Now and then', hint: 'Useful, but not part of every round.', tasks: ['backup', 'find-notes', 'private-scan'] },
+      { id: 'sometimes', title: 'Now and then', hint: 'Useful, but not part of every round.', tasks: ['backup', 'find-notes', 'private-scan', 'ollama-start'] },
       { id: 'update', title: 'After an update', hint: 'When you have deployed new code.', tasks: ['migrate', 'search-build', 'heuristics'] },
       { id: 'care', title: 'Recovery and cleanup', hint: 'Rare: something went wrong, or the backups folder is full.', tasks: ['backups-prune', 'restore', 'clean-leftovers', 'check'] },
       { id: 'pieces', title: 'Individual steps', hint: 'The parts of the routine, one at a time, for options such as redo or a single note.', collapsed: true, tasks: ['vault-sync', 'index', 'nuggetize', 'dedupe', 'wordplay'] }]

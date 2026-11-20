@@ -91,6 +91,7 @@ async function main() {
       else if (name === 'prune') I.prune({ home: HOME, keep: parseInt(a[0], 10), go: a[1] === 'go' });
       else if (name === 'restore') I.restore({ ...base, name: a[0], go: a[1] === 'go' });
       else if (name === 'clean') I.clean({ home: HOME, go: a[0] === 'go' });
+      else if (name === 'ollama-start') await I.ollamaStart({});
       else fail('Unknown internal step ' + name); return;
     }
     default: fail('Unknown command: ' + cmd + '\nmuse ops help');

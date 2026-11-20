@@ -18,7 +18,7 @@ test('ops catalogue: every task is wired to a real script, and the safety rules 
   const areas = new Set(Cat.AREAS.map(a => a[0])), f = fixture();
   Cat.TASKS.forEach(t => {
     assert.ok(areas.has(t.area), t.id + ' has a known area'); assert.ok(t.title && t.does, t.id + ' says what it does');
-    assert.ok(['read-only', 'writes files', 'writes DB', 'spends money'].includes(t.effect), t.id + ' declares its effect');
+    assert.ok(['read-only', 'writes files', 'writes DB', 'spends money', 'starts a program'].includes(t.effect), t.id + ' declares its effect');
     if (t.needs) assert.ok(t.expectValue && t.dry, t.id + ' asks for confirmation only when it has a dry twin and a value to check');
     if (t.effect === 'spends money') assert.ok(t.needs && t.dry && (t.backup || t.safe), t.id + ': paid tasks have a dry run, a typed confirmation, and either a backup or a stated reason none is needed');
     if (t.effect === 'writes DB') assert.ok(t.backup || (t.safe && t.safe.length > 20) || t.id === 'restore', t.id + ': a task that writes the database backs up first, or says why what it writes can be rebuilt (restore does its own)');
@@ -193,4 +193,39 @@ test('backup policy: only steps that can destroy non-rebuildable data back up fi
   const T = Cat.TASK.get('nuggetize'); assert.ok(T.backup({ mode: 'note' }) && T.backup({ mode: 'redo' }) && !T.backup({ mode: 'limit' }) && !T.backup({ mode: 'all' }) && !T.backup({ mode: 'short' }));
   ['index', 'migrate', 'dedupe', 'wordplay', 'refresh', 'refresh-process'].forEach(id => { const t = Cat.TASK.get(id); assert.ok(!t.backup && t.safe, id + ' carries its reason instead of a backup'); });
   assert.ok(Cat.TASK.get('backup') && Cat.TASK.get('restore'), 'the explicit Back up button and Restore remain');
+});
+
+// ---- ollama-start: the Admin button that starts the embedding server (fakes only: nothing real is started)
+const ollamaFx = (upAfter, models) => { let calls = 0; return { fetchFn: async () => { calls++; if (calls <= upAfter) throw new Error('refused'); return { ok: true, json: async () => ({ models: models || [{ name: 'embeddinggemma:latest' }] }) }; }, get calls() { return calls; } }; };
+const fakeSpawn = (log, err) => (bin, args, o) => { log.push({ bin, args, o }); return { unref() {}, on(ev, f) { if (ev === 'error' && err) setImmediate(() => f(err)); } }; };
+
+test('ollama-start: a server that already answers is not started again', async () => {
+  const lines = [], spawned = [], fx = ollamaFx(0);
+  const r = await I.ollamaStart({ fetchFn: fx.fetchFn, spawnFn: fakeSpawn(spawned), log: l => lines.push(l) });
+  assert.deepStrictEqual([r.started, r.up, r.hasModel, spawned.length], [false, true, true, 0]);
+  assert.ok(/already running/.test(lines[0]));
+});
+test('ollama-start: a down server is started detached, with no sudo, and waited for', async () => {
+  const lines = [], spawned = [], fx = ollamaFx(3);
+  const r = await I.ollamaStart({ fetchFn: fx.fetchFn, spawnFn: fakeSpawn(spawned), exists: f => f === '/usr/local/bin/ollama', env: { PATH: '' }, pollMs: 1, log: l => lines.push(l) });
+  assert.strictEqual(r.started, true);
+  assert.deepStrictEqual(spawned.map(s => [s.bin, s.args, s.o.detached, s.o.stdio]), [['/usr/local/bin/ollama', ['serve'], true, 'ignore']]);
+  assert.ok(!lines.concat(spawned.map(s => s.bin)).some(l => /sudo|systemctl/.test(l)));
+});
+test('ollama-start: says so when the embedding model is not installed', async () => {
+  const lines = [], r = await I.ollamaStart({ fetchFn: ollamaFx(0, [{ name: 'llama3:latest' }]).fetchFn, log: l => lines.push(l) });
+  assert.strictEqual(r.hasModel, false);
+  assert.ok(lines.some(l => /ollama pull embeddinggemma/.test(l)));
+});
+test('ollama-start: refuses a remote server, a missing install, a start that never answers, and a spawn error', async () => {
+  const none = ollamaFx(1e9);
+  await assert.rejects(I.ollamaStart({ url: 'http://10.0.0.5:11434', fetchFn: none.fetchFn }), /another machine/);
+  await assert.rejects(I.ollamaStart({ fetchFn: none.fetchFn, exists: () => false, env: { PATH: '' } }), /not installed/);
+  await assert.rejects(I.ollamaStart({ fetchFn: none.fetchFn, spawnFn: fakeSpawn([]), exists: () => true, env: { PATH: '' }, waitMs: 5, pollMs: 1, log: () => {} }), /nothing answered/);
+  await assert.rejects(I.ollamaStart({ fetchFn: none.fetchFn, spawnFn: fakeSpawn([], new Error('EACCES')), exists: () => true, env: { PATH: '' }, waitMs: 50, pollMs: 5, log: () => {} }), /Could not start/);
+});
+test('ollama-start: OLLAMA_BIN wins, and findOllama looks on the PATH before the usual places', () => {
+  assert.strictEqual(I.findOllama({ env: { OLLAMA_BIN: '/x/ollama' }, exists: f => f === '/x/ollama' }), '/x/ollama');
+  assert.strictEqual(I.findOllama({ env: { OLLAMA_BIN: '/nope' }, exists: () => false }), null);
+  assert.strictEqual(I.findOllama({ env: { PATH: '/a:/b' }, exists: f => f === '/b/ollama' }), '/b/ollama');
 });

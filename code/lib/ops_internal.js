@@ -148,6 +148,41 @@ function setupState({ dbPath, home }) {
   return out;
 }
 
+// The embedding server (Ollama) that "search by meaning" needs. If it already answers, say so; if not, start `ollama serve` detached (it keeps running after this job
+// ends), wait until it answers, and report whether the embedding model is installed. No sudo, and only a server on this machine: a remote URL is never started.
+const OLLAMA_PLACES = ['/usr/local/bin/ollama', '/opt/homebrew/bin/ollama', '/usr/bin/ollama', '/Applications/Ollama.app/Contents/Resources/ollama'];
+function findOllama({ env = process.env, exists = fs.existsSync } = {}) {
+  if (env.OLLAMA_BIN) return exists(env.OLLAMA_BIN) ? env.OLLAMA_BIN : null;
+  for (const d of String(env.PATH || '').split(path.delimiter)) { if (d && exists(path.join(d, 'ollama'))) return path.join(d, 'ollama'); }
+  return OLLAMA_PLACES.find(f => exists(f)) || null;
+}
+async function ollamaStart({ url = process.env.OLLAMA_URL || 'http://127.0.0.1:11434', model = process.env.MUSE_EMBED_MODEL || 'embeddinggemma', env = process.env, log = console.log,
+  fetchFn = globalThis.fetch, spawnFn = require('child_process').spawn, exists = fs.existsSync, waitMs = 30000, pollMs = 500 } = {}) {
+  const host = (() => { try { return new URL(url).hostname; } catch (e) { return ''; } })();
+  if (!['127.0.0.1', 'localhost', '::1', '[::1]'].includes(host)) throw new Error('OLLAMA_URL points at another machine (' + url + '). Start the server there; Muse only starts one on this machine.');
+  const tags = async () => { try { const r = await fetchFn(url + '/api/tags', { signal: AbortSignal.timeout(2000) }); if (!r.ok) return null; const j = await r.json(); return (j.models || []).map(m => m.name || m.model || ''); } catch (e) { return null; } };
+  const report = (names, started) => {
+    const has = names.some(n => n === model || n.startsWith(model + ':'));
+    log((started ? 'Started the embedding server and it answers at ' : 'The embedding server is already running at ') + url + '.');
+    log(has ? 'Model ' + model + ' is installed. Search by meaning is ready.' : 'Model ' + model + ' is NOT installed here. Run: ollama pull ' + model + '   (a server started as your user looks in your own models folder, not the system service\'s).');
+    return { started, up: true, hasModel: has };
+  };
+  let names = await tags();
+  if (names) return report(names, false);
+  const bin = findOllama({ env, exists });
+  if (!bin) throw new Error('Ollama is not installed here (no "ollama" on the PATH or in the usual places). Install it, or set OLLAMA_BIN to its full path.');
+  log('The embedding server is not answering at ' + url + '. Starting: ' + bin + ' serve');
+  let spawnErr = null;
+  const child = spawnFn(bin, ['serve'], { detached: true, stdio: 'ignore', env });
+  child.on('error', e => { spawnErr = e; }); child.unref();
+  for (let waited = 0; waited <= waitMs; waited += pollMs) {
+    if (spawnErr) throw new Error('Could not start ' + bin + ': ' + spawnErr.message);
+    names = await tags(); if (names) return report(names, true);
+    await new Promise(r => setTimeout(r, pollMs));
+  }
+  throw new Error('Started ' + bin + ' serve but nothing answered at ' + url + ' within ' + Math.round(waitMs / 1000) + ' seconds. Is another program using that port?');
+}
+
 function pending({ dbPath, version, log = console.log }) { const n = pendingNotes(dbPath, version); log(`Pending notes: ${n}`); return n; }
 
-module.exports = { stamp, setupState, vaultDiff, candidates, tagCandidates, tagWriteCount, tagsWaiting, pendingNotes, listBackups, backup, prune, restore, leftovers, clean, status, pending, BACKUP_RE };
+module.exports = { stamp, setupState, vaultDiff, candidates, tagCandidates, tagWriteCount, tagsWaiting, pendingNotes, listBackups, backup, prune, restore, leftovers, clean, status, pending, ollamaStart, findOllama, BACKUP_RE };
