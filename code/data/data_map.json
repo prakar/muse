@@ -35,9 +35,12 @@
     "lib/muse_model.js",
     "lib/note_store.js",
     "lib/ops_internal.js",
-    "muse_scratch.js"
+    "muse_scratch.js",
+    "nuggetizer.js"
    ],
-   "U": [],
+   "U": [
+    "nuggetizer.js"
+   ],
    "D": [
     "nuggetizer.js"
    ]

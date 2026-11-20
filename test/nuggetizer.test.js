@@ -332,3 +332,26 @@ test('D-01: a cached answer from another model is asked again on a normal run; -
   await Nug.run(Nug.parseArgs(['--redo']), { ...same, modelFor: async () => ({ id: 'fake-3' }) });
   assert.strictEqual(calls, 0, '--redo replays whatever the cache holds');
 });
+
+test('redo and re-asking keep the ids, created_at and loop_text of burrs that are still accepted; dropped claims go, new claims get new ids', async () => {
+  const { db, dir } = fixture();
+  const reply = (claims) => async () => ({ model: 'fake-1', provider: 'gemini', tokensIn: 1, tokensOut: 1, text: JSON.stringify({ burrs: claims.map(c => ({ claim: c[0], quote: c[1], kind: 'fact', hooks: [] })), reason: '' }) });
+  const A = ['Quokkas on Rottnest Island became a selfie craze in 2015.', 'selfie craze in 2015'], Bc = ['Rottnest Island quokkas became a selfie craze.', 'Quokkas on Rottnest Island became a selfie craze'];
+  const ask = (claims, model) => Nug.run(Nug.parseArgs([]), { db, root: dir, callLLM: reply(claims), modelFor: async () => ({ id: model }) });
+  await ask([A], 'fake-1');
+  const first = db.prepare("SELECT id, created_at FROM burrs WHERE claim=?").get(A[0]);
+  db.prepare('UPDATE burrs SET loop_text=? WHERE id=?').run('archived question', first.id);
+  db.exec('DELETE FROM nuggetize_status');
+  await ask([A, Bc], 'fake-2');                       // another model answers: A stays, B is new
+  const rows = db.prepare('SELECT id, claim, loop_text, created_at FROM burrs ORDER BY id').all();
+  assert.strictEqual(rows.length, 2);
+  const a2 = rows.find(r => r.claim === A[0]), b2 = rows.find(r => r.claim === Bc[0]);
+  assert.strictEqual(a2.id, first.id, 'same id'); assert.strictEqual(a2.created_at, first.created_at); assert.strictEqual(a2.loop_text, 'archived question');
+  assert.ok(b2.id > first.id);
+  db.exec('DELETE FROM nuggetize_status');
+  await ask([Bc], 'fake-3');                          // A is no longer accepted: deleted; B keeps its id
+  const left = db.prepare('SELECT id, claim FROM burrs').all();
+  assert.deepStrictEqual(left.map(r => r.claim), [Bc[0]]); assert.strictEqual(left[0].id, b2.id);
+  await Nug.run(Nug.parseArgs(['--redo']), { db, root: dir, callLLM: reply([]), modelFor: async () => ({ id: 'fake-9' }) });   // --redo replays the cache
+  assert.strictEqual(db.prepare('SELECT id FROM burrs').get().id, b2.id, '--redo keeps ids');
+});

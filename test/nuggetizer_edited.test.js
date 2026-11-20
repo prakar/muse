@@ -43,7 +43,7 @@ test('edited: a really changed note is selected; the run costs one call, replace
   const picked = Nug.pickEdited(db, { provider: 'gemini' }, dir); assert.deepStrictEqual(picked.map(r => r.id), [1]);
   calls = 0; const t = await Nug.run(Nug.parseArgs(['--edited']), { db, root: dir, callLLM: fake });
   assert.strictEqual(calls, 1); assert.strictEqual(t.ok, 1);
-  assert.notDeepStrictEqual(ids(db, 1), before1, 'the edited note gets new fact ids'); assert.deepStrictEqual(ids(db, 2), before2, 'an untouched note keeps its fact ids');
+  assert.deepStrictEqual(ids(db, 1), before1, 'a fact the edit did not change keeps its id (new or changed claims get new ids: see nuggetizer.test.js)'); assert.deepStrictEqual(ids(db, 2), before2, 'an untouched note keeps its fact ids');
   assert.deepStrictEqual(Nug.pickEdited(db, { provider: 'gemini' }, dir), [], 'once re-processed it is no longer edited');
 });
 test('edited: the dry run changes nothing and a second run does nothing', async () => {

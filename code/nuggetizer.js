@@ -136,11 +136,21 @@ async function processNote(db, row, a, runId, deps) {
   const v = B.verifyBurrs(parsed.burrs, note);
   db.exec('BEGIN');
   try {
-    db.prepare('DELETE FROM burrs WHERE note_id=? AND prompt_version=?').run(row.id, B.PROMPT_VERSION);
+    // A burr that is still accepted keeps its id (marks, judgements and duplicate links point at ids), its created_at and its archived loop_text; only what
+    // changed is touched. A claim no longer accepted is deleted, a new claim is inserted. Matching is by note + claim (identical claims in a note are rejected as duplicates).
+    const prior = db.prepare('SELECT id, claim FROM burrs WHERE note_id=? AND prompt_version=? ORDER BY id').all(row.id, B.PROMPT_VERSION);
+    const idsByClaim = new Map();
+    prior.forEach(function (o) { if (!idsByClaim.has(o.claim)) idsByClaim.set(o.claim, []); idsByClaim.get(o.claim).push(o.id); });
     const ins = db.prepare('INSERT INTO burrs (note_id,claim,quote,kind,hooks_json,loop_text,perishable,provenance,method,prompt_version,model,run_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)');
+    const upd = db.prepare('UPDATE burrs SET quote=?, kind=?, hooks_json=?, perishable=?, model=?, run_id=? WHERE id=?');
+    const kept = new Set();
     v.accepted.forEach(function (b) {
-      ins.run(row.id, b.claim, b.quote, b.kind, JSON.stringify(b.hooks), b.loop_text || null, b.perishable, 'vault', 'llm', B.PROMPT_VERSION, model, runId, now());
+      const same = idsByClaim.get(b.claim), id = same && same.shift();
+      if (id) { upd.run(b.quote, b.kind, JSON.stringify(b.hooks), b.perishable, model, runId, id); kept.add(id); }
+      else ins.run(row.id, b.claim, b.quote, b.kind, JSON.stringify(b.hooks), b.loop_text || null, b.perishable, 'vault', 'llm', B.PROMPT_VERSION, model, runId, now());
     });
+    const del = db.prepare('DELETE FROM burrs WHERE id=?');
+    prior.forEach(function (o) { if (!kept.has(o.id)) del.run(o.id); });
     const status = v.accepted.length ? 'ok' : 'empty';
     setStatus(db, row.id, status, v.accepted.length, v.rejected.length,
       v.rejected.map(function (r) { return r.reason; }).concat(parsed.reason ? ['model: ' + parsed.reason] : []), model, runId);
