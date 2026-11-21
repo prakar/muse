@@ -11,8 +11,9 @@
 //   node code/lab/quiz_tag.js score-review [--source arre-bhai-2025]                            -> precision and recall from your notes
 const fs = require('node:fs'), path = require('node:path');
 const DIR = path.join(__dirname, '..', '..', 'backtest'), REG = path.join(__dirname, '..', 'data', 'heuristics.json');
-// Whole-set shapes and media are not visible in one item; a later per-quiz pass handles them. 63 to 66 are about one item's layout and stay.
-const SET_LEVEL = [61, 62, 67, 68, 69, 70, 71];
+// Not tagged at item level: whole-set shapes and media (not visible in one item; a later per-quiz pass handles them), and 66 Split answers, which the first full run put on 42% of
+// items (any question with sub-parts), so it cannot tell items apart. 63 to 65 are about one item's layout and stay.
+const SET_LEVEL = [61, 62, 66, 67, 68, 69, 70, 71];
 
 // Pure. "12. **Name:** what it is. [LLM]" lines of the Heuristics Commons -> [{ id, name, what }]. Read at run time, never copied into the repo.
 function parseDefs(md) {
@@ -24,7 +25,7 @@ function parseDefs(md) {
   });
   return out;
 }
-const SYSTEM = defs => 'You tag quiz questions with the construction patterns ("heuristics") a quiz setter used. A fixed numbered list follows. Use only these ids. Tag every heuristic the item clearly uses; most items use one to four, and some use none. Heuristics 63 to 66 are about how the item is laid out (sub-answers, a hint plus a nudge, a clue ladder, a "what is it" plus "what list does it top"), so check them too. For each tag give a short evidence quote (at most 25 words) copied exactly from the item; you may join two stretches of the item with "...". Reply with JSON only: {"tags":[{"id":12,"evidence":"..."}]}. Reply {"tags":[]} when none apply.\n\nHeuristics:\n' + defs.map(d => `${d.id}. ${d.name}: ${d.what}`).join('\n');
+const SYSTEM = defs => 'You tag quiz questions with the construction patterns ("heuristics") a quiz setter used. A fixed numbered list follows. Use only these ids. Tag every heuristic the item clearly uses; most items use one to four, and some use none. Heuristics 63 to 65 are about how the item is laid out (a "what is it" plus "what list does it top", a hint plus a nudge, a clue ladder), so check them too. For each tag give a short evidence quote (at most 25 words) copied exactly from the item; you may join two stretches of the item with "...". Reply with JSON only: {"tags":[{"id":12,"evidence":"..."}]}. Reply {"tags":[]} when none apply.\n\nHeuristics:\n' + defs.map(d => `${d.id}. ${d.name}: ${d.what}`).join('\n');
 const userPrompt = it => 'Quiz item:\n' + it.question.trim() + (it.answer ? '\n\nAnswer:\n' + String(it.answer).trim() : '');
 const norm = s => String(s).toLowerCase().replace(/[‘’“”"'`]/g, '').replace(/\s+/g, ' ').trim();
 // Evidence may quote two stretches of an item with "..." or "[...]" between them: each stretch of three words or more must be in the item, and at least one must exist.
@@ -33,9 +34,17 @@ function found(ev, hay) {
   return segs.length > 0 && segs.every(x => hay.includes(x));
 }
 
+// The first complete {...} in a reply, found by counting braces outside strings. A model sometimes adds a second object after the first, or is cut off mid-reply (then there is none).
+function firstObject(t) {
+  const i = t.indexOf('{'); if (i < 0) return null; let d = 0, inStr = false, esc = false;
+  for (let j = i; j < t.length; j++) { const c = t[j];
+    if (inStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; }
+    else if (c === '"') inStr = true; else if (c === '{') d++; else if (c === '}' && --d === 0) return t.slice(i, j + 1); }
+  return null;
+}
 // Pure. model text -> { ok, tags, dropped }. Unknown ids and repeats are dropped (and counted); evidence that is not in the item marks the tag weak.
 function parseTags(text, item, known) {
-  let o; try { const t = String(text).trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim(); o = JSON.parse(t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1)); } catch (e) { return { ok: false, error: 'not json' }; }
+  let o; const j = firstObject(String(text)); if (j == null) return { ok: false, error: 'not json' }; try { o = JSON.parse(j); } catch (e) { return { ok: false, error: 'not json' }; }
   if (!o || !Array.isArray(o.tags)) return { ok: false, error: 'no tags array' };
   const hay = norm(item.question + ' ' + (item.answer || '')), tags = [], seen = new Set(); let dropped = 0;
   o.tags.slice(0, 8).forEach(t => {
@@ -59,15 +68,15 @@ async function tagItems(items, deps, opts) {
   const defs = opts.defs.filter(d => !SET_LEVEL.includes(d.id)), known = new Set(defs.map(d => d.id)), system = SYSTEM(defs), records = [], problems = []; let spent = 0, planned = 0;
   for (const it of items) {
     const key = ['quiztag2', opts.provider, it.id, require('node:crypto').createHash('sha1').update(system + userPrompt(it)).digest('hex').slice(0, 16)].join(':');
-    let hit = deps.cache.get(key);
-    if (!hit) {
+    let hit = deps.cache.get(key), p = hit ? parseTags(hit.text, it, known) : null;
+    if (!hit || !p.ok) {   // a miss, or a saved answer that cannot be read (cut off or malformed): ask again
       if (opts.dryRun) { planned += opts.rate(Math.ceil((system.length + userPrompt(it).length) / 4), 100, null); continue; }
       if (spent >= opts.maxUsd) { problems.push({ id: it.id, stopped: 'budget' }); break; }
-      const r = await deps.callLLM(opts.provider, userPrompt(it), { system, maxTokens: 800, temperature: 0, thinkingBudget: 0, label: 'lab-quiz-tag' });
+      const r = await deps.callLLM(opts.provider, userPrompt(it), { system, maxTokens: 1200, temperature: 0, thinkingBudget: 0, label: 'lab-quiz-tag' });
       const cost = opts.rate(r.tokensIn || 0, r.tokensOut || 0, r.model); hit = { text: r.text, model: r.model, cost }; deps.cache.put(key, hit); spent += cost;
       if (deps.ledger) deps.ledger({ ts: new Date().toISOString(), task: 'quiz-tag', provider: opts.provider, model: r.model, cost, id: it.id });
+      p = parseTags(hit.text, it, known);
     }
-    const p = parseTags(hit.text, it, known);
     if (!p.ok) { problems.push({ id: it.id, error: p.error }); continue; }
     records.push({ id: it.id, source: it.source, provider: opts.provider, tags: p.tags, dropped: p.dropped, model: hit.model });
   }
