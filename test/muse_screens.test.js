@@ -147,3 +147,24 @@ test('screens: Tags is its own tab: three numbered steps, the review list inside
   assert.deepStrictEqual(seen[0], { page: 1, size: 24, filter: 'all', q: '' }, 'the first page is asked for with the default size');
   assert.ok(!/up to date|behind the database/.test(text(review)), 'the review step does not carry the restart notice'); assert.ok(/Tags/.test(at) && /Ongoing maintenance/.test(at) && /Initial setup/.test(at), 'three tabs');
 });
+
+test('screens: Search puts its facts in a Results area (so h j k l and R reach them), with a pager above and below that the keyboard can tell apart', async () => {
+  D.install(); const { searchView } = await imp('views/search.mjs'), { parse } = await imp('router.mjs');
+  const result = i => ({ burrId: i, noteId: i, claim: 'India fact ' + i + ' about trade.', quote: null, note: 'Note ' + i, basis: false, via: { words: true, meaning: false }, sim: null, starred: false });
+  const run = async (over, hash) => (await searchView({ route: parse(hash), api: { search: async () => ({ q: 'india', mode: 'words', band: null, notices: [], results: [result(1), result(2)], paged: true, page: 1, pages: 3, size: 12, total: 30, ...over }) }, nav: { go() {} } })).node;
+  const labelled = (node, label) => D.all(node, e => e.attrs && e.attrs['aria-label'] === label);
+  const cards = n => D.all(n, e => e.className && /\bfacts\b/.test(e.className)).length;
+  // paged word search: the pagers are landmarks, so the facts MUST sit in a labelled area of their own or the keyboard cannot reach them
+  let node = await run({}, '#/search?q=india&meaning=off');
+  const res = labelled(node, 'Results'); assert.strictEqual(res.length, 1, 'one Results area'); assert.strictEqual(cards(res[0]), 1, 'the facts list is inside it');
+  assert.strictEqual(labelled(node, 'Pagination').length, 1, 'a pager above'); assert.strictEqual(labelled(node, 'Pagination, end of results').length, 1, 'a pager below, named differently');
+  assert.ok(D.all(res[0], e => e.attrs && e.attrs['aria-label'] && /^Pagination/.test(e.attrs['aria-label'])).length === 0, 'pagers are outside Results');
+  const order = []; D.walk(node, e => { const l = e.attrs && e.attrs['aria-label']; if (l === 'Pagination' || l === 'Results' || l === 'Pagination, end of results') order.push(l); });
+  assert.deepStrictEqual(order, ['Pagination', 'Results', 'Pagination, end of results'], 'pager, results, pager: top to bottom');
+  // unpaged (meaning search, or one page): still a Results area, no pager
+  node = await run({ paged: false, pages: 1, mode: 'question' }, '#/search?q=india');
+  assert.strictEqual(labelled(node, 'Results').length, 1); assert.strictEqual(labelled(node, 'Pagination').length + labelled(node, 'Pagination, end of results').length, 0);
+  // fact numbers continue across pages
+  node = await run({ page: 2 }, '#/search?q=india&meaning=off&page=2');
+  assert.ok(/\b13\b/.test(D.all(node, e => e.className && /fact__n/.test(e.className)).map(e => e.textContent).join(' ')), 'page 2 starts at 13');
+});
