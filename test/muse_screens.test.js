@@ -158,6 +158,7 @@ test('screens: Search puts its facts in a Results area (so h j k l and R reach t
   let node = await run({}, '#/search?q=india&meaning=off');
   const res = labelled(node, 'Results'); assert.strictEqual(res.length, 1, 'one Results area'); assert.strictEqual(cards(res[0]), 1, 'the facts list is inside it');
   assert.strictEqual(labelled(node, 'Pagination').length, 1, 'a pager above'); assert.strictEqual(labelled(node, 'Pagination, end of results').length, 1, 'a pager below, named differently');
+  assert.ok(/\bpanel--results\b/.test(res[0].className), 'same Results panel as Home (shared ResultsPanel)'); assert.ok(/1,?\d* facts|\d+ facts/.test(D.all(res[0], e => e.tag === 'small').map(e => e.textContent).join(' ')), 'it shows a count');
   assert.ok(D.all(res[0], e => e.attrs && e.attrs['aria-label'] && /^Pagination/.test(e.attrs['aria-label'])).length === 0, 'pagers are outside Results');
   const order = []; D.walk(node, e => { const l = e.attrs && e.attrs['aria-label']; if (l === 'Pagination' || l === 'Results' || l === 'Pagination, end of results') order.push(l); });
   assert.deepStrictEqual(order, ['Pagination', 'Results', 'Pagination, end of results'], 'pager, results, pager: top to bottom');

@@ -10,6 +10,7 @@ import { Tile } from '../components/tile.mjs';
 import { setView } from './set.mjs';
 import { stickView } from './stick.mjs';
 import { Pager } from '../components/pager.mjs';
+import { ResultsPanel } from '../components/results_panel.mjs';
 import { CollectButton } from '../components/tray.mjs';
 import { FocusButton, FocusHint } from '../components/focus.mjs';
 import { StarButton } from '../components/star.mjs';
@@ -156,7 +157,7 @@ export async function homeView({ route, api, store, nav, actions }) {
     if (r.pages > 1) pager = Pager({ page: r.page, pages: r.pages, total: r.total, size: r.size, hrefFor: p => fHref({ page: p }), onSize: s => nav.go(fHref({ size: s, page: 1 })), onGo: p => nav.go(fHref({ page: p })) });
   }
   const count = focused ? 'in focus' : opened ? (opened.surface || 'A hidden pair') : pairsMode ? `${n(pr.total)} ${pr.total === 1 ? 'pair' : 'pairs'}` : `${n(r.total)} ${r.total === 1 ? 'fact' : 'facts'}`;
-  const resultsBox = h('section', { class: 'panel panel--results', 'aria-label': 'Results', 'data-zone': 'results' }, h('div', { class: 'panel__head' }, resultsTip ? InfoTip({ text: resultsTip, about: 'About Results' }, h('h2', { text: 'Results' })) : h('h2', { text: 'Results' }), h('small', { text: count +  (pairsMode && !opened ? ' of wordplay' : '') + (skippedNote ? ' · ' + skippedNote : '') }), headExtra), results);
+  const resultsBox = ResultsPanel({ count: count + (pairsMode && !opened ? ' of wordplay' : '') + (skippedNote ? ' · ' + skippedNote : ''), tip: resultsTip, extra: headExtra }, results);
   const node = h('div', {}, h('h1', { class: 'sr-only', text: W.home }), h('div', { class: 'deck' }, factsBlock, wordBlock), recentNav, resultsBox, pager);
   return { node, title: W.home, announce: count + (changed || pairsMode ? '' : ' in all'), after: ({ keepScroll } = {}) => { if (opened || focused) { const r = resultsBox.getBoundingClientRect(); if (r.top > window.innerHeight - 160) resultsBox.scrollIntoView({ block: 'start' }); }   /* only when Results starts below the fold; never yank the page when you can already see it, so Facts and Wordplay stay put */ else if (!keepScroll) node.querySelector('.is-selected')?.scrollIntoView({ block: 'center' }); } };
 }

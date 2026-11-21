@@ -4,6 +4,7 @@ import { h } from '../dom.mjs';
 import { build } from '../router.mjs';
 import { Button } from '../components/button.mjs';
 import { Pager } from '../components/pager.mjs';
+import { ResultsPanel } from '../components/results_panel.mjs';
 import { FocusButton, FocusHint } from '../components/focus.mjs';
 import { StarButton } from '../components/star.mjs';
 import { CollectButton } from '../components/tray.mjs';
@@ -55,6 +56,6 @@ export async function searchView({ route, api, nav }) {
   const body = r.folded && r.results.length ? h('details', { class: 'folded' }, h('summary', { text: 'Show the nearest ' + r.results.length + ' facts anyway' }), list) : list;
   const read = r.understoodAs ? h('details', { class: 'understood' }, h('summary', { text: 'How Muse read your question' + (r.cachedRewrite === false ? ' (new question, cost $' + r.cost.toFixed(4) + ')' : '') }),
     h('p', { text: r.understoodAs }), h('p', { class: 'hint', text: 'An AI guess at what a matching note might say, used only to find facts. It is not an answer and it does not come from your notes; it may contain invented details.' })) : null;
-  const node = h('div', {}, head, banner, disclaimer, read, r.notices.map(n => h('p', { class: 'notice notice--' + n.kind, role: 'status', text: n.text })), pager('Pagination'), r.results.length ? FocusHint() : null, r.results.length ? h('section', { class: 'results', 'aria-label': 'Results', 'data-zone': 'results' }, body) : null, pager('Pagination, end of results'));
+  const node = h('div', {}, head, banner, disclaimer, read, r.notices.map(n => h('p', { class: 'notice notice--' + n.kind, role: 'status', text: n.text })), pager('Pagination'), r.results.length ? FocusHint() : null, r.results.length ? ResultsPanel({ count: r.paged ? `${r.total.toLocaleString('en-US')} ${r.total === 1 ? 'fact' : 'facts'}` : `${r.results.length} closest ${r.results.length === 1 ? 'fact' : 'facts'}` }, h('div', {}, body)) : null, pager('Pagination, end of results'));
   return { node, title: 'Search: ' + q };
 }
