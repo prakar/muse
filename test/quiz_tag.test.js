@@ -46,14 +46,10 @@ test('merge marks which tags both providers gave; agreement counts them; only it
   const g = Q.agreement(m); assert.strictEqual(g.both, 1); assert.strictEqual(g.single, 2); assert.ok(Math.abs(g.share - 1 / 3) < 1e-9);
 });
 
-test('review sheet lists the tags with who gave them; parseReview reads Wrong and Missed; scoreReview gives precision (both vs one model) and recall', () => {
-  const items = [Object.assign({}, item, { id: 'q#1', source: 'q' }), { id: 'z#1', source: 'z', question: 'other other other other other other other other', answer: '' }];
-  const merged = [{ id: 'q#1', source: 'q', tags: [{ id: 1, by: ['a', 'b'], agreed: true, evidence: '', weak: false }, { id: 7, by: ['a'], agreed: false, evidence: '', weak: false }, { id: 49, by: ['b'], agreed: false, evidence: '', weak: false }] }, { id: 'z#1', source: 'z', tags: [] }];
-  const md = Q.reviewSheet(items, merged, defs, 'q'); assert.ok(md.includes('### q#1') && !md.includes('z#1')); assert.ok(md.includes('1 Chain with pivot [both]') && md.includes('7 Namesake split [a only]'));
-  const filled = md.replace('Wrong:\n', 'Wrong: 7, 49\n').replace('Missed:\n', 'Missed: 39 and 61\n'); const rv = Q.parseReview(filled);
-  assert.deepStrictEqual(rv, [{ id: 'q#1', wrong: [7, 49], missed: [39, 61] }]);
-  const s = Q.scoreReview(rv, merged); assert.strictEqual(s.items, 1); assert.strictEqual(s.precision.both, 1); assert.strictEqual(s.precision.single, 0); assert.ok(Math.abs(s.recall - 1 / 3) < 1e-9, 'one right tag, two missed');
-  assert.deepStrictEqual(s.missedBy, { 39: 1, 61: 1 });
+test('heuristics found unreliable (12, 18) are not offered and are dropped from older tag files when merged', () => {
+  assert.ok(Q.SET_LEVEL.includes(12) && Q.SET_LEVEL.includes(18) && Q.SET_LEVEL.includes(66));
+  const A = [{ id: 'i1', source: 's', tags: [{ id: 12, evidence: 'e', weak: false }, { id: 1, evidence: 'e', weak: false }] }], B = [{ id: 'i1', source: 's', tags: [{ id: 12, evidence: 'e', weak: false }, { id: 18, evidence: 'e', weak: false }] }];
+  assert.deepStrictEqual(Q.merge(A, B, 'a', 'b')[0].tags.map(x => x.id), [1]);
 });
 
 test('summary counts tags by heuristic and weak ones', () => {

@@ -7,13 +7,12 @@
 //   node code/lab/quiz_tag.js tag [--provider gemini] [--dry-run] [--limit N] [--max-usd 0.60]    -> quiz-tags-<provider>.jsonl
 //   node code/lab/quiz_tag.js summary [--provider gemini]
 //   node code/lab/quiz_tag.js compare --a gemini --b claude                                     -> quiz-tags.jsonl (merged, with who agreed)
-//   node code/lab/quiz_tag.js review [--source arre-bhai-2025]                                  -> tag-review-<source>.md, for your Wrong / Missed notes
-//   node code/lab/quiz_tag.js score-review [--source arre-bhai-2025]                            -> precision and recall from your notes
 const fs = require('node:fs'), path = require('node:path');
 const DIR = path.join(__dirname, '..', '..', 'backtest'), REG = path.join(__dirname, '..', 'data', 'heuristics.json');
-// Not tagged at item level: whole-set shapes and media (not visible in one item; a later per-quiz pass handles them), and 66 Split answers, which the first full run put on 42% of
-// items (any question with sub-parts), so it cannot tell items apart. 63 to 65 are about one item's layout and stay.
-const SET_LEVEL = [61, 62, 66, 67, 68, 69, 70, 71];
+// Not tagged at item level. Whole-set shapes and media (61, 62, 67 to 71) are not visible in one item; a later per-quiz pass handles them. 66 Split answers fired on 42% of items
+// (any question with sub-parts). 12 Old text, new headline and 18 Trigger event were wrong 0 of 6 times each in the author's blind review of 16 of his own items (Nov 2026):
+// both models apply them to any causal sentence. 63 to 65 are about one item's layout and stay.
+const SET_LEVEL = [61, 62, 66, 67, 68, 69, 70, 71, 12, 18];
 
 // Pure. "12. **Name:** what it is. [LLM]" lines of the Heuristics Commons -> [{ id, name, what }]. Read at run time, never copied into the repo.
 function parseDefs(md) {
@@ -93,8 +92,8 @@ function summary(records, defs) {
 function merge(a, b, nameA, nameB) {
   const mb = new Map(b.map(r => [r.id, r])), out = [];
   a.forEach(ra => { const rb = mb.get(ra.id); if (!rb) return; const tags = new Map();
-    ra.tags.forEach(t => tags.set(t.id, { id: t.id, by: [nameA], evidence: t.evidence, weak: t.weak }));
-    rb.tags.forEach(t => { const x = tags.get(t.id); if (x) { x.by.push(nameB); x.weak = x.weak && t.weak; } else tags.set(t.id, { id: t.id, by: [nameB], evidence: t.evidence, weak: t.weak }); });
+    ra.tags.filter(t => !SET_LEVEL.includes(t.id)).forEach(t => tags.set(t.id, { id: t.id, by: [nameA], evidence: t.evidence, weak: t.weak }));
+    rb.tags.filter(t => !SET_LEVEL.includes(t.id)).forEach(t => { const x = tags.get(t.id); if (x) { x.by.push(nameB); x.weak = x.weak && t.weak; } else tags.set(t.id, { id: t.id, by: [nameB], evidence: t.evidence, weak: t.weak }); });
     out.push({ id: ra.id, source: ra.source, tags: Array.from(tags.values()).map(t => Object.assign(t, { agreed: t.by.length === 2 })).sort((x, y) => x.id - y.id) }); });
   return out;
 }
@@ -104,46 +103,16 @@ function agreement(merged) {
   return { items: merged.length, both, single, share: both + single ? both / (both + single) : 0, per: Array.from(per.values()).sort((x, y) => (y.both + y.single) - (x.both + x.single)) };
 }
 
-// The sheet you annotate. One block per item; fill "Wrong:" with ids you would NOT call (comma separated) and "Missed:" with ids you did use that are not listed.
-function reviewSheet(items, merged, defs, source) {
-  const name = new Map(defs.map(d => [d.id, d.name])), by = new Map(merged.map(r => [r.id, r]));
-  const lines = ['# Heuristic tags for ' + source + ' (your review)', '', 'For each item: put the numbers of tags you disagree with after "Wrong:", and the numbers of heuristics the item uses that are not listed after "Missed:". Leave a line empty if nothing to say. Numbers are in the Heuristics Commons.', ''];
-  items.filter(i => i.source === source).forEach(it => { const r = by.get(it.id); if (!r) return;
-    lines.push('### ' + it.id, 'Q: ' + it.question.replace(/\s+/g, ' ').trim().slice(0, 420), 'A: ' + String(it.answer || '').replace(/\s+/g, ' ').trim().slice(0, 220),
-      'Tags: ' + (r.tags.length ? r.tags.map(t => `${t.id} ${name.get(t.id)} [${t.agreed ? 'both' : t.by[0] + ' only'}]`).join('; ') : '(none)'), 'Wrong:', 'Missed:', ''); });
-  return lines.join('\n');
-}
-const ids = s => String(s || '').split(/[^0-9]+/).filter(Boolean).map(Number);
-function parseReview(md) {
-  const out = []; let cur = null;
-  String(md).split('\n').forEach(l => { let m;
-    if ((m = /^###\s+(\S+)/.exec(l))) { cur = { id: m[1], wrong: [], missed: [] }; out.push(cur); }
-    else if (cur && (m = /^Wrong:(.*)$/.exec(l))) cur.wrong = ids(m[1]);
-    else if (cur && (m = /^Missed:(.*)$/.exec(l))) cur.missed = ids(m[1]); });
-  return out;
-}
-// Precision of the tags (split into "both models" and "one model"), and recall against what you added. Items you did not touch count as "right as listed"
-// only when `reviewedAll` says you went through every block.
-function scoreReview(review, merged) {
-  const by = new Map(merged.map(r => [r.id, r])), s = { items: 0, tags: { both: { n: 0, wrong: 0 }, single: { n: 0, wrong: 0 } }, missed: 0, missedBy: {}, wrongBy: {} };
-  review.forEach(rv => { const r = by.get(rv.id); if (!r) return; s.items++;
-    r.tags.forEach(t => { const k = t.agreed ? 'both' : 'single'; s.tags[k].n++; if (rv.wrong.includes(t.id)) { s.tags[k].wrong++; s.wrongBy[t.id] = (s.wrongBy[t.id] || 0) + 1; } });
-    rv.missed.forEach(m => { s.missed++; s.missedBy[m] = (s.missedBy[m] || 0) + 1; }); });
-  const right = k => s.tags[k].n - s.tags[k].wrong, tot = right('both') + right('single');
-  s.precision = { both: s.tags.both.n ? right('both') / s.tags.both.n : null, single: s.tags.single.n ? right('single') / s.tags.single.n : null };
-  s.recall = tot + s.missed ? tot / (tot + s.missed) : null; return s;
-}
-
 const readJsonl = f => fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l));
 const writeJsonl = (f, rows) => fs.writeFileSync(f, rows.map(x => JSON.stringify(x)).join('\n') + '\n');
-const pct = x => x == null ? 'n/a' : (100 * x).toFixed(0) + '%';
+const pct = x => (100 * x).toFixed(0) + '%';
 const rateFor = provider => (ti, to, model) => { const p = require('../lib/budget').priceFor(provider, model, ti) || { in: 0.30, out: 2.50 }; return (ti * p.in + to * p.out) / 1e6; };
 
 async function main() {
   const cmd = process.argv[2], a = process.argv.slice(3), arg = (n, d) => { const i = a.indexOf('--' + n); return i >= 0 ? a[i + 1] : d; };
   const commons = fs.readFileSync(path.join(require('../heuristics_build').NOTES, 'QUARRY - Heuristics Commons.md'), 'utf8'), defs = parseDefs(commons);
   const regIds = new Set(JSON.parse(fs.readFileSync(REG, 'utf8')).rows.map(r => r.id)); if (defs.length !== regIds.size || !defs.every(d => regIds.has(d.id))) { console.error('The Commons list and code/data/heuristics.json disagree; run node --no-warnings code/heuristics_build.js --check'); process.exit(1); }
-  const fileOf = p => path.join(DIR, 'quiz-tags-' + p + '.jsonl'), merged = path.join(DIR, 'quiz-tags.jsonl'), source = arg('source', 'arre-bhai-2025'), sheet = path.join(DIR, 'tag-review-' + source + '.md');
+  const fileOf = p => path.join(DIR, 'quiz-tags-' + p + '.jsonl'), merged = path.join(DIR, 'quiz-tags.jsonl'), source = arg('source', 'arre-bhai-2025');
   if (cmd === 'summary') {
     const s = summary(readJsonl(fileOf(arg('provider', 'gemini'))), defs);
     console.log(`${s.items} items tagged; ${s.none} with no heuristic; ${s.tags} tags, ${s.weak} with evidence not found in the item`);
@@ -155,14 +124,7 @@ async function main() {
     console.log(`${g.items} items tagged by both ${A} and ${B}; ${g.both + g.single} tags, ${g.both} given by both (${pct(g.share)})`);
     const name = new Map(defs.map(d => [d.id, d.name])); g.per.slice(0, 25).forEach(p => console.log(String(p.id).padStart(3), String(name.get(p.id)).padEnd(40), 'both ' + p.both, 'one ' + p.single)); return;
   }
-  if (cmd === 'review') { const items = loadItems(DIR); fs.writeFileSync(sheet, reviewSheet(items, readJsonl(merged), defs, source)); console.log('wrote ' + sheet + '. Open it, fill in Wrong: and Missed: for each item, save, then run score-review.'); return; }
-  if (cmd === 'score-review') {
-    const s = scoreReview(parseReview(fs.readFileSync(sheet, 'utf8')), readJsonl(merged)), name = new Map(defs.map(d => [d.id, d.name]));
-    console.log(`${s.items} items reviewed. Tags given by both models: ${s.tags.both.n}, right ${pct(s.precision.both)}. Tags from one model: ${s.tags.single.n}, right ${pct(s.precision.single)}. You added ${s.missed} that were missed; recall ${pct(s.recall)}.`);
-    console.log('Most often wrong:', Object.entries(s.wrongBy).sort((x, y) => y[1] - x[1]).slice(0, 8).map(([k, v]) => `${k} ${name.get(+k)} x${v}`).join('; ') || 'none');
-    console.log('Most often missed:', Object.entries(s.missedBy).sort((x, y) => y[1] - x[1]).slice(0, 8).map(([k, v]) => `${k} ${name.get(+k)} x${v}`).join('; ') || 'none'); return;
-  }
-  if (cmd !== 'tag') { console.error('usage: quiz_tag.js tag|summary|compare|review|score-review (see the top of the file)'); process.exit(1); }
+  if (cmd !== 'tag') { console.error('usage: quiz_tag.js tag|summary|compare (see the top of the file)'); process.exit(1); }
   let items = loadItems(DIR); if (arg('limit')) items = items.slice(0, +arg('limit'));
   const provider = arg('provider', 'gemini'), { callLLM } = require('../lib/llm'), { JsonlCache } = require('./judge'), dry = a.includes('--dry-run');
   const ledger = r => { fs.mkdirSync(path.join(__dirname, 'out'), { recursive: true }); fs.appendFileSync(path.join(__dirname, 'out', 'spend.jsonl'), JSON.stringify(r) + '\n'); };
@@ -170,5 +132,5 @@ async function main() {
   console.log(`${provider}: ${items.length} items; ${dry ? 'planned cost ~$' + r.planned.toFixed(4) + ' (uncached items only; the price used is the provider default, so a cheaper model may cost less)' : r.records.length + ' tagged, ' + r.problems.length + ' problems, spent $' + r.spent.toFixed(4)}`);
   if (!dry) writeJsonl(fileOf(provider), r.records);
 }
-module.exports = { parseDefs, SYSTEM, SET_LEVEL, userPrompt, parseTags, loadItems, tagItems, summary, merge, agreement, reviewSheet, parseReview, scoreReview };
+module.exports = { parseDefs, SYSTEM, SET_LEVEL, userPrompt, parseTags, loadItems, tagItems, summary, merge, agreement };
 if (require.main === module) main().catch(e => { console.error(e); process.exit(1); });
