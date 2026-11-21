@@ -1,7 +1,7 @@
 'use strict';
 // The Muse app's HTTP layer: static files for the interface, a small JSON API, and nothing else. Dependencies are passed in, so tests use fakes.
 const http = require('http'), fs = require('fs'), path = require('path');
-const C = require('./connect'), I = require('./ops_internal'), { createAccess } = require('./muse_access');
+const angles = require('./angles'), C = require('./connect'), I = require('./ops_internal'), { createAccess } = require('./muse_access');
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.txt': 'text/plain; charset=utf-8' };
@@ -69,6 +69,12 @@ function createServer({ model, marks, notes, version, uiRoot, search = null, eve
         return h && (e.item == null || it) ? { handle: e.handle, label: h.surface, item: e.item, claim: it ? it.claim : null, quote: it ? it.quote : null, note: it ? it.note : null, noteId: it ? it.noteId : null, ts: e.ts } : null; })
         .filter(Boolean).reverse();
       return json(res, { items: out, marks: marks.counts() });
+    }
+    // Angles: which quiz heuristics a pile of facts already hints at. Read-only, no model, no spend; the ids are the Collection's facts.
+    if (u.pathname === '/api/angles') {
+      const ids = (q.get('ids') || '').split(',').filter(Boolean).map(Number); if (ids.length > 50 || !ids.every(Number.isInteger)) return json(res, { error: 'bad ids' }, 400);
+      if (!model.pile) return json(res, { error: 'angles are not available' }, 503);
+      const facts = model.pile(ids); return json(res, { facts: facts.length, angles: angles.angles(facts) });
     }
     if (u.pathname === '/api/tray') {
       if (!trayStore) return json(res, { error: 'saving is not set up' }, 503);

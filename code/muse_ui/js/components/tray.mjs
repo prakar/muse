@@ -45,7 +45,7 @@ export function Tray() {
         inp.addEventListener('input', () => tray.setLink(x.id, its[i + 1].id, inp.value)); ol.append(h('li', { class: 'tray__gap' }, '↳ ', inp));
       }
     });
-    box.append(ol, h('div', { class: 'toolbar' },
+    box.append(ol, AnglesBlock(its, () => { if (box.isConnected) draw(); }), h('div', { class: 'toolbar' },
       Button({ label: 'Copy cluster', ic: 'copy', onClick: async () => { try { await navigator.clipboard.writeText(tray.text()); toast({ text: `Copied ${its.length} facts.` }); } catch (e) { toast({ text: 'The browser blocked copying.' }); } } }),
       Button({ label: W.illuminate, ic: 'search', href: build('dipaka'), title: 'Send these facts to the model and ask what you did not think to ask. You see the packet and the cost first.' }),
       Button({ label: 'Clear', variant: 'ghost', onClick: () => tray.clear() })));
@@ -53,6 +53,24 @@ export function Tray() {
   };
   let seen = false; const off = tray.subscribe(() => { if (box.isConnected) { seen = true; draw(); } else if (seen) off(); });
   draw(); loadTray(); return box;
+}
+// Angles: which of the 71 quiz heuristics the Collection already hints at, worked out from the facts' own hooks and wording (no model, no cost).
+// It points at a shape; whether it makes a question is your call. Fetched once per set of facts (the key), so typing a link line never refetches.
+const ang = { key: '', data: null, error: '' };
+function AnglesBlock(its, redraw) {
+  const key = its.map(x => x.id).join(',');
+  if (key !== ang.key) { ang.key = key; ang.data = null; ang.error = ''; const mine = key;
+    api.angles(its.map(x => x.id)).then(d => { if (ang.key === mine) { ang.data = d; redraw(); } }, e => { if (ang.key === mine) { ang.error = e.message; redraw(); } }); }
+  const pos = id => its.findIndex(x => x.id === id) + 1;
+  const head = h('h3', { text: 'Angles' });
+  if (ang.error) return h('div', { class: 'tray__angles' }, head, h('p', { class: 'hint', text: 'Angles are unavailable: ' + ang.error }));
+  if (!ang.data) return h('div', { class: 'tray__angles' }, head, h('p', { class: 'hint', text: 'Looking\u2026' }));
+  if (!ang.data.angles.length) return h('div', { class: 'tray__angles' }, head, h('p', { class: 'hint', text: 'Nothing in these facts points at a known shape yet. Add facts that share a date, a name or a word, or that say why something happened.' }));
+  const ul = h('ul', { class: 'tray__angle-list' });
+  ang.data.angles.forEach(a => ul.append(h('li', {},
+    h('strong', { text: a.h + ' ' + a.name }), ' \u2014 ' + a.why, h('small', { text: ' (' + (a.ids.length === 1 ? 'fact ' : 'facts ') + a.ids.map(pos).filter(Boolean).join(', ') + ')' }),
+    a.alsoNames && a.alsoNames.length ? h('div', { class: 'hint', text: 'Or maybe: ' + a.alsoNames.map(n => n.h + ' ' + n.name).join('; ') }) : null)));
+  return h('div', { class: 'tray__angles' }, head, h('p', { class: 'hint', text: 'Shapes these facts already hint at. A pointer, not a question.' }), ul);
 }
 export function CollectButton(it, from = 'direct') {
   const b = Button({ label: tray.has(it.id) ? W.collected : W.collect, size: 'sm', pressed: tray.has(it.id), title: 'Add this fact to your ' + W.collection.toLowerCase() });

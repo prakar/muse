@@ -29,6 +29,7 @@ export const api = {
   stick: id => get('/api/stick', { id }, 'stick'),
   event: body => fetch('/api/event', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), keepalive: true }).catch(() => {}),
   tray: () => get('/api/tray'),
+  angles: ids => get('/api/angles', { ids: ids.join(',') }, 'angles'),
   saveTray: body => request('/api/tray', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), keepalive: true }),
   shelf: o => get('/api/shelf', o, 'shelf'),
   stickRandom: () => get('/api/stick', { random: true }),

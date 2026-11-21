@@ -112,6 +112,7 @@ const DETECTORS = [sameMoment, namesakes, uniqueness, etymology, homonyms, relat
 function angles(pile) {
   pile = (pile || []).filter(function (b) { return b && b.id != null; });
   const all = [].concat.apply([], DETECTORS.map(function (d) { return d(pile); }));
+  all.forEach(function (r) { if (r.also) r.alsoNames = r.also.map(function (h) { return { h: h, name: NAMES.get(h) || String(h) }; }); });
   return all.sort(function (a, b) { return b.ids.length - a.ids.length || a.h - b.h; });
 }
 
