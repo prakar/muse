@@ -17,6 +17,7 @@ export function trail(route, ctx = {}) {
   if (route.name === 'stick') return [root, { label: W.stick }];
   if (route.name === 'search') return [root, { label: 'Search' }];
   if (route.name === 'basket') return [root, { label: W.starred }];
+  if (route.name === 'angles') return [root, { label: 'Angles' }];
   if (route.name === 'set') {
     const q = route.query, out = [root];
     if (q.from === 'basket') out.push({ label: W.starred, href: build('basket') });

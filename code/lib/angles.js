@@ -14,7 +14,8 @@ const H = require('../data/heuristics.json');
 
 const NAMES = new Map((H.rows || []).map(function (r) { return [r.id, r.name]; }));
 const hooks = function (b) { return Array.isArray(b.hooks) ? b.hooks : []; };
-const row = function (h, why, ids) { return { h: h, name: NAMES.get(h) || String(h), why: why, ids: Array.from(new Set(ids)) }; };
+// seed: the small construction this shape suggests, filled from the pile (what the answer would be, what joins the facts, what to hide). Not a question.
+const row = function (h, why, ids, seed) { return { h: h, name: NAMES.get(h) || String(h), why: why, ids: Array.from(new Set(ids)), seed: seed || null }; };
 const key = function (s) { return W.fold(String(s)).trim(); };
 
 // 3. Two facts on the same calendar day (a birth and a founding on 14 March).
@@ -28,7 +29,7 @@ function sameMoment(pile) {
     });
   });
   const out = [];
-  by.forEach(function (ids, k) { if (ids.length >= 2) out.push(row(3, 'both fall on ' + k, ids)); });
+  by.forEach(function (ids, k) { if (ids.length >= 2) out.push(row(3, 'both fall on ' + k, ids, { answer: 'the date, ' + k, join: 'the same calendar day', hide: 'the date' })); });
   return out;
 }
 
@@ -44,7 +45,7 @@ function namesakes(pile) {
     });
   });
   const out = [];
-  by.forEach(function (g) { if (g.cats.size >= 2) out.push(row(7, g.name + ' is a ' + Array.from(g.cats).join(' and a '), g.ids)); });
+  by.forEach(function (g) { if (g.cats.size >= 2) out.push(row(7, g.name + ' is a ' + Array.from(g.cats).join(' and a '), g.ids, { answer: g.name, join: 'one name for unlike things', hide: 'the name' })); });
   return out;
 }
 
@@ -53,7 +54,7 @@ function uniqueness(pile) {
   const out = [];
   pile.forEach(function (b) {
     const u = hooks(b).find(function (hk) { return hk.type === 'uniqueness'; });
-    if (u) out.push(row(36, u.value, [b.id]));
+    if (u) out.push(row(36, u.value, [b.id], { answer: 'what the fact is about', join: 'a first, only or extreme claim', hide: 'the name; keep the claim' }));
   });
   return out;
 }
@@ -63,7 +64,7 @@ function etymology(pile) {
   const out = [];
   pile.forEach(function (b) {
     const e = hooks(b).find(function (hk) { return hk.type === 'etymon'; });
-    if (b.kind === 'etymology' || e) out.push(row(45, e ? 'the word ' + e.value + ' has a story' : 'an etymology fact', [b.id]));
+    if (b.kind === 'etymology' || e) out.push(row(45, e ? 'the word ' + e.value + ' has a story' : 'an etymology fact', [b.id], { answer: e ? e.value : 'the word', join: 'a word and the story of its root', hide: 'the word; keep the root' }));
   });
   return out;
 }
@@ -72,7 +73,7 @@ function etymology(pile) {
 function relations(pile) {
   const out = [];
   pile.forEach(function (b) {
-    R.relationsIn(b.claim).forEach(function (x) { const p = R.POINTS_AT[x.r], r = row(p.h, x.r + ' ("' + x.cue + '")', [b.id]); r.also = p.also; out.push(r); });
+    R.relationsIn(b.claim).forEach(function (x) { const p = R.POINTS_AT[x.r], r = row(p.h, x.r + ' ("' + x.cue + '")', [b.id], { answer: 'one side of the link', join: x.r, hide: 'the cause, the effect or the name, whichever you choose' }); r.also = p.also; out.push(r); });
   });
   return out;
 }
@@ -82,7 +83,7 @@ function homonyms(pile) {
   const out = [];
   pile.forEach(function (b) {
     const x = hooks(b).find(function (hk) { return hk.type === 'homonym'; });
-    if (x) out.push(row(48, x.value + ' means more than one thing', [b.id]));
+    if (x) out.push(row(48, x.value + ' means more than one thing', [b.id], { answer: x.value, join: 'one name, several meanings', hide: 'the name' }));
   });
   return out;
 }
@@ -100,10 +101,10 @@ function wordplay(pile) {
   });
   const ids = function (list) { return [].concat.apply([], list.map(function (n) { return owner.get(key(n)) || []; })); };
   const out = [];
-  W.sharedParts(names).forEach(function (g) { out.push(row(g.route === 'across-kinds' ? 59 : 50, '"' + g.token + '" in ' + g.names.join(', '), ids(g.names))); });
-  W.anagrams(names).forEach(function (g) { out.push(row(58, g.names.join(' / ') + ' use the same letters', ids(g.names))); });
-  W.digitNames(names).forEach(function (g) { out.push(row(60, g.name + ' carries a number', ids([g.name]))); });
-  (W.oneLetterOff(names) || []).forEach(function (g) { const pair = g.names || [g.a, g.b].filter(Boolean); if (pair.length) out.push(row(49, pair.join(' / ') + ' differ by one letter', ids(pair))); });
+  W.sharedParts(names).forEach(function (g) { out.push(row(g.route === 'across-kinds' ? 59 : 50, '"' + g.token + '" in ' + g.names.join(', '), ids(g.names), { answer: g.token, join: 'a word shared by different names', hide: 'the shared word' })); });
+  W.anagrams(names).forEach(function (g) { out.push(row(58, g.names.join(' / ') + ' use the same letters', ids(g.names), { answer: g.names[0], join: 'the same letters, rearranged', hide: 'one of the names' })); });
+  W.digitNames(names).forEach(function (g) { out.push(row(60, g.name + ' carries a number', ids([g.name]), { answer: g.name, join: 'a number inside a name', hide: 'the name or the number' })); });
+  (W.oneLetterOff(names) || []).forEach(function (g) { const pair = g.names || [g.a, g.b].filter(Boolean); if (pair.length) out.push(row(49, pair.join(' / ') + ' differ by one letter', ids(pair), { answer: pair[0], join: 'names one letter apart', hide: 'one of the names' })); });
   return out;
 }
 

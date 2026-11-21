@@ -69,6 +69,7 @@ function AnglesBlock(its, redraw) {
   const ul = h('ul', { class: 'tray__angle-list' });
   ang.data.angles.forEach(a => ul.append(h('li', {},
     h('strong', { text: a.h + ' ' + a.name }), ' \u2014 ' + a.why, h('small', { text: ' (' + (a.ids.length === 1 ? 'fact ' : 'facts ') + a.ids.map(pos).filter(Boolean).join(', ') + ')' }),
+    a.seed ? h('div', { class: 'hint', text: 'Seed: answer \u2013 ' + a.seed.answer + '; join \u2013 ' + a.seed.join + '; hide \u2013 ' + a.seed.hide }) : null,
     a.alsoNames && a.alsoNames.length ? h('div', { class: 'hint', text: 'Or maybe: ' + a.alsoNames.map(n => n.h + ' ' + n.name).join('; ') }) : null)));
   return h('div', { class: 'tray__angles' }, head, h('p', { class: 'hint', text: 'Shapes these facts already hint at. A pointer, not a question.' }), ul);
 }

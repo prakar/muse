@@ -307,9 +307,10 @@ function build(db, version, opts) {
   const pile = function (ids) {
     return ids.map(function (id) { return byId.get(id); }).filter(Boolean).map(function (b) {
       let hooks = []; try { hooks = JSON.parse(b.hooks_json || '[]'); } catch (e) { /* no hooks */ }
-      return { id: b.id, claim: b.claim, kind: b.kind, hooks: Array.isArray(hooks) ? hooks : [] };
+      return { id: b.id, noteId: b.note_id, claim: b.claim, kind: b.kind, hooks: Array.isArray(hooks) ? hooks : [] };
     });
   };
+  const allPile = function () { return pile(burrsRaw.map(function (b) { return b.id; })); };
   const handle = function (id) {
     if (wpById.has(id)) {
       const r = wpById.get(id), items = [];
@@ -449,7 +450,7 @@ function build(db, version, opts) {
   const counts = {};
   [['burrs', burrRows], ['bristles', bristleRows], ['sparks', sparkRows], ['knots', knotRows]].forEach(function (p) {
     p[1].forEach(function (r) { r.recs.forEach(function (t) { (counts[t] = counts[t] || {})[p[0]] = ((counts[t] || {})[p[0]] || 0) + 1; }); }); });
-  return { version: version, notes: NN, burrs: burrRows, bristles: bristleRows, sparks: sparkRows, knots: knotRows, slices: sliceRows, wordplay: wordplayRows, wordplayState: wpState, handle: handle, stick: stick, burrInfo: burrInfo, pile: pile, stickRandom: stickRandom, shelf: shelf, suggest: suggest, wordplayPairs: wordplayPairs, wordplayKinds: wordplayKinds, timeline: timeline, coarse: coarse, quantities: quantities, excluded: excluded, detail: detail, recCounts: counts,
+  return { version: version, notes: NN, burrs: burrRows, bristles: bristleRows, sparks: sparkRows, knots: knotRows, slices: sliceRows, wordplay: wordplayRows, wordplayState: wpState, handle: handle, stick: stick, burrInfo: burrInfo, pile: pile, allPile: allPile, stickRandom: stickRandom, shelf: shelf, suggest: suggest, wordplayPairs: wordplayPairs, wordplayKinds: wordplayKinds, timeline: timeline, coarse: coarse, quantities: quantities, excluded: excluded, detail: detail, recCounts: counts,
     kinds: Array.from(new Set(burrRows.map(function (r) { return r.kind; }))).sort(),
     types: Array.from(new Set([].concat.apply([], bristleRows.map(function (r) { return r.types; })).concat(wordplayRows.length ? ['wordplay'] : []))).sort() };
 }

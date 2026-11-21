@@ -53,3 +53,30 @@ test('GET /api/angles reads the pile from the model and refuses bad ids', async 
     assert.strictEqual((await get('/api/angles?ids=1,x')).status, 400); assert.strictEqual(JSON.parse((await get('/api/angles')).body).facts, 0);
   } finally { srv.close(); }
 });
+
+test('every angle carries a seed: answer, join and hide', () => {
+  const a = angles([b(1, 'Born on 14 March 1879.'), b(2, 'Founded on 14 March 1903.'), b(3, 'x', 'etymology', [{ type: 'etymon', value: 'Gargantuan' }])]);
+  const d3 = a.find((x) => x.h === 3), d45 = a.find((x) => x.h === 45);
+  assert.deepStrictEqual(d3.seed, { answer: 'the date, march 14', join: 'the same calendar day', hide: 'the date' });
+  assert.strictEqual(d45.seed.answer, 'Gargantuan');
+  a.forEach((x) => assert.ok(x.seed && x.seed.answer && x.seed.join && x.seed.hide));
+});
+
+test('GET /api/angles/browse groups findings by shape, pages them and keeps same-note days out', async () => {
+  const http = require('node:http'), os = require('node:os'), path = require('node:path'), fs = require('node:fs');
+  const { createServer } = require('../code/lib/muse_server'), K = require('../code/lib/marks');
+  const all = [{ ...b(1, 'Born on 14 March 1879.'), noteId: 10 }, { ...b(2, 'Founded on 14 March 1903.'), noteId: 11 }, { ...b(3, 'Both on 2 May 1900.'), noteId: 12 }, { ...b(4, 'Also 2 May 1901.'), noteId: 12 },
+    { ...b(5, 'x', 'etymology', [{ type: 'etymon', value: 'Gargantuan' }]), noteId: 13 }];
+  const info = (id) => { const f = all.find((x) => x.id === id); return f ? { id, noteId: f.noteId, note: 'N' + f.noteId, claim: f.claim, quote: null, hooks: [] } : null; };
+  const stub = { allPile: () => all, pile: () => [], burrInfo: info, stickRandom: () => null, burrs: [], sparks: [], wordplay: [], notes: 0 };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ab-')), marks = K.open(path.join(dir, 'm.jsonl'), 't');
+  const srv = createServer({ model: stub, marks, notes: { get: () => null }, version: 't', uiRoot: path.join(__dirname, '..', 'code', 'muse_ui') });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r)); const port = srv.address().port;
+  const get = (p) => new Promise((res) => http.get({ host: '127.0.0.1', port, path: p, headers: { Host: 'localhost:' + port } }, (r) => { let x = ''; r.on('data', (d) => x += d); r.on('end', () => res(JSON.parse(x))); }));
+  try {
+    const d = await get('/api/angles/browse?h=3'); assert.deepStrictEqual(d.counts.map((c) => [c.h, c.n]), [[3, 1], [45, 1]]);
+    assert.deepStrictEqual(d.rows.map((r) => r.facts.map((f) => f.id)), [[1, 2]]); assert.strictEqual(d.rows[0].seed.hide, 'the date');
+    const e = await get('/api/angles/browse?h=45&size=24'); assert.strictEqual(e.name, 'Etymology unveil'); assert.strictEqual(e.size, 24);
+    assert.strictEqual((await get('/api/angles/browse?h=999')).h, 3);
+  } finally { srv.close(); }
+});

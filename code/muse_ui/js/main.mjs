@@ -12,6 +12,7 @@ import { Button } from './components/button.mjs';
 import { homeView } from './views/home.mjs';
 import { setView } from './views/set.mjs';
 import { basketView } from './views/basket.mjs';
+import { anglesView } from './views/angles.mjs';
 import { stickView, stickHref } from './views/stick.mjs';
 import { adminView } from './views/admin.mjs';
 import { helpView } from './views/help.mjs';
@@ -24,7 +25,7 @@ import { PileDrawer } from './components/pile.mjs';
 import { installKeys } from './keys.mjs';
 import { labelSections, createAnnouncer, SkipLink } from './a11y.mjs';
 
-const VIEWS = { home: homeView, set: setView, basket: basketView, search: searchView, stick: stickView, admin: adminView, help: helpView, dipaka: dipakaView };
+const VIEWS = { home: homeView, set: setView, basket: basketView, search: searchView, stick: stickView, admin: adminView, help: helpView, dipaka: dipakaView, angles: anglesView };
 const store = createStore({ meta: null, marks: { use: 0, dull: 0, 'wrong-sense': 0 } });
 const announcer = createAnnouncer();
 let route = null, seq = 0, screenCtx = {}, keys = null;
@@ -52,6 +53,7 @@ const showPile = () => { pileBadge.textContent = String(tray.count()); pileBadge
 tray.subscribe(showPile); showPile();
 window.addEventListener('muse:marks', e => store.set({ marks: e.detail }));
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && pile.isOpen() && !/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) go(withQuery(route, { pile: '' })); });
+const anglesBtn = Button({ label: 'Angles', ic: 'link', size: 'sm', href: build('angles') });
 const adminBtn = Button({ label: W.admin, ic: 'layers', size: 'sm', href: build('admin') });
 const basketBtn = Button({ label: W.starred, ic: 'basket', size: 'sm', href: build('basket') });
 const badge = h('span', { class: 'badge badge--count', text: '0' }); basketBtn.append(badge);
@@ -71,7 +73,7 @@ async function render(r, { keepScroll = false, holdPager = true } = {}) {
     // Keep the place: with a pager on both screens, hold the pager itself still under the pointer (pages differ a little in height); otherwise hold the scroll offset.
     const pagerNow = content.querySelector('.pager');
     if (keepScroll) { holdPager && pagerTop !== undefined && pagerNow ? window.scrollBy(0, pagerNow.getBoundingClientRect().top - pagerTop) : window.scrollTo(0, y); } else { window.scrollTo(0, 0); content.focus({ preventScroll: true }); }
-    basketBtn.setAttribute('aria-current', String(r.name === 'basket')); adminBtn.setAttribute('aria-current', String(r.name === 'admin'));
+    basketBtn.setAttribute('aria-current', String(r.name === 'basket')); anglesBtn.setAttribute('aria-current', String(r.name === 'angles')); adminBtn.setAttribute('aria-current', String(r.name === 'admin'));
     if (!keepScroll) keys?.reset(); else keys?.refresh();
     out.after?.({ keepScroll });
   } catch (e) {
@@ -101,7 +103,7 @@ async function boot() {
   await loadTray();
   const meta = await api.meta();
   store.set({ meta, marks: meta.marks });
-  const top = h('header', { class: 'top' }, h('a', { class: 'top__brand', href: build('home'), title: meta.version + ' · ' + meta.notes + ' notes · ' + meta.burrs + ' facts', text: 'Muse' }), h('div', { class: 'top__search', role: 'search', 'aria-label': 'Search' }, Search({ api, onPick: it => go(build('set', { id: it.id })), onSubmit: q => go(searchHref(q, getPref('meaning', true))) })), h('nav', { class: 'top__actions', 'aria-label': 'Tools' }, pileBtn, basketBtn, Button({ label: 'Help', ic: 'note', size: 'sm', href: build('help') }), adminBtn));
+  const top = h('header', { class: 'top' }, h('a', { class: 'top__brand', href: build('home'), title: meta.version + ' · ' + meta.notes + ' notes · ' + meta.burrs + ' facts', text: 'Muse' }), h('div', { class: 'top__search', role: 'search', 'aria-label': 'Search' }, Search({ api, onPick: it => go(build('set', { id: it.id })), onSubmit: q => go(searchHref(q, getPref('meaning', true))) })), h('nav', { class: 'top__actions', 'aria-label': 'Tools' }, pileBtn, basketBtn, anglesBtn, Button({ label: 'Help', ic: 'note', size: 'sm', href: build('help') }), adminBtn));
   mount(shell, h('div', { class: 'main' }, top, content), drawerHost);
   document.body.prepend(SkipLink(content));
   document.body.append(shell, announcer.node);

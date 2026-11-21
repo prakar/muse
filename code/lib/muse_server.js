@@ -27,6 +27,15 @@ function createServer({ model, marks, notes, version, uiRoot, search = null, eve
     .filter(i => all || (i.mark !== 'dull' && i.mark !== 'wrong-sense')).sort((a, b) => (b.mark === 'use') - (a.mark === 'use'));
   // Facts starred anywhere (under a handle or on their own), so a search result, a fact in focus or a shelf card can show its star.
   const starredIds = () => new Set(marks.all().filter(e => e.mark === 'use' && e.item != null).map(e => e.item));
+  // The vault-wide Angles index: one pass over every fact, rows grouped by heuristic. Shared days count only when the facts come from different notes and the day is not a crowd (2 to 5 facts).
+  let anglesCache = null;
+  const anglesIndex = () => {
+    if (anglesCache) return anglesCache;
+    const all = model.allPile(), noteOf = new Map(all.map(b => [b.id, b.noteId])), byH = new Map(), names = new Map();
+    const days = angles.sameMoment(all).filter(r => r.ids.length <= 5 && new Set(r.ids.map(i => noteOf.get(i))).size >= 2);
+    [].concat(angles.etymology(all), angles.uniqueness(all), angles.homonyms(all), angles.relations(all), days).forEach(r => { names.set(r.h, r.name); if (!byH.has(r.h)) byH.set(r.h, []); byH.get(r.h).push(r); });
+    return (anglesCache = { byH, names });
+  };
   const readBody = (req, cb, max = 10000) => { let b = ''; req.on('data', d => { b += d; if (b.length > max) req.destroy(); }); req.on('end', () => { try { cb(JSON.parse(b)); } catch (e) { cb(null); } }); };
 
   function serveStatic(res, urlPath) {
@@ -69,6 +78,17 @@ function createServer({ model, marks, notes, version, uiRoot, search = null, eve
         return h && (e.item == null || it) ? { handle: e.handle, label: h.surface, item: e.item, claim: it ? it.claim : null, quote: it ? it.quote : null, note: it ? it.note : null, noteId: it ? it.noteId : null, ts: e.ts } : null; })
         .filter(Boolean).reverse();
       return json(res, { items: out, marks: marks.counts() });
+    }
+    // Angles across the whole vault: every fact or group of facts that shows one shape (a word with a story, a claim of first or only, a shared day, a stated cause...).
+    // Built once on first use (a few seconds), then paged. Namesakes (7) are left out here: across the whole vault they are mostly wrongly labelled kinds.
+    if (u.pathname === '/api/angles/browse') {
+      if (!model.allPile) return json(res, { error: 'angles are not available' }, 503);
+      const ix = anglesIndex(), hs = Array.from(ix.byH.keys()).sort((a, b) => a - b), want = parseInt(q.get('h'), 10), h = ix.byH.has(want) ? want : hs[0];
+      const size = PAGE_SIZES.includes(parseInt(q.get('size'), 10)) ? parseInt(q.get('size'), 10) : PAGE_SIZES[0], rows = h == null ? [] : ix.byH.get(h), pages = Math.max(1, Math.ceil(rows.length / size));
+      const page = Math.min(Math.max(parseInt(q.get('page'), 10) || 1, 1), pages), starred = starredIds();
+      const facts = ids => ids.map(id => model.burrInfo(id)).filter(Boolean).map(f => Object.assign({}, f, { starred: starred.has(f.id) }));
+      return json(res, { h, name: h == null ? '' : ix.names.get(h), total: rows.length, page, pages, size, counts: hs.map(k => ({ h: k, name: ix.names.get(k), n: ix.byH.get(k).length })),
+        rows: rows.slice((page - 1) * size, page * size).map(r => ({ why: r.why, seed: r.seed, alsoNames: r.alsoNames || [], facts: facts(r.ids) })) });
     }
     // Angles: which quiz heuristics a pile of facts already hints at. Read-only, no model, no spend; the ids are the Collection's facts.
     if (u.pathname === '/api/angles') {

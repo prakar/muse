@@ -36,6 +36,10 @@
 .tray__angles { margin: var(--s-3) 0; padding-top: var(--s-2); border-top: 1px solid var(--line); }
 .tray__angles h3 { font-size: var(--fs-2); margin: 0 0 var(--s-1); }
 .tray__angle-list { list-style: none; padding: 0; margin: var(--s-2) 0; display: grid; gap: var(--s-2); }
+.angles { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--s-3); }
+.angle { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-2); padding: var(--s-3) var(--s-4); }
+.angle .facts { list-style: none; padding: 0; margin: var(--s-2) 0 0; display: grid; gap: var(--s-2); }
+.chip.is-on { font-weight: 600; }
 .tray__list { list-style: none; padding: 0; margin: var(--s-2) 0; display: grid; gap: var(--s-2); }
 .tray__gap { color: var(--text-3); display: flex; gap: var(--s-2); align-items: center; }
 .tray__link { flex: 1; min-width: 0; padding: var(--s-1) var(--s-2); border: 1px dashed var(--line-strong); border-radius: var(--r-1); background: var(--surface); color: var(--text); font: inherit; }
