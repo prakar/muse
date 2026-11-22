@@ -1,0 +1,502 @@
+{
+ "note": "Muse's own meaning for each heuristic label. status: draft until the author locks it. detects: found (vault-wide), pile (only when your own facts show it), half (Muse finds only the start of it), none.",
+ "rows": [
+  {
+   "id": 1,
+   "name": "Chain with pivot",
+   "definition": "Two or more facts handed on through a shared entity or word (the pivot): the second fact starts from what the first one ends on. One fact that merely states a cause is a link, not a chain.",
+   "status": "locked",
+   "detects": "pile"
+  },
+  {
+   "id": 2,
+   "name": "Ripple",
+   "definition": "One event with several downstream effects in unrelated spheres.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 3,
+   "name": "Same-moment coincidence",
+   "definition": "Two facts from unrelated fields that fall on the same calendar day. The date is the join; the question hides the date or the other event.",
+   "status": "locked",
+   "detects": "found"
+  },
+  {
+   "id": 4,
+   "name": "Parallel instances",
+   "definition": "The same role played in different places or times.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 5,
+   "name": "Clone-of",
+   "definition": "A local or later version of a foreign original: a rebadge, a remake, a copy under another name. The link is the lineage of the thing.",
+   "status": "locked",
+   "detects": "half"
+  },
+  {
+   "id": 6,
+   "name": "Echo / lineage / homage chain",
+   "definition": "Inspiration passed on across works, media or cultures in two or three hops, including through an intermediary such as a translation. Each hop is a stated imitation or descent.",
+   "status": "locked",
+   "detects": "pile"
+  },
+  {
+   "id": 7,
+   "name": "Namesake split",
+   "definition": "One person's name appearing in two unlike entities; a stage name or brand derived from a predecessor.",
+   "status": "draft",
+   "detects": "pile"
+  },
+  {
+   "id": 8,
+   "name": "Name borrowed across places or eras",
+   "definition": "A name carried from one place or time to another, usually by people who moved, and now meaning something new in the new place.",
+   "status": "locked",
+   "detects": "half"
+  },
+  {
+   "id": 9,
+   "name": "Why-here / chosen-because",
+   "definition": "The reason a place, person or moment was picked: a political, practical or accidental condition, not geography alone.",
+   "status": "locked",
+   "detects": "half"
+  },
+  {
+   "id": 10,
+   "name": "Persists-as (afterlife)",
+   "definition": "How something survives in a changed form.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 11,
+   "name": "Legend explains practice (aetiology)",
+   "definition": "A legend or story that accounts for a custom, rule or object that still exists. The answer is the story or the practice it explains.",
+   "status": "locked",
+   "detects": "half"
+  },
+  {
+   "id": 12,
+   "name": "Old text, new headline",
+   "definition": "A historical record that echoes a current news story.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 13,
+   "name": "Knowledge import",
+   "definition": "A solution studied in one place or field and applied in another. The link is the import: who looked, where, and what they took.",
+   "status": "locked",
+   "detects": "half"
+  },
+  {
+   "id": 14,
+   "name": "Constraint becomes signature",
+   "definition": "A practical limit, accident or ethical choice yields a famous trait.",
+   "status": "draft",
+   "detects": "half"
+  },
+  {
+   "id": 15,
+   "name": "Neglected discovery with a reason",
+   "definition": "A finding ignored or unrecognised because of language, medium, politics or status, and used later. The reason it was ignored is the hook.",
+   "status": "locked",
+   "detects": "half"
+  },
+  {
+   "id": 16,
+   "name": "Commemoration channels",
+   "definition": "A figure honoured through currency, mountain, park, award or logo.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 17,
+   "name": "Rehabilitation",
+   "definition": "A figure or site long ignored, now restored.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 18,
+   "name": "Trigger event",
+   "definition": "A small act igniting a large consequence.",
+   "status": "draft",
+   "detects": "half"
+  },
+  {
+   "id": 19,
+   "name": "Cause cascade",
+   "definition": "A multi-step decline or collapse.",
+   "status": "draft",
+   "detects": "half"
+  },
+  {
+   "id": 20,
+   "name": "Bio-cultural mechanism",
+   "definition": "A habit or biological property shaping politics, economy or daily rhythm.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 21,
+   "name": "Mechanism reuse",
+   "definition": "The same physical or chemical process in unrelated contexts.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 22,
+   "name": "Shape explains function",
+   "definition": "A geometry or engineering reason.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 23,
+   "name": "Design against nature",
+   "definition": "A material or form chosen as a statement about nature.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 24,
+   "name": "Human-uniqueness boundary",
+   "definition": "A behaviour once thought uniquely human, found elsewhere.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 25,
+   "name": "Institutional quirk",
+   "definition": "A surprising rule or protocol.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 26,
+   "name": "Fiction-embedded real thing",
+   "definition": "A real place or object made for a fiction; real people portrayed or thinly veiled.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 27,
+   "name": "Myth propagated by art / claim provenance",
+   "definition": "A popular belief, where it first appeared, and whether the source said it.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 28,
+   "name": "Contested or dual explanation",
+   "definition": "Both stories plus a confidence flag.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 29,
+   "name": "Anomaly in a corpus",
+   "definition": "The outlier, the unique signature.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 30,
+   "name": "Named exception in a free form",
+   "definition": "A fixed element inside a fluid structure.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 31,
+   "name": "Behind-the-scenes decision",
+   "definition": "Props, costumes, effects and production choices.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 32,
+   "name": "Counterfactual pivot",
+   "definition": "One event that could have gone otherwise.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 33,
+   "name": "Perspective shift",
+   "definition": "The story from the other party or a minor character.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 34,
+   "name": "Decision with ethics",
+   "definition": "Declining a patent, opening a design, refusing a perk.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 35,
+   "name": "Small physical detail carrying weight",
+   "definition": "The heart-bearing memorial detail.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 36,
+   "name": "Uniqueness claims",
+   "definition": "A first, only, largest or otherwise extreme within a stated class. The claim only holds with its class, so the class must be named.",
+   "status": "locked",
+   "detects": "found"
+  },
+  {
+   "id": 37,
+   "name": "Series pattern",
+   "definition": "Streak, dominance, gap or count in a table or list.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 38,
+   "name": "Material x occasion",
+   "definition": "A material tied to a particular occasion or event: what something was made of, and what it was made for.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 39,
+   "name": "Lesser-known achievement",
+   "definition": "A creditable achievement of a well-known person that few people know about.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 40,
+   "name": "Hidden kinship, shared school, shared epithet",
+   "definition": "Two people or things linked by a hidden kinship, a shared school or a shared epithet, so the link surprises.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 41,
+   "name": "Internal duality",
+   "definition": "One entity with two contrasting properties.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 42,
+   "name": "Analogy bridge",
+   "definition": "Explaining a convention through an unrelated domain's convention.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 43,
+   "name": "The incidental aside",
+   "definition": "The best seed is often a digression in a text, not its main claim.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 44,
+   "name": "Visual resemblance joke",
+   "definition": "A building, logo or object that looks like something unexpected.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 45,
+   "name": "Etymology unveil",
+   "definition": "A word whose plain-language root or origin is the point: the answer is the word, the clue is where it comes from (a loanword, a root, a brand made from a phrase).",
+   "status": "locked",
+   "detects": "found"
+  },
+  {
+   "id": 46,
+   "name": "Name as description",
+   "definition": "An animal, organ, instrument or tool named for a trait, size or shape in some language.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 47,
+   "name": "Number, colour or material inside a name",
+   "definition": "A number, a colour or a material hidden inside a name.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 48,
+   "name": "Polysemy / homonym collision",
+   "definition": "One word or name with several unrelated worlds. The question turns on a sense the solver did not expect.",
+   "status": "locked",
+   "detects": "found"
+  },
+  {
+   "id": 49,
+   "name": "Near-homophone or one-letter-off pair",
+   "definition": "Two names that sound alike or differ by one letter, so one reads as a parody or a pun on the other.",
+   "status": "draft",
+   "detects": "pile"
+  },
+  {
+   "id": 50,
+   "name": "Shared morpheme across paired names",
+   "definition": "A word part shared by two names that look unrelated, such as the same ending in two river names.",
+   "status": "draft",
+   "detects": "pile"
+  },
+  {
+   "id": 51,
+   "name": "Backronym, initials-as-name, pun-title, idiom-pun, rhyme-derived title",
+   "definition": "A title or name built from initials, a pun, an idiom or a rhyme; the expansion or the wordplay is the point.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 52,
+   "name": "Eponym and its reversal or change",
+   "definition": "A name taken from a person, where the namesake is not the original or the use has since been reversed or changed.",
+   "status": "draft",
+   "detects": "half"
+  },
+  {
+   "id": 53,
+   "name": "Term migration",
+   "definition": "A word changing domain over centuries.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 54,
+   "name": "Name from a habit or deed",
+   "definition": "A name that comes from what its bearer did or habitually does.",
+   "status": "draft",
+   "detects": "half"
+  },
+  {
+   "id": 55,
+   "name": "\"Not named for X\"",
+   "definition": "The false friend, the folk misattribution.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 56,
+   "name": "Logo or brand hiding a story",
+   "definition": "A logo or brand mark with a backstory most people do not know.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 57,
+   "name": "Renaming",
+   "definition": "After independence, a change of official language, a rebrand stunt (adding or dropping letters).",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 58,
+   "name": "Cryptic composition",
+   "definition": "Answers whose letters concatenate, interleave or hide a third word; anagrams; hidden words.",
+   "status": "draft",
+   "detects": "pile"
+  },
+  {
+   "id": 59,
+   "name": "Shared phrase across logos or entities",
+   "definition": "The same phrase used by unrelated entities, such as logos, companies or events.",
+   "status": "draft",
+   "detects": "pile"
+  },
+  {
+   "id": 60,
+   "name": "Digit, date or homophone wordplay",
+   "definition": "Digits, dates or homophones recomposed into a title or name.",
+   "status": "draft",
+   "detects": "pile"
+  },
+  {
+   "id": 61,
+   "name": "Connect",
+   "definition": "Many clues, one hidden link; the link is often a lateral set, a former role, or a polyseme.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 62,
+   "name": "Reveal-last theme",
+   "definition": "Several independently answerable items, and a final item names the hidden theme.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 63,
+   "name": "Superlative-list pair",
+   "definition": "\"what is it\" plus \"what list does it top\".",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 64,
+   "name": "Dual-path hint",
+   "definition": "A description plus a cross-domain nudge that triangulates the same answer.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 65,
+   "name": "Ladder of obscurity",
+   "definition": "Clues ordered hard to easy.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 66,
+   "name": "Split answers",
+   "definition": "Two or three sub-answers, sometimes order-sensitive.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 67,
+   "name": "Set-level spine",
+   "definition": "A whole set organised by a region, theme or occasion (a lens at set scale).",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 68,
+   "name": "Breadth sweep versus deep multi-hop",
+   "definition": "High-volume single-hop items, deep chains for written rounds, tiers for audience and spares.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 69,
+   "name": "Cryptic round format",
+   "definition": "A round whose answers are built by a cryptic rule (see Cryptic composition) instead of by a topic.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 70,
+   "name": "Scratchpad state",
+   "definition": "Several raw related facts plus \"is there a question in this?\" This is the target spark-card shape.",
+   "status": "draft",
+   "detects": "none"
+  },
+  {
+   "id": 71,
+   "name": "Media-dependent items",
+   "definition": "(image, audio, video recognition): out of scope for a text vault; the Muse can only note them.",
+   "status": "draft",
+   "detects": "none"
+  }
+ ]
+}

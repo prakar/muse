@@ -68,9 +68,11 @@ function AnglesBlock(its, redraw) {
   if (!ang.data.angles.length) return h('div', { class: 'tray__angles' }, head, h('p', { class: 'hint', text: 'Nothing in these facts points at a known shape yet. Add facts that share a date, a name or a word, or that say why something happened.' }));
   const ul = h('ul', { class: 'tray__angle-list' });
   ang.data.angles.forEach(a => ul.append(h('li', {},
-    h('strong', { text: a.name }), ' \u2014 ' + a.why, h('small', { text: ' (' + (a.ids.length === 1 ? 'fact ' : 'facts ') + a.ids.map(pos).filter(Boolean).join(', ') + ')' }),
-    a.seed ? h('div', { class: 'hint', text: 'Seed: answer \u2013 ' + a.seed.answer + '; join \u2013 ' + a.seed.join + '; hide \u2013 ' + a.seed.hide }) : null,
-    a.alsoNames && a.alsoNames.length ? h('div', { class: 'hint', text: 'Or maybe: ' + a.alsoNames.map(n => n.name).join('; ') }) : null)));
+    h('strong', { text: a.label || a.name }), ' \u2014 ' + a.why, h('small', { text: ' (' + (a.ids.length === 1 ? 'fact ' : 'facts ') + a.ids.map(pos).filter(Boolean).join(', ') + ')' }),
+    a.half ? h('div', { class: 'hint', text: 'Not a chain yet. It needs ' + a.next + '. It could become: ' + a.name + (a.alsoNames && a.alsoNames.length ? ', ' + a.alsoNames.map(n => n.name).join(', ') : '') + '.' }) : null,
+    a.strength ? h('div', { class: 'hint', text: 'Strength: ' + a.strength }) : null,
+    a.seed && !a.half ? h('div', { class: 'hint', text: 'Seed: answer \u2013 ' + a.seed.answer + '; join \u2013 ' + a.seed.join + '; hide \u2013 ' + a.seed.hide }) : null,
+    a.alsoNames && a.alsoNames.length && !a.half ? h('div', { class: 'hint', text: 'Or maybe: ' + a.alsoNames.map(n => n.name).join('; ') }) : null)));
   return h('div', { class: 'tray__angles' }, head, h('p', { class: 'hint', text: 'Shapes these facts already hint at. A pointer, not a question.' }), ul);
 }
 export function CollectButton(it, from = 'direct') {

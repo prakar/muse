@@ -143,3 +143,10 @@
 .recent__pop[hidden] { display: none; }
 .recent__pop .chip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
 .chips--tight { gap: .35rem; } .chips--tight .chip { padding-left: .5rem; padding-right: .5rem; }
+.glossary { position: fixed; top: 0; right: 0; bottom: 0; width: min(30rem, 100vw); z-index: 30; background: var(--surface-2); border-left: 1px solid var(--line); padding: var(--s-3) var(--s-4); overflow-y: auto; box-shadow: 0 0 2rem rgba(0, 0, 0, .35); }
+.glossary[hidden] { display: none; }
+.glossary__head { display: flex; justify-content: space-between; align-items: center; }
+.glossary__entry { padding: var(--s-2) 0; border-top: 1px solid var(--line); }
+.glossary__entry h3 { font-size: var(--fs-2); margin: 0 0 var(--s-1); }
+.glossary__entry.is-on { background: var(--surface-1, transparent); outline: 2px solid var(--accent, currentColor); outline-offset: 2px; }
+.linkish { background: none; border: 0; padding: 0; font: inherit; font-weight: 600; color: inherit; text-decoration: underline dotted; cursor: pointer; }

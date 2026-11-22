@@ -33,7 +33,7 @@ function createServer({ model, marks, notes, version, uiRoot, search = null, eve
     if (anglesCache) return anglesCache;
     const all = model.allPile(), noteOf = new Map(all.map(b => [b.id, b.noteId])), byH = new Map(), names = new Map();
     const days = angles.sameMoment(all).filter(r => r.ids.length <= 5 && new Set(r.ids.map(i => noteOf.get(i))).size >= 2);
-    [].concat(angles.etymology(all), angles.uniqueness(all), angles.homonyms(all), angles.relations(all), days).forEach(r => { names.set(r.h, r.name); if (!byH.has(r.h)) byH.set(r.h, []); byH.get(r.h).push(r); });
+    [].concat(angles.etymology(all), angles.uniqueness(all), angles.homonyms(all), angles.relations(all), days).forEach(r => { names.set(r.h, r.half ? 'A link starts: ' + r.name : r.name); if (!byH.has(r.h)) byH.set(r.h, []); byH.get(r.h).push(r); });
     return (anglesCache = { byH, names });
   };
   const readBody = (req, cb, max = 10000) => { let b = ''; req.on('data', d => { b += d; if (b.length > max) req.destroy(); }); req.on('end', () => { try { cb(JSON.parse(b)); } catch (e) { cb(null); } }); };
@@ -79,6 +79,13 @@ function createServer({ model, marks, notes, version, uiRoot, search = null, eve
         .filter(Boolean).reverse();
       return json(res, { items: out, marks: marks.counts() });
     }
+    // The glossary: Muse's own meaning for each heuristic label (code/data/glossary.json, in the repo) plus one example each from a local file that never leaves this machine.
+    if (u.pathname === '/api/glossary') {
+      const read = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) { return null; } };
+      const g = read(path.join(__dirname, '..', 'data', 'glossary.json')), ex = read(path.join(__dirname, '..', '..', 'backtest', 'glossary-examples.json')) || {};
+      if (!g) return json(res, { error: 'the glossary is not available' }, 503);
+      return json(res, { rows: g.rows.map(r => Object.assign({}, r, { example: ex[r.id] ? { text: ex[r.id].text, own: !!ex[r.id].own } : null })), hasExamples: !!Object.keys(ex).length });
+    }
     // Angles across the whole vault: every fact or group of facts that shows one shape (a word with a story, a claim of first or only, a shared day, a stated cause...).
     // Built once on first use (a few seconds), then paged. Namesakes (7) are left out here: across the whole vault they are mostly wrongly labelled kinds.
     if (u.pathname === '/api/angles/browse') {
@@ -88,7 +95,7 @@ function createServer({ model, marks, notes, version, uiRoot, search = null, eve
       const page = Math.min(Math.max(parseInt(q.get('page'), 10) || 1, 1), pages), starred = starredIds();
       const facts = ids => ids.map(id => model.burrInfo(id)).filter(Boolean).map(f => Object.assign({}, f, { starred: starred.has(f.id) }));
       return json(res, { h, name: h == null ? '' : ix.names.get(h), total: rows.length, page, pages, size, counts: hs.map(k => ({ h: k, name: ix.names.get(k), n: ix.byH.get(k).length })),
-        rows: rows.slice((page - 1) * size, page * size).map(r => ({ why: r.why, seed: r.seed, alsoNames: r.alsoNames || [], facts: facts(r.ids) })) });
+        rows: rows.slice((page - 1) * size, page * size).map(r => ({ h: r.h, why: r.why, label: r.label || r.name, half: !!r.half, next: r.next || '', seed: r.seed, alsoNames: r.alsoNames || [], facts: facts(r.ids) })) });
     }
     // Angles: which quiz heuristics a pile of facts already hints at. Read-only, no model, no spend; the ids are the Collection's facts.
     if (u.pathname === '/api/angles') {

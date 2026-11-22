@@ -15,7 +15,7 @@ const H = require('../data/heuristics.json');
 const NAMES = new Map((H.rows || []).map(function (r) { return [r.id, r.name]; }));
 const hooks = function (b) { return Array.isArray(b.hooks) ? b.hooks : []; };
 // seed: the small construction this shape suggests, filled from the pile (what the answer would be, what joins the facts, what to hide). Not a question.
-const row = function (h, why, ids, seed) { return { h: h, name: NAMES.get(h) || String(h), why: why, ids: Array.from(new Set(ids)), seed: seed || null }; };
+const row = function (h, why, ids, seed) { var nm = NAMES.get(h) || String(h); return { h: h, name: nm, label: nm, half: false, why: why, ids: Array.from(new Set(ids)), seed: seed || null }; };
 const key = function (s) { return W.fold(String(s)).trim(); };
 
 // 3. Two facts on the same calendar day (a birth and a founding on 14 March).
@@ -73,7 +73,34 @@ function etymology(pile) {
 function relations(pile) {
   const out = [];
   pile.forEach(function (b) {
-    R.relationsIn(b.claim).forEach(function (x) { const p = R.POINTS_AT[x.r], r = row(p.h, x.r + ' ("' + x.cue + '")', [b.id], { answer: 'one side of the link', join: x.r, hide: 'the cause, the effect or the name, whichever you choose' }); r.also = p.also; out.push(r); });
+    R.relationsIn(b.claim).forEach(function (x) { const p = R.POINTS_AT[x.r], r = row(p.h, x.r + ' ("' + x.cue + '")', [b.id], { answer: 'one side of the link', join: x.r, hide: 'the cause, the effect or the name, whichever you choose' }); r.also = p.also; r.half = true; r.label = 'A link starts here'; r.next = 'another fact about the same thing, to hand the link on'; out.push(r); });
+  });
+  return out;
+}
+
+// 1 and 6, for real. A chain needs two facts handed off through a shared entity (the pivot). Both facts state a link: strong. One states a link and the other is
+// about the same entity: weaker (the other may be the next hop). A single fact with a cue stays "a link starts here" (see relations above).
+const CHAIN_H = { cause: 1, 'named-for': 1, 'inspired-by': 6 };
+function chains(pile) {
+  const cues = new Map(), ents = new Map(), out = [], done = new Set();
+  pile.forEach(function (b) { const rs = R.relationsIn(b.claim).filter(function (x) { return CHAIN_H[x.r]; }); if (rs.length) cues.set(b.id, rs[0]); });
+  pile.forEach(function (b) {
+    const seen = new Set();
+    hooks(b).forEach(function (hk) { if (hk.type !== 'entity') return; const k = key(hk.value); if (k.length < 4 || seen.has(k)) return; seen.add(k); if (!ents.has(k)) ents.set(k, []); ents.get(k).push({ b: b, name: hk.value }); });
+  });
+  ents.forEach(function (list, k) {
+    if (list.length < 2 || list.length > 6) return;
+    list.forEach(function (a) {
+      const ra = cues.get(a.b.id); if (!ra) return;
+      list.forEach(function (o) {
+        if (o.b.id === a.b.id) return;
+        const strong = cues.has(o.b.id); if (strong && a.b.id > o.b.id) return;
+        const dk = [Math.min(a.b.id, o.b.id), Math.max(a.b.id, o.b.id), k].join('|'); if (done.has(dk)) return; done.add(dk);
+        out.push(row(CHAIN_H[ra.r], strong ? '"' + a.name + '" joins two stated links (' + ra.r + ')' : '"' + a.name + '" follows a stated link (' + ra.r + '): the other fact may be the next hop', [a.b.id, o.b.id],
+          { answer: 'the pivot, ' + a.name + ', or the end of the chain', join: ra.r + ' handed on through ' + a.name, hide: 'the pivot or the middle link' }));
+        out[out.length - 1].strength = strong ? 'both facts state a link' : 'one fact states a link';
+      });
+    });
   });
   return out;
 }
@@ -108,13 +135,15 @@ function wordplay(pile) {
   return out;
 }
 
-const DETECTORS = [sameMoment, namesakes, uniqueness, etymology, homonyms, relations, wordplay];
+const DETECTORS = [sameMoment, namesakes, uniqueness, etymology, homonyms, relations, chains, wordplay];
 
 function angles(pile) {
   pile = (pile || []).filter(function (b) { return b && b.id != null; });
   const all = [].concat.apply([], DETECTORS.map(function (d) { return d(pile); }));
+  const inChain = new Set(); all.forEach(function (r) { if (r.strength) r.ids.forEach(function (i) { inChain.add(i); }); });
+  for (let i = all.length - 1; i >= 0; i--) if (all[i].half && inChain.has(all[i].ids[0])) all.splice(i, 1);   // a link already shown inside a chain is not shown again on its own
   all.forEach(function (r) { if (r.also) r.alsoNames = r.also.map(function (h) { return { h: h, name: NAMES.get(h) || String(h) }; }); });
   return all.sort(function (a, b) { return b.ids.length - a.ids.length || a.h - b.h; });
 }
 
-module.exports = { angles, DETECTORS, sameMoment, namesakes, uniqueness, etymology, homonyms, relations, wordplay };
+module.exports = { angles, DETECTORS, sameMoment, namesakes, uniqueness, etymology, homonyms, relations, chains, wordplay };

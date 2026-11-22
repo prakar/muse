@@ -80,3 +80,15 @@ test('GET /api/angles/browse groups findings by shape, pages them and keeps same
     assert.strictEqual((await get('/api/angles/browse?h=999')).h, 3);
   } finally { srv.close(); }
 });
+
+test('a single cue fact is only "a link starts here"; two linked facts sharing an entity are a chain', () => {
+  const e = (id, claim, name) => b(id, claim, 'fact', [{ type: 'entity', value: name, cat: 'event' }]);
+  const one = angles([e(1, 'Madame X caused a scandal in Paris.', 'Madame X')]);
+  assert.deepStrictEqual(one.map((x) => [x.h, x.half, x.label]), [[1, true, 'A link starts here']]);
+  const loose = angles([e(1, 'Madame X caused a scandal in Paris.', 'Madame X'), e(2, 'Sargent left Paris for London.', 'Madame X')]);
+  const c = loose.filter((x) => x.strength); assert.strictEqual(c.length, 1); assert.strictEqual(c[0].half, false); assert.strictEqual(c[0].strength, 'one fact states a link'); assert.deepStrictEqual(c[0].ids, [1, 2]);
+  assert.ok(!loose.some((x) => x.half), 'the link inside a chain is not repeated');
+  const strong = angles([e(1, 'The cake was named after a marriage.', 'Battenberg cake'), e(2, 'The markings are so-called because of the cake.', 'Battenberg cake')]);
+  assert.deepStrictEqual(strong.filter((x) => x.strength).map((x) => x.strength), ['both facts state a link']);
+  assert.deepStrictEqual(angles([e(1, 'Madame X caused a scandal.', 'Madame X'), e(2, 'Unrelated fact.', 'Somebody else')]).filter((x) => x.strength), []);
+});
