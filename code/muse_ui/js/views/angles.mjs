@@ -19,19 +19,19 @@ export async function anglesView({ route, api, nav }) {
     h('p', { text: 'Start from a shape instead of a pile. Each card is one place in your notes where a quiz shape shows up; Collect the facts you like and the Collection will keep them together.' }));
   if (!r.counts.length) return { node: h('div', {}, head, h('p', { class: 'empty', text: 'No shapes found in the vault yet.' })), title: 'Angles' };
   const chips = h('div', { class: 'chips', role: 'group', 'aria-label': 'Shapes' }, r.counts.map(c =>
-    h('a', { class: 'chip' + (c.h === r.h ? ' is-on' : ''), href: anglesHref(c.h), 'aria-current': c.h === r.h ? 'true' : null, title: c.n + ' findings', text: c.h + ' ' + c.name + ' · ' + Number(c.n).toLocaleString('en-US') })));
+    h('a', { class: 'chip' + (c.h === r.h ? ' is-on' : ''), href: anglesHref(c.h), 'aria-current': c.h === r.h ? 'true' : null, title: c.n + ' findings', text: c.name + ' · ' + Number(c.n).toLocaleString('en-US') })));
   const offset = (r.page - 1) * r.size;
   const factNode = (f, from) => h('li', { class: 'fact', 'data-burr': f.id },
     h('div', { class: 'fact__top' }, NoteLink({ text: f.note || '', noteId: f.noteId, at: f.id })),
     ClaimLink({ text: f.claim, noteId: f.noteId, at: f.id }),
     h('div', { class: 'fact__actions' }, StarButton({ id: f.id, note: f.note, starred: f.starred }, from), CollectButton({ id: f.id, noteId: f.noteId, note: f.note, claim: f.claim }, from), FocusButton({ id: f.id, from })));
   const card = (row, n) => h('li', { class: 'angle' },
-    h('div', { class: 'fact__top' }, h('span', { class: 'fact__n', text: String(offset + n + 1) }), h('strong', { text: r.h + ' ' + r.name }), ' — ' + row.why),
+    h('div', { class: 'fact__top' }, h('span', { class: 'fact__n', text: String(offset + n + 1) }), h('strong', { text: r.name }), ' — ' + row.why),
     row.seed ? h('p', { class: 'hint', text: seedLine(row.seed) }) : null,
-    row.alsoNames.length ? h('p', { class: 'hint', text: 'Or maybe: ' + row.alsoNames.map(x => x.h + ' ' + x.name).join('; ') }) : null,
+    row.alsoNames.length ? h('p', { class: 'hint', text: 'Or maybe: ' + row.alsoNames.map(x => x.name).join('; ') }) : null,
     h('ul', { class: 'facts' }, row.facts.map(f => factNode(f, 'angles'))));
   const pager = label => r.pages > 1 ? Pager({ label, page: r.page, pages: r.pages, total: r.total, size: r.size, hrefFor: p => anglesHref(r.h, p, r.size), onSize: s => nav.go(anglesHref(r.h, 1, s)), onGo: p => nav.go(anglesHref(r.h, p, r.size)) }) : null;
-  const node = h('div', {}, head, chips, h('p', { class: 'hint', text: 'Namesakes (7) are not listed here: across the whole vault most are mislabelled kinds. They still show in the Collection when your own facts make one.' }),
+  const node = h('div', {}, head, chips, h('p', { class: 'hint', text: 'Namesake split is not listed here: across the whole vault most are mislabelled kinds. They still show in the Collection when your own facts make one.' }),
     pager('Pagination'), FocusHint(), ResultsPanel({ count: Number(r.total).toLocaleString('en-US') + ' findings' }, h('ol', { class: 'angles' }, r.rows.map(card))), pager('Pagination (bottom)'));
   return { node, title: 'Angles: ' + r.name };
 }
