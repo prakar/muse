@@ -31,10 +31,10 @@ function createServer({ model, marks, notes, version, uiRoot, search = null, eve
   let anglesCache = null;
   const anglesIndex = () => {
     if (anglesCache) return anglesCache;
-    const all = model.allPile(), noteOf = new Map(all.map(b => [b.id, b.noteId])), byH = new Map(), names = new Map();
+    const half = new Set(), all = model.allPile(), noteOf = new Map(all.map(b => [b.id, b.noteId])), byH = new Map(), names = new Map();
     const days = angles.sameMoment(all).filter(r => r.ids.length <= 5 && new Set(r.ids.map(i => noteOf.get(i))).size >= 2);
-    [].concat(angles.etymology(all), angles.uniqueness(all), angles.homonyms(all), angles.relations(all), days).forEach(r => { names.set(r.h, r.half ? 'A link starts: ' + r.name : r.name); if (!byH.has(r.h)) byH.set(r.h, []); byH.get(r.h).push(r); });
-    return (anglesCache = { byH, names });
+    [].concat(angles.etymology(all), angles.uniqueness(all), angles.homonyms(all), angles.relations(all), angles.cueShapes(all), days).forEach(r => { names.set(r.h, r.name); if (r.half) half.add(r.h); if (!byH.has(r.h)) byH.set(r.h, []); byH.get(r.h).push(r); });
+    return (anglesCache = { byH, names, half });
   };
   const readBody = (req, cb, max = 10000) => { let b = ''; req.on('data', d => { b += d; if (b.length > max) req.destroy(); }); req.on('end', () => { try { cb(JSON.parse(b)); } catch (e) { cb(null); } }); };
 
@@ -94,8 +94,9 @@ function createServer({ model, marks, notes, version, uiRoot, search = null, eve
       const size = PAGE_SIZES.includes(parseInt(q.get('size'), 10)) ? parseInt(q.get('size'), 10) : PAGE_SIZES[0], rows = h == null ? [] : ix.byH.get(h), pages = Math.max(1, Math.ceil(rows.length / size));
       const page = Math.min(Math.max(parseInt(q.get('page'), 10) || 1, 1), pages), starred = starredIds();
       const facts = ids => ids.map(id => model.burrInfo(id)).filter(Boolean).map(f => Object.assign({}, f, { starred: starred.has(f.id) }));
-      return json(res, { h, name: h == null ? '' : ix.names.get(h), total: rows.length, page, pages, size, counts: hs.map(k => ({ h: k, name: ix.names.get(k), n: ix.byH.get(k).length })),
-        rows: rows.slice((page - 1) * size, page * size).map(r => ({ h: r.h, why: r.why, label: r.label || r.name, half: !!r.half, next: r.next || '', seed: r.seed, alsoNames: r.alsoNames || [], facts: facts(r.ids) })) });
+      const first = rows[0], intro = first && first.half ? angles.shapeHowTo(first.rel, ix.names.get(h)) : '', seed = first && first.seed && !first.half ? { join: first.seed.join, hide: first.seed.hide } : null;
+      return json(res, { h, name: h == null ? '' : ix.names.get(h), intro, seed, total: rows.length, page, pages, size, counts: hs.map(k => ({ h: k, name: ix.names.get(k), n: ix.byH.get(k).length, half: ix.half.has(k) })),
+        rows: rows.slice((page - 1) * size, page * size).map(r => ({ h: r.h, why: r.why, label: r.label || r.name, half: !!r.half, howTo: r.howTo || '', seed: r.seed, alsoNames: r.alsoNames || [], facts: facts(r.ids) })) });
     }
     // Angles: which quiz heuristics a pile of facts already hints at. Read-only, no model, no spend; the ids are the Collection's facts.
     if (u.pathname === '/api/angles') {

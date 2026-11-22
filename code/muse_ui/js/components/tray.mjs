@@ -69,7 +69,7 @@ function AnglesBlock(its, redraw) {
   const ul = h('ul', { class: 'tray__angle-list' });
   ang.data.angles.forEach(a => ul.append(h('li', {},
     h('strong', { text: a.label || a.name }), ' \u2014 ' + a.why, h('small', { text: ' (' + (a.ids.length === 1 ? 'fact ' : 'facts ') + a.ids.map(pos).filter(Boolean).join(', ') + ')' }),
-    a.half ? h('div', { class: 'hint', text: 'Not a chain yet. It needs ' + a.next + '. It could become: ' + a.name + (a.alsoNames && a.alsoNames.length ? ', ' + a.alsoNames.map(n => n.name).join(', ') : '') + '.' }) : null,
+    a.half ? h('details', { class: 'hint' }, h('summary', { text: 'How to build this into ' + a.name }), h('p', { text: a.howTo })) : null,
     a.strength ? h('div', { class: 'hint', text: 'Strength: ' + a.strength }) : null,
     a.seed && !a.half ? h('div', { class: 'hint', text: 'Seed: answer \u2013 ' + a.seed.answer + '; join \u2013 ' + a.seed.join + '; hide \u2013 ' + a.seed.hide }) : null,
     a.alsoNames && a.alsoNames.length && !a.half ? h('div', { class: 'hint', text: 'Or maybe: ' + a.alsoNames.map(n => n.name).join('; ') }) : null)));

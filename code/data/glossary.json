@@ -188,7 +188,7 @@
    "name": "Myth propagated by art / claim provenance",
    "definition": "A popular belief, where it first appeared, and whether the source said it.",
    "status": "draft",
-   "detects": "none"
+   "detects": "found"
   },
   {
    "id": 28,
@@ -384,7 +384,7 @@
    "name": "\"Not named for X\"",
    "definition": "The false friend, the folk misattribution.",
    "status": "draft",
-   "detects": "none"
+   "detects": "found"
   },
   {
    "id": 56,
@@ -398,7 +398,7 @@
    "name": "Renaming",
    "definition": "After independence, a change of official language, a rebrand stunt (adding or dropping letters).",
    "status": "draft",
-   "detects": "none"
+   "detects": "found"
   },
   {
    "id": 58,
@@ -440,7 +440,7 @@
    "name": "Superlative-list pair",
    "definition": "\"what is it\" plus \"what list does it top\".",
    "status": "draft",
-   "detects": "none"
+   "detects": "found"
   },
   {
    "id": 64,

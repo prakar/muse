@@ -66,7 +66,7 @@ test('GET /api/angles/browse groups findings by shape, pages them and keeps same
   const http = require('node:http'), os = require('node:os'), path = require('node:path'), fs = require('node:fs');
   const { createServer } = require('../code/lib/muse_server'), K = require('../code/lib/marks');
   const all = [{ ...b(1, 'Born on 14 March 1879.'), noteId: 10 }, { ...b(2, 'Founded on 14 March 1903.'), noteId: 11 }, { ...b(3, 'Both on 2 May 1900.'), noteId: 12 }, { ...b(4, 'Also 2 May 1901.'), noteId: 12 },
-    { ...b(5, 'x', 'etymology', [{ type: 'etymon', value: 'Gargantuan' }]), noteId: 13 }];
+    { ...b(5, 'x', 'etymology', [{ type: 'etymon', value: 'Gargantuan' }]), noteId: 13 }, { ...b(6, 'The dam failed because of the flood.'), noteId: 14 }];
   const info = (id) => { const f = all.find((x) => x.id === id); return f ? { id, noteId: f.noteId, note: 'N' + f.noteId, claim: f.claim, quote: null, hooks: [] } : null; };
   const stub = { allPile: () => all, pile: () => [], burrInfo: info, stickRandom: () => null, burrs: [], sparks: [], wordplay: [], notes: 0 };
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ab-')), marks = K.open(path.join(dir, 'm.jsonl'), 't');
@@ -74,21 +74,34 @@ test('GET /api/angles/browse groups findings by shape, pages them and keeps same
   await new Promise((r) => srv.listen(0, '127.0.0.1', r)); const port = srv.address().port;
   const get = (p) => new Promise((res) => http.get({ host: '127.0.0.1', port, path: p, headers: { Host: 'localhost:' + port } }, (r) => { let x = ''; r.on('data', (d) => x += d); r.on('end', () => res(JSON.parse(x))); }));
   try {
-    const d = await get('/api/angles/browse?h=3'); assert.deepStrictEqual(d.counts.map((c) => [c.h, c.n]), [[3, 1], [45, 1]]);
+    const d = await get('/api/angles/browse?h=3'); assert.deepStrictEqual(d.counts.map((c) => [c.h, c.n, c.half]), [[1, 1, true], [3, 1, false], [45, 1, false]]);
     assert.deepStrictEqual(d.rows.map((r) => r.facts.map((f) => f.id)), [[1, 2]]); assert.strictEqual(d.rows[0].seed.hide, 'the date');
+    assert.deepStrictEqual(d.seed, { join: 'the same calendar day', hide: 'the date' }); assert.strictEqual(d.intro, '');
     const e = await get('/api/angles/browse?h=45&size=24'); assert.strictEqual(e.name, 'Etymology unveil'); assert.strictEqual(e.size, 24);
-    assert.strictEqual((await get('/api/angles/browse?h=999')).h, 3);
+    assert.strictEqual((await get('/api/angles/browse?h=999')).h, 1);
+    const c = await get('/api/angles/browse?h=1'); assert.ok(/^Each card is one fact that states a link/.test(c.intro) && /pivot/.test(c.intro)); assert.strictEqual(c.seed, null); assert.strictEqual(c.rows[0].label, 'A stated cause');
   } finally { srv.close(); }
 });
 
 test('a single cue fact is only "a link starts here"; two linked facts sharing an entity are a chain', () => {
   const e = (id, claim, name) => b(id, claim, 'fact', [{ type: 'entity', value: name, cat: 'event' }]);
   const one = angles([e(1, 'Madame X caused a scandal in Paris.', 'Madame X')]);
-  assert.deepStrictEqual(one.map((x) => [x.h, x.half, x.label]), [[1, true, 'A link starts here']]);
+  assert.deepStrictEqual(one.map((x) => [x.h, x.half, x.label]), [[1, true, 'A stated cause']]);
+  assert.ok(/find a second fact about Madame X that picks up from the effect/.test(one[0].howTo) && /Collect both/.test(one[0].howTo), one[0].howTo);
   const loose = angles([e(1, 'Madame X caused a scandal in Paris.', 'Madame X'), e(2, 'Sargent left Paris for London.', 'Madame X')]);
   const c = loose.filter((x) => x.strength); assert.strictEqual(c.length, 1); assert.strictEqual(c[0].half, false); assert.strictEqual(c[0].strength, 'one fact states a link'); assert.deepStrictEqual(c[0].ids, [1, 2]);
   assert.ok(!loose.some((x) => x.half), 'the link inside a chain is not repeated');
   const strong = angles([e(1, 'The cake was named after a marriage.', 'Battenberg cake'), e(2, 'The markings are so-called because of the cake.', 'Battenberg cake')]);
   assert.deepStrictEqual(strong.filter((x) => x.strength).map((x) => x.strength), ['both facts state a link']);
   assert.deepStrictEqual(angles([e(1, 'Madame X caused a scandal.', 'Madame X'), e(2, 'Unrelated fact.', 'Somebody else')]).filter((x) => x.strength), []);
+});
+
+test('cue-word shapes: renaming, folk etymology, myth, superlative with scope', () => {
+  const hs2 = (c) => angles([b(1, c)]).map((x) => x.h);
+  assert.deepStrictEqual(hs2('Florence Knoll Bassett was formerly known as Florence Schust.'), [57]);
+  assert.deepStrictEqual(hs2('A folk etymology links the phrase to tobacco.'), [55]);
+  assert.deepStrictEqual(hs2('The idea that whales were saved by oil is a myth.'), [27]);
+  assert.deepStrictEqual(hs2('Cox’s Bazar has the longest sea beach in the world.'), [63]);
+  assert.deepStrictEqual(hs2('He renamed nothing important here, and the tallest tree stands alone.'), [57]);
+  assert.deepStrictEqual(hs2('Plain fact about a river.'), []);
 });

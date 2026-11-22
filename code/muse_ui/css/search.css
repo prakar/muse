@@ -141,6 +141,7 @@
 .recent__more { position: relative; display: inline-flex; }
 .recent__pop { position: absolute; z-index: 20; top: 100%; right: 0; left: auto; width: max-content; margin-top: var(--s-2); display: grid; gap: var(--s-2); padding: var(--s-3); max-width: min(46rem, 90vw); background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-3, 12px); box-shadow: 0 8px 24px rgba(0, 0, 0, .45); }
 .recent__pop[hidden] { display: none; }
+.recent__pop.is-left { left: 0; right: auto; }
 .recent__pop .chip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
 .chips--tight { gap: .35rem; } .chips--tight .chip { padding-left: .5rem; padding-right: .5rem; }
 .glossary { position: fixed; top: 0; right: 0; bottom: 0; width: min(30rem, 100vw); z-index: 30; background: var(--surface-2); border-left: 1px solid var(--line); padding: var(--s-3) var(--s-4); overflow-y: auto; box-shadow: 0 0 2rem rgba(0, 0, 0, .35); }

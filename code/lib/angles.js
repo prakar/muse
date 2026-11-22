@@ -69,17 +69,35 @@ function etymology(pile) {
   return out;
 }
 
+// What a fact with a cue states, and what to look for next to build it into the shape (filled with the fact's own entity names).
+const CHAIN_REL = { cause: 1, 'named-for': 1, 'inspired-by': 1 };
+const STATES = { cause: 'A stated cause', 'named-for': 'A stated naming', 'inspired-by': 'A stated inspiration', 'explains-practice': 'A stated explanation of a practice', 'copy-of': 'A stated copy',
+  'applied-elsewhere': 'A stated borrowing', 'reason-chosen': 'A stated reason for a choice', 'ignored-because': 'A stated reason for neglect' };
+const NEXT = { cause: 'picks up from the effect, such as what happened next or what else it led to', 'named-for': 'is about the person or thing it was named for, or about something else with the same name',
+  'inspired-by': 'is about what it inspired, or about what inspired it', 'explains-practice': 'is about the custom or rule the story accounts for', 'copy-of': 'is about the original, or about another copy',
+  'applied-elsewhere': 'is about where the solution came from, or where else it was used', 'reason-chosen': 'is about the choice itself: who made it, and what else was considered',
+  'ignored-because': 'is about how the finding was used later' };
+function howTo(x, shape, b) {
+  const seen = new Set(), ents = hooks(b).filter(function (hk) { if (hk.type !== 'entity') return false; const k = key(hk.value); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 2).map(function (hk) { return hk.value; });
+  const about = ents.length ? ents.join(' or ') : 'the subject of this fact';
+  return 'This fact states a link (\u201c' + x.cue + '\u201d). To build it into ' + shape + ': find a second fact about ' + about + ' that ' + NEXT[x.r] + '. ' + tail(x.r);
+}
+const tail = function (rel) { return CHAIN_REL[rel] ? 'Collect both, and the Collection will name the shared pivot.' : 'Collect both to keep them together.'; };
+// The same advice once for a whole page of such facts (no entity names).
+function shapeHowTo(rel, shape) {
+  return 'Each card is one fact that states a link (the quoted word). To build one into ' + shape + ': find a second fact about the same subject that ' + (NEXT[rel] || 'continues the story') + '. ' + tail(rel);
+}
 // 1, 5, 6, 8, 9, 11, 13, 15 and neighbours. A fact that states its own relation (because, named after, inspired by...): the join the question would be built on.
 function relations(pile) {
   const out = [];
   pile.forEach(function (b) {
-    R.relationsIn(b.claim).forEach(function (x) { const p = R.POINTS_AT[x.r], r = row(p.h, x.r + ' ("' + x.cue + '")', [b.id], { answer: 'one side of the link', join: x.r, hide: 'the cause, the effect or the name, whichever you choose' }); r.also = p.also; r.half = true; r.label = 'A link starts here'; r.next = 'another fact about the same thing, to hand the link on'; out.push(r); });
+    R.relationsIn(b.claim).forEach(function (x) { const p = R.POINTS_AT[x.r], r = row(p.h, '\u201c' + x.cue + '\u201d', [b.id], { answer: 'one side of the link', join: x.r, hide: 'the cause, the effect or the name, whichever you choose' }); r.also = p.also; r.half = true; r.label = STATES[x.r]; r.rel = x.r; r.howTo = howTo(x, r.name, b); out.push(r); });
   });
   return out;
 }
 
 // 1 and 6, for real. A chain needs two facts handed off through a shared entity (the pivot). Both facts state a link: strong. One states a link and the other is
-// about the same entity: weaker (the other may be the next hop). A single fact with a cue stays "a link starts here" (see relations above).
+// about the same entity: weaker (the other may be the next hop). A single fact with a cue is only a stated link, not a chain (see relations above).
 const CHAIN_H = { cause: 1, 'named-for': 1, 'inspired-by': 6 };
 function chains(pile) {
   const cues = new Map(), ents = new Map(), out = [], done = new Set();
@@ -102,6 +120,19 @@ function chains(pile) {
       });
     });
   });
+  return out;
+}
+
+// 57, 55, 27, 63. Shapes a single sentence can state in plain words: a renaming, a debunked name or myth, a superlative with its list. Cue words only, as with relations.
+const SUPER = 'longest|tallest|largest|highest|oldest|smallest|deepest|fastest|biggest|richest|heaviest|lightest|coldest|hottest|driest|wettest';
+const CUE_SHAPES = [
+  { h: 57, re: /\b(renamed|formerly (?:known|called)|changed (?:its|his|her|their) name|rebranded|name was changed|used to be called|was later (?:called|renamed))\b/i, seed: { answer: 'the old name or the new one', join: 'one thing with two names', hide: 'the old name' } },
+  { h: 55, re: /\b(folk etymology|not named (?:after|for)|is not named)\b/i, seed: { answer: 'the real origin of the name', join: 'the expected source and the true one', hide: 'the true source' } },
+  { h: 27, re: /\b(is a myth|popular myth|myth that|misattributed|contrary to popular (?:belief|opinion))\b/i, seed: { answer: 'what is actually true', join: 'a popular belief and the fact behind it', hide: 'the true answer' } },
+  { h: 63, re: new RegExp('\\b(?:' + SUPER + ')\\b.{0,60}\\b(?:in the world|in (?:india|asia|europe|africa|america)|on earth|of all time)\\b', 'i'), seed: { answer: 'the item that tops the list', join: 'a superlative and the list it tops', hide: 'the item, or the list' } }];
+function cueShapes(pile) {
+  const out = [];
+  pile.forEach(function (b) { const s = String(b.claim || ''); CUE_SHAPES.forEach(function (c) { const m = c.re.exec(s); if (m) out.push(row(c.h, '\u201c' + m[0] + '\u201d', [b.id], c.seed)); }); });
   return out;
 }
 
@@ -135,7 +166,7 @@ function wordplay(pile) {
   return out;
 }
 
-const DETECTORS = [sameMoment, namesakes, uniqueness, etymology, homonyms, relations, chains, wordplay];
+const DETECTORS = [sameMoment, namesakes, uniqueness, etymology, homonyms, relations, chains, cueShapes, wordplay];
 
 function angles(pile) {
   pile = (pile || []).filter(function (b) { return b && b.id != null; });
@@ -146,4 +177,4 @@ function angles(pile) {
   return all.sort(function (a, b) { return b.ids.length - a.ids.length || a.h - b.h; });
 }
 
-module.exports = { angles, DETECTORS, sameMoment, namesakes, uniqueness, etymology, homonyms, relations, chains, wordplay };
+module.exports = { shapeHowTo, angles, DETECTORS, sameMoment, namesakes, uniqueness, etymology, homonyms, relations, chains, cueShapes, wordplay };
