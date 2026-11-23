@@ -17,6 +17,7 @@ import { stickView, stickHref } from './views/stick.mjs';
 import { adminView } from './views/admin.mjs';
 import { helpView } from './views/help.mjs';
 import { dipakaView } from './views/dipaka.mjs';
+import { illuminationsView } from './views/illuminations.mjs';
 import { searchView, searchHref } from './views/search.mjs';
 import { getPref } from './prefs.mjs';
 import { setPackInfo, hasLenses } from './pack_info.mjs';
@@ -26,7 +27,7 @@ import { PileDrawer } from './components/pile.mjs';
 import { installKeys } from './keys.mjs';
 import { labelSections, createAnnouncer, SkipLink } from './a11y.mjs';
 
-const VIEWS = { home: homeView, set: setView, basket: basketView, search: searchView, stick: stickView, admin: adminView, help: helpView, dipaka: dipakaView, angles: anglesView };
+const VIEWS = { home: homeView, set: setView, basket: basketView, search: searchView, stick: stickView, admin: adminView, help: helpView, dipaka: dipakaView, illuminations: illuminationsView, angles: anglesView };
 const store = createStore({ meta: null, marks: { use: 0, dull: 0, 'wrong-sense': 0 } });
 const announcer = createAnnouncer();
 let route = null, seq = 0, screenCtx = {}, keys = null;

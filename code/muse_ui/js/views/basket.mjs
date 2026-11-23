@@ -4,6 +4,7 @@ import { Button } from '../components/button.mjs';
 import { Fact } from '../components/fact.mjs';
 import { toast } from '../components/toast.mjs';
 import { W } from '../words.mjs';
+import { SavedTabs } from './illuminations.mjs';
 
 // Everything you starred: single facts (with their notes one click away) and whole sets. A place to browse for what to write next.
 export async function basketView({ api, nav, actions }) {
@@ -20,7 +21,7 @@ export async function basketView({ api, nav, actions }) {
   };
   const text = () => facts.map((k, i) => `${i + 1}. ${k.claim}  [${k.note}]`).join('\n');
   const node = h('div', {},
-    h('div', { class: 'page-head' }, h('h1', { text: W.starred }), h('p', { text: 'What you starred: browse it for ideas, open the whole note behind any fact, or copy the lot.' })),
+    h('div', { class: 'page-head' }, SavedTabs('basket'), h('h1', { text: W.starred }), h('p', { text: 'What you starred: browse it for ideas, open the whole note behind any fact, or copy the lot.' })),
     items.length ? null : h('p', { class: 'empty', text: 'Nothing starred yet. Press ' + W.star + ' on a fact or a pair.' }),
     facts.length ? h('section', { class: 'section' }, h('h2', {}, 'Facts', h('small', { text: String(facts.length) })),
       h('div', { class: 'toolbar' }, Button({ label: 'Copy all as text', ic: 'copy', onClick: async () => { try { await navigator.clipboard.writeText(text()); toast({ text: `Copied ${facts.length} facts.` }); } catch (e) { toast({ text: 'The browser blocked copying.' }); } } })),

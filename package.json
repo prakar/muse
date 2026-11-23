@@ -29,5 +29,12 @@
     "llm-model-resolver": "^1.5.2",
     "pluralize": "^8.0.0",
     "yaml": "^2.9.1"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/prakar/quarry.git"
   }
 }

@@ -111,6 +111,7 @@ function loadPack(name, root) {
     Vocab.validate(vocabulary, file);
   }
   if ((p.capabilities || []).includes('wordplay')) vocabulary = Vocab.withCapability('wordplay', vocabulary);
+  if (p.lenses != null) vocabulary = Vocab.withCapability('lenses', vocabulary);   // any pack with shapes gets the neutral Angles screens; its own words win
   let dipaka = null;
   if (p.dipaka != null) {
     if (!isStr(p.dipaka)) throw new PackError(file + ': dipaka must be a project-relative file path');

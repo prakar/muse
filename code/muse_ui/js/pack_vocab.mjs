@@ -3,23 +3,6 @@ export default {
   "purpose": "so you can write quiz questions of your own. It never writes a question for you.",
   "recipes": [
     {
-      "key": "wordplay",
-      "title": "I want a pun or a trick of spelling to build a question on",
-      "goal": "Find pairs of names and words that echo each other by sound or by letters, for puns, anagrams and hidden-word questions.",
-      "start": {
-        "t": "{home}, Wordplay",
-        "href": "#/"
-      },
-      "steps": [
-        "In the Wordplay block on {home}, pick a trick: Sound-alikes, One letter apart, Letter dropped, Anagram pairs, Anagram of a word, Hidden word, Backwards or Digit look-alike. All wordplay shows every kind together.",
-        "Each tile is one pair, such as a name and the everyday word it sounds like. Open one to see the facts about it.",
-        "On the set page press {star} this pair to save it to {starred}, or Dull if the pair is only chance.",
-        "To build on it, press {focus} on one of its facts, then {collect} the facts that fit the trick (see the recipe on writing the link line)."
-      ],
-      "then": "Pairs come from a detector that guesses, so expect some chance matches; Dull and Wrong sense teach nothing to the detector but keep them out of your way.",
-      "after": "handle"
-    },
-    {
       "key": "angles",
       "after": "link",
       "title": "I want to start from a quiz shape, not a pile",
@@ -38,6 +21,23 @@ export default {
       "then": "A card is a pointer, not a question. Some are wrong: a word with a story can be a dull plural, and a “because” can be trivial. Skip those."
     },
     {
+      "key": "wordplay",
+      "title": "I want a pun or a trick of spelling to build a question on",
+      "goal": "Find pairs of names and words that echo each other by sound or by letters, for puns, anagrams and hidden-word questions.",
+      "start": {
+        "t": "{home}, Wordplay",
+        "href": "#/"
+      },
+      "steps": [
+        "In the Wordplay block on {home}, pick a trick: Sound-alikes, One letter apart, Letter dropped, Anagram pairs, Anagram of a word, Hidden word, Backwards or Digit look-alike. All wordplay shows every kind together.",
+        "Each tile is one pair, such as a name and the everyday word it sounds like. Open one to see the facts about it.",
+        "On the set page press {star} this pair to save it to {starred}, or Dull if the pair is only chance.",
+        "To build on it, press {focus} on one of its facts, then {collect} the facts that fit the trick (see the recipe on writing the link line)."
+      ],
+      "then": "Pairs come from a detector that guesses, so expect some chance matches; Dull and Wrong sense teach nothing to the detector but keep them out of your way.",
+      "after": "handle"
+    },
+    {
       "key": "test",
       "goal": "Practise the quiz setter’s view: facts first, link hidden."
     },
@@ -54,28 +54,6 @@ export default {
     }
   ],
   "features": [
-    {
-      "key": "home",
-      "blurb": "Two blocks that stay put: Facts (narrow by how well connected and what connects; All shelves and All kinds zoom back out) and Results (shuffled by default, or ordered by a lens, with Starred only) and Wordplay (pairs of names by trick). The results below follow the one you touched last.",
-      "buttons+": [
-        "Sound-alikes",
-        "One letter apart",
-        "Letter dropped",
-        "Digit look-alike",
-        "Backwards",
-        "Hidden word",
-        "Anagram pairs",
-        "Anagram of a word",
-        "All wordplay"
-      ],
-      "recipes": [
-        "know",
-        "vein",
-        "lone",
-        "wordplay",
-        "handle"
-      ]
-    },
     {
       "key": "angles",
       "title": "Angles",
@@ -105,6 +83,28 @@ export default {
         "/api/tray",
         "/api/event",
         "/api/angles"
+      ]
+    },
+    {
+      "key": "home",
+      "blurb": "Two blocks that stay put: Facts (narrow by how well connected and what connects; All shelves and All kinds zoom back out) and Results (shuffled by default, or ordered by a lens, with Starred only) and Wordplay (pairs of names by trick). The results below follow the one you touched last.",
+      "buttons+": [
+        "Sound-alikes",
+        "One letter apart",
+        "Letter dropped",
+        "Digit look-alike",
+        "Backwards",
+        "Hidden word",
+        "Anagram pairs",
+        "Anagram of a word",
+        "All wordplay"
+      ],
+      "recipes": [
+        "know",
+        "vein",
+        "lone",
+        "wordplay",
+        "handle"
       ]
     }
   ],

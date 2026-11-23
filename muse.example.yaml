@@ -4,3 +4,13 @@
 # pack: the folder under packs/ that gives Muse its character: how facts are extracted,
 #       which links count, what the screens say. Try: quiz
 pack: quiz
+#
+# host: where Muse listens. Default: this machine only (127.0.0.1). Use 0.0.0.0 to reach it from other
+#       machines on your network (reading is then open to them; Admin needs a login: node code/muse_set_password.js).
+#       MUSE_HOST, if set, wins.
+# host: 127.0.0.1
+#
+# notes_dir: the folder holding this profile's source notes, used by the Admin "Heuristic registry"
+#       task and `npm run heuristics`. The quiz profile reads its two heuristic notes from here.
+#       QUARRY_VAULT_NOTES, if set, wins. Example: ~/md-vaults/tech-journalling/worklog/2026
+# notes_dir: ~/path/to/your/notes

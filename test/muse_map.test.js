@@ -55,3 +55,13 @@ test('one vocabulary: no old action name survives on screen or in Help, Help tok
   });
   assert.strictEqual(require('../code/lib/muse_server').MODES, undefined, 'the sidebar modes are gone');
 });
+
+test('the Muse map matches the code for every profile installed, not only the default', async () => {
+  const fs = require('fs'), packs = path.join(__dirname, '..', 'packs');
+  const names = fs.readdirSync(packs).filter(n => fs.existsSync(path.join(packs, n, 'pack.json')));
+  assert.ok(names.includes('quiz') && names.includes('general'));
+  for (const n of names) {
+    const { problems } = await check({ pack: n });
+    assert.deepStrictEqual(problems.map(p => `${p.kind}: ${p.msg}`), [], `profile "${n}" has drift`);
+  }
+});

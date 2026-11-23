@@ -1,0 +1,37 @@
+{
+  "_comment": "What the lenses capability adds to the screens for any pack that has a lenses seam (shapes found across notes). Neutral words; a pack patches any of these by key, and its own wording wins field by field.",
+  "features": [
+    {
+      "key": "angles",
+      "title": "Angles",
+      "route": "angles",
+      "blurb": "Start from a shape instead of a pile: each place in your notes where a pattern shows up, with the facts that make it ready to Collect.",
+      "api": ["/api/angles/browse", "/api/glossary"],
+      "buttons": ["Angles", "Glossary"],
+      "data": ["events"],
+      "recipes": ["angles"],
+      "after": "admin"
+    },
+    {
+      "key": "collection",
+      "blurb": "The working pile of facts, with a line between neighbours for how they link, and an Angles list of the shapes the pile already hints at. The button at the top opens it over any page; Collect is on every fact.",
+      "api": ["/api/tray", "/api/event", "/api/angles"]
+    }
+  ],
+  "recipes": [
+    {
+      "key": "angles",
+      "after": "link",
+      "title": "I want to start from a shape, not a pile",
+      "goal": "Browse every place in your notes where a shape shows up, and collect the ones that spark something.",
+      "start": { "t": "Angles", "href": "#/angles" },
+      "steps": [
+        "Press Angles at the top of any page. The first visit takes a few seconds while Muse reads every fact once.",
+        "Pick a shape from the row of chips. The number is how many findings it has.",
+        "Each card names the shape, says why it fired, and shows the facts themselves. Press Glossary to see what each shape name means, with an example and how fully Muse can find it. Clicking a card’s shape name opens its entry.",
+        "Press {collect} on facts that spark something. The {collection} then shows the shapes your own pile hints at."
+      ],
+      "then": "A card is a pointer, not a conclusion. Some are wrong or dull. Skip those."
+    }
+  ]
+}

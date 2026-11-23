@@ -2,7 +2,7 @@
 'use strict';
 /**
  * Muse, the author-facing app.   node --no-warnings code/muse_app.js [--port 3005] [--version nug-v6]     then open http://localhost:3005
- * Read-only on vault.db (the author's marks go to muse-marks.jsonl beside it). Listens on MUSE_HOST (default 0.0.0.0, all interfaces; it was 127.0.0.1). Zero dependencies.
+ * Read-only on vault.db (the author's marks go to muse-marks.jsonl beside it). Listens on this machine only unless `host:` in muse.yaml or MUSE_HOST says otherwise (0.0.0.0 = every interface). Zero dependencies.
  * Open to read; the Admin page and anything that writes need the author's login from other machines: see lib/muse_access.js. Set the password with `node code/muse_set_password.js`.
  * Wordplay appears once `npm run wordplay -- --apply` has been run. The interface is static files in code/muse_ui; the HTTP layer is lib/muse_server.js.
  * The inspection tool (judging burrs, hooks, sparks) stays in code/muse_view.js.
@@ -54,8 +54,8 @@ console.log('Search: words ready (' + searchBurrs.length + ' facts); meaning ' +
 
 // Where to listen, and who may do what. This is the change from the closed design to the open one:
 //   WAS:  .listen(PORT, '127.0.0.1', ...)    only this machine could connect (a NAT written into the code)
-//   NOW:  .listen(PORT, HOST, ...)           HOST = MUSE_HOST, default '0.0.0.0' = every network interface. MUSE_HOST=127.0.0.1 restores the old behaviour.
-const access = createAccess({ env: process.env }), HOST = access.host;
+//   NOW:  .listen(PORT, HOST, ...)           HOST = MUSE_HOST, else muse.yaml `host`, else 127.0.0.1 (this machine). 0.0.0.0 = every network interface.
+const access = createAccess({ env: process.env, config: require('./lib/pack').readConfig() }), HOST = access.host;
 // Optional https straight from Node (no proxy needed): MUSE_TLS_KEY and MUSE_TLS_CERT are paths to a private key and a certificate.
 const TLS = process.env.MUSE_TLS_KEY && process.env.MUSE_TLS_CERT ? { key: fs.readFileSync(process.env.MUSE_TLS_KEY), cert: fs.readFileSync(process.env.MUSE_TLS_CERT) } : null;
 

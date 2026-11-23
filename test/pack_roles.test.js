@@ -50,3 +50,11 @@ test('ensureConfig writes an explicit muse.yaml once, and leaves an existing one
     assert.strictEqual(Pack.ensureConfig({ root: dir }).written, false);
   } finally { if (saved.p) process.env.MUSE_PACK = saved.p; if (saved.c) process.env.MUSE_CONFIG = saved.c; }
 });
+
+test('the registry builder finds its notes from the environment, then muse.yaml, never from a personal default', () => {
+  const { resolveNotes } = require('../packs/quiz/tools/heuristics_build');
+  assert.strictEqual(resolveNotes({ QUARRY_VAULT_NOTES: '/a' }, { notes_dir: '/b' }), '/a');
+  assert.strictEqual(resolveNotes({}, { notes_dir: '/b' }), '/b');
+  assert.strictEqual(resolveNotes({ HOME: '/h' }, { notes_dir: '~/n' }), '/h/n');
+  assert.strictEqual(resolveNotes({}, {}), '');
+});

@@ -9,7 +9,7 @@ The extractor reads only the first 6,000 characters of each note (`MAX_BODY_CHAR
 
 ## Read first
 - `code/lab/STATUS.md` (repo): current state and the execution checklist.
-- Design docs have ONE canonical home: the vault, at `/Users/prakar/md-vaults/tech-journalling/worklog/2026/` (index: `QUARRY MOC.md`). Edit them there only. Code state and the execution checklist have one home too: `code/lab/STATUS.md`. The claude.ai Project QUARRY holds pointer stubs under the old `claude/` names; never copy design text into the Project or the repo.
+- Design docs have ONE canonical home: the author's vault, in the design-notes folder (set `notes_dir` in muse.yaml) (index: `QUARRY MOC.md`). Edit them there only. Code state and the execution checklist have one home too: `code/lab/STATUS.md`. The claude.ai Project QUARRY holds pointer stubs under the old `claude/` names; never copy design text into the Project or the repo.
 
 | Project stub | Canonical note | Role |
 |---|---|---|

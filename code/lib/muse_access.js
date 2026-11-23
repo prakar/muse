@@ -10,7 +10,8 @@
 //        data and the machine: the Admin page (it starts jobs that spend money and can restore backups) and every call that writes (marks,
 //        tray, events). From another machine those need a login. Reading stays open.
 //   Requests from this machine itself (loopback address, no proxy headers) stay trusted, so local development needs no login.
-//   Set MUSE_HOST=127.0.0.1 to get the v1 behaviour back, Host check included.
+//   RELEASE DEFAULT (v3): back to this machine only. Open it deliberately with `host: 0.0.0.0` in muse.yaml or MUSE_HOST=0.0.0.0. The Host check runs
+//   whenever the server listens on a loopback address.
 //
 // THE LOGIN IS DELIBERATELY SIMPLE. One shared password, kept as plain text in the server's .env (git-ignored, chmod 600), set with
 //   node code/muse_set_password.js
@@ -37,7 +38,10 @@ const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
 const LOCAL_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const MAX_FAILS = 5, LOCK_MS = 5 * 60 * 1000;                                 // used only when MUSE_LOGIN_LOCKOUT=on
 
-const resolveHost = env => String(env.MUSE_HOST || OPEN_HOST).trim();
+// Where to listen: MUSE_HOST (environment) wins, then `host:` in muse.yaml, then this machine only. Release default is closed (2026-11-23, owner): a stranger who clones
+// Muse is not exposing their notes to the network until they say so (host: 0.0.0.0, or MUSE_HOST=0.0.0.0 for every interface).
+const DEFAULT_HOST = '127.0.0.1';
+const resolveHost = (env, config) => String((env && env.MUSE_HOST) || (config && config.host) || DEFAULT_HOST).trim();
 const isLoopbackHost = h => LOOPBACK_HOSTS.has(String(h).toLowerCase());
 
 // ---- Hardened mode (off unless MUSE_ADMIN_PASSWORD_HASH is set) ----
@@ -58,8 +62,8 @@ const digest = s => crypto.createHash('sha256').update(String(s)).digest();
 const sameText = (a, b) => crypto.timingSafeEqual(digest(a), digest(b));
 
 // isLocal is injectable so tests can pretend a request came from another machine.
-function createAccess({ env = process.env, host, isLocal, now = Date.now } = {}) {
-  host = host || resolveHost(env);
+function createAccess({ env = process.env, config, host, isLocal, now = Date.now } = {}) {
+  host = host || resolveHost(env, config);
   const loopbackOnly = isLoopbackHost(host), user = env.MUSE_ADMIN_USER || 'admin', hash = env.MUSE_ADMIN_PASSWORD_HASH || '', plain = env.MUSE_ADMIN_PASSWORD || '';
   const mode = hash ? 'hashed' : plain ? 'plain' : 'none', lockout = String(env.MUSE_LOGIN_LOCKOUT || '').toLowerCase() === 'on';
   const checkPassword = pw => mode === 'hashed' ? verifyPassword(pw, hash) : sameText(pw, plain);

@@ -14,6 +14,7 @@ export function trail(route, ctx = {}) {
   if (route.name === 'help') return [root, { label: 'Help' }];
   if (route.name === 'admin') return [root, { label: W.admin }];
   if (route.name === 'dipaka') return [root, { label: W.dipaka }];
+  if (route.name === 'illuminations') return [root, { label: W.illuminations }];
   if (route.name === 'stick') return [root, { label: W.stick }];
   if (route.name === 'search') return [root, { label: 'Search' }];
   if (route.name === 'basket') return [root, { label: W.starred }];

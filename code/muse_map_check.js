@@ -2,11 +2,26 @@
 // Drift audit for Muse: compares the map (code/muse_ui/js/muse_map.mjs) with what the code really has, and with Help.
 // Run: node code/muse_map_check.js   (exit code 1 when anything has drifted). The tests run the same check.
 const fs = require('fs'), path = require('path'), { pathToFileURL } = require('url');
-const ROOT = path.join(__dirname, '..'), UI = path.join(ROOT, 'code', 'muse_ui', 'js');
+const ROOT = path.join(__dirname, '..'), UI_DEFAULT = path.join(ROOT, 'code', 'muse_ui', 'js');
 const read = p => fs.readFileSync(p, 'utf8'), uniq = a => [...new Set(a)];
 const walk = dir => fs.readdirSync(dir, { recursive: true }).filter(f => /\.mjs$/.test(f)).map(f => path.join(dir, f));
 
-async function check() {
+// check()                 audits the screens as they are on disk (the default profile's words)
+// check({ pack: 'name' })  audits them with that profile's words: a copy of the UI is made in a temp folder with that profile's vocabulary module
+async function check(opts) {
+  let UI = UI_DEFAULT, tmp = null, hidden = new Set();
+  if (opts && opts.pack) {
+    const Pack = require('./lib/pack'), V = require('./lib/pack_vocab'), os = require('os');
+    const loaded = Pack.loadPack(opts.pack, opts.root), vocab = loaded.vocabulary;
+    // Buttons a capability owns exist in the screen code but are hidden for a pack that lacks it: not drift.
+    if (!loaded.capabilities.includes('wordplay')) JSON.parse(fs.readFileSync(path.join(ROOT, 'code', 'data', 'capability_wordplay.json'), 'utf8')).features.forEach(x => (x['buttons+'] || []).forEach(b => hidden.add(b)));
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'muse-map-')); fs.cpSync(UI_DEFAULT, path.join(tmp, 'js'), { recursive: true }); UI = path.join(tmp, 'js');
+    fs.writeFileSync(path.join(UI, 'pack_vocab.mjs'), V.moduleText(vocab));
+  }
+  try { return await checkIn(UI, hidden); } finally { if (tmp) fs.rmSync(tmp, { recursive: true, force: true }); }
+}
+async function checkIn(UI, hidden) {
+  hidden = hidden || new Set();
   const problems = [], bad = (kind, msg) => problems.push({ kind, msg });
   const M = await import(pathToFileURL(path.join(UI, 'muse_map.mjs')).href), H = await import(pathToFileURL(path.join(UI, 'help_content.mjs')).href);
   const { FEATURES, DATA, BUDGET } = M, recipeKeys = H.RECIPES.map(r => r.key);
@@ -34,7 +49,7 @@ async function check() {
   // Code → map: everything real must be in the map
   routes.filter(r => !byRoute.includes(r)).forEach(r => bad('unmapped route', `#/${r} exists in router.mjs but no feature claims it`));
   apis.filter(a => !byApi[a]).forEach(a => bad('unmapped api', `${a} is served but no feature claims it`));
-  labels.filter(l => !byBtn[l]).forEach(l => bad('unmapped button', `a button labelled “${l}” exists in the UI but no feature lists it`));
+  labels.filter(l => !byBtn[l] && !hidden.has(l)).forEach(l => bad('unmapped button', `a button labelled “${l}” exists in the UI but no feature lists it`));
   files.filter(f => !DATA.some(d => d.file && f.startsWith(d.file.replace(/\*.*/, '')) || d.file === f)).forEach(f => bad('unmapped file', `${f} is written or read in code but not in DATA`));
 
   // Map → code: everything in the map must be real
@@ -63,9 +78,19 @@ async function check() {
   return { problems, warnings, stats: { features: FEATURES.length, routes: routes.length, apis: apis.length, buttons: labels.length, files: files.length, recipes: recipeKeys.length } };
 }
 module.exports = { check };
-if (require.main === module) check().then(({ problems, warnings, stats }) => {
-  console.log(`Muse map: ${stats.features} features, ${stats.routes} routes, ${stats.apis} server calls, ${stats.buttons} labelled buttons, ${stats.files} data files, ${stats.recipes} recipes.`);
-  warnings.forEach(w => console.log(`  ${w.kind.padEnd(16)} ${w.msg}`));
-  if (!problems.length) return console.log('No drift.');
-  problems.forEach(p => console.log(`  ${p.kind.padEnd(16)} ${p.msg}`)); console.log(`${problems.length} problem(s).`); process.exit(1);
-}).catch(e => { console.error(e); process.exit(2); });
+if (require.main === module) {
+  // node code/muse_map_check.js [--pack NAME | --all]   (no flag: the default profile; --all: every profile installed under packs/)
+  const a = process.argv.slice(2), all = a.includes('--all'), one = a.includes('--pack') ? a[a.indexOf('--pack') + 1] : null;
+  const names = all ? fs.readdirSync(path.join(ROOT, 'packs')).filter(n => fs.existsSync(path.join(ROOT, 'packs', n, 'pack.json'))).sort() : [one];
+  (async () => {
+    let bad = 0;
+    for (const n of names) {
+      const { problems, warnings, stats } = await check(n ? { pack: n } : undefined);
+      console.log((n ? '[' + n + '] ' : '') + `Muse map: ${stats.features} features, ${stats.routes} routes, ${stats.apis} server calls, ${stats.buttons} labelled buttons, ${stats.files} data files, ${stats.recipes} recipes.`);
+      warnings.forEach(w => console.log(`  ${w.kind.padEnd(16)} ${w.msg}`));
+      if (!problems.length) { console.log('No drift.'); continue; }
+      problems.forEach(p => console.log(`  ${p.kind.padEnd(16)} ${p.msg}`)); console.log(`${problems.length} problem(s).`); bad += problems.length;
+    }
+    if (bad) process.exit(1);
+  })().catch(e => { console.error(e); process.exit(2); });
+}

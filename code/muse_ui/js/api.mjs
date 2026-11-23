@@ -37,7 +37,7 @@ export const api = {
   stickRandom: () => get('/api/stick', { random: true }),
   kept: () => get('/api/kept', {}, 'kept'),
   mark: body => post('/api/mark', body),
-  dipaka: () => get('/api/dipaka'),
+  dipaka: all => get('/api/dipaka' + (all ? '?all=1' : '')),
   dipakaPreview: body => request('/api/dipaka/preview', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Muse': '1' }, body: JSON.stringify(body) }),
   dipakaRun: body => request('/api/dipaka/run', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Muse': '1' }, body: JSON.stringify(body) }),
   dipakaLabel: body => request('/api/dipaka/label', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Muse': '1' }, body: JSON.stringify(body) }),

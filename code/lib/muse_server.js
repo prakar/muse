@@ -14,7 +14,7 @@ const FACT_HANDLE = '*';
 const WRITE_PATHS = new Set(['/api/mark', '/api/tray', '/api/event', '/api/dipaka/run', '/api/dipaka/label', '/api/dipaka/delete']);
 // `access` decides who may do what; the default is the old closed behaviour (this machine only), so a caller that passes nothing stays safe.
 // `tls` ({ key, cert }) serves https from Node itself; without it the server speaks plain http.
-function createServer({ model, marks, notes, version, uiRoot, search = null, events = null, trayStore = null, dipaka = null, admin = null, ops = null, access = createAccess({ env: {} }), tls = null }) {
+function createServer({ model, marks, notes, version, uiRoot, search = null, events = null, trayStore = null, dipaka = null, admin = null, ops = null, access = createAccess({ env: { MUSE_HOST: '0.0.0.0' } }), tls = null }) {
   const root = path.resolve(uiRoot);
   const send = (res, code, type, body) => { res.writeHead(code, Object.assign({ 'Content-Type': type }, SECURITY)); res.end(body); };
   const json = (res, o, code) => send(res, code || 200, 'application/json; charset=utf-8', JSON.stringify(o));
@@ -120,7 +120,7 @@ function createServer({ model, marks, notes, version, uiRoot, search = null, eve
       // Dipaka: one paid model call on the facts in the Collection. The answer is kept in muse-dipaka.jsonl and never goes into the vault. Preview costs nothing; run and label
       // change the author's data (and run spends money), so they need the login from other machines, and every POST needs the X-Muse header a cross-site page cannot send.
       if (!dipaka) return json(res, { error: 'Dipaka is not set up on this server.' }, 503);
-      if (u.pathname === '/api/dipaka' && req.method === 'GET') return json(res, { threads: dipaka.list(20), labels: dipaka.LABELS, provider: dipaka.provider, providers: dipaka.providers(), promptVersion: dipaka.PROMPT_VERSION, spentToday: dipaka.spentToday() });
+      if (u.pathname === '/api/dipaka' && req.method === 'GET') return json(res, { threads: dipaka.list(u.searchParams.get('all') ? 1000 : 20), labels: dipaka.LABELS, provider: dipaka.provider, providers: dipaka.providers(), promptVersion: dipaka.PROMPT_VERSION, spentToday: dipaka.spentToday() });
       if (req.method !== 'POST' || !['/api/dipaka/preview', '/api/dipaka/run', '/api/dipaka/label', '/api/dipaka/delete'].includes(u.pathname)) return json(res, { error: 'not found' }, 404);
       if (req.headers['x-muse'] !== '1') return json(res, { error: 'missing X-Muse header' }, 403);
       if (!/application\/json/.test(req.headers['content-type'] || '')) return json(res, { error: 'json only' }, 415);

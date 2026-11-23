@@ -70,6 +70,10 @@ RAW.RECIPES = [
     start: { t: '{collection}', href: '#/dipaka' },
     steps: ['{collect} the facts that belong together (a handful works best; up to 20), and write how they link if you can.', 'Press {illuminate} in the {collection}. {dipaka} opens with the packet that will be sent: your facts, the words they came from, your link lines and the question. Read it and change anything.', 'It shows about what the call will cost and what you have spent today. Pick the Provider (Claude, Gemini or Grok; any without a key on this machine is marked) and press {illuminate} to send; it can take a minute. If a provider fails, for example it has hit its own usage limit, nothing is kept: choose another and press {illuminate} again.', 'Read the answer, then say what it was worth: Yielded, Generic, Already knew, or Wrong or loaded. A month of labels shows whether it is worth the money.'],
     then: 'The answer is the model’s, not from your notes, and it is not checked. Asking it to fill gaps invites hallucination, so itemise and check every claim before committing any of it to the vault; a wrong detail can still be a useful lead. Delete (press twice) removes an answer, its packet and its label from the file for good; only its cost is kept so the daily cap stays honest. Muse keeps it in muse-dipaka.jsonl and never writes it into your notes. If something is worth keeping, press Copy answer and write the note in Obsidian yourself. A daily cap (MUSE_DIPAKA_MAX_USD_PER_DAY, $3 unless set) stops runs that would pass it.' },
+  { key: 'illuminations', title: 'I want to reread what the model told me before', goal: 'Browse every earlier answer from {dipaka} without running a new one.',
+    start: { t: '{starred}, Illuminations', href: '#/illuminations' },
+    steps: ['Open {starred} and pick the Illuminations tab at the top (or go straight to the address).', 'Each answer shows when it was made, how many facts it was asked about, what it cost and your label. Open What was sent to see the packet behind it.', 'Use the filter to show only the answers you labelled Yielded, or those you have not labelled yet.'],
+    then: 'The answers are the model’s, unverified, and never in your notes. Make a new one from the {collection}, on the {dipaka} page.' },
   { key: 'junk', title: 'I found junk and want it out of my way', goal: 'Hide a fact or a pair that is dull or means the wrong thing.',
     start: { t: 'A set, or the {stick} page', href: '#/' },
     steps: ['Press Dull for a true but useless fact; Wrong sense when the match used the word in another meaning.', 'The next fact takes its place. Press Undo on the toast if you slipped.', 'Show dull on a Connect set reveals what you have hidden.'],
@@ -103,7 +107,7 @@ export const GLOSSARY = fill([
 ]);
 
 export const COMING = fill([
-  ['Live now', '{home}, {stick}, Search, {starred}, {dipaka}, Admin, Help.'],
+  ['Live now', '{home}, {stick}, Search, {starred}, Illuminations, {dipaka}, Admin, Help.'],
   ['Planned modes', 'Thread (follow a chain hook by hook), Slice (everything touching a year or day), Shelf (etymology and other typed shelves), Drift (one unprompted spark a day), Wander (a random walk over words with several meanings).'],
   ['Planned features', 'Reflection (a button that inspects Muse for weak facts and fills a review queue: star, retire, fix); {star} on search results; a report of which shelves your finished questions came from; help for each mode as it arrives.']
 ]);

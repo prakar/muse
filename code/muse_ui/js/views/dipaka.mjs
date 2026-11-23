@@ -35,7 +35,7 @@ function Delete({ thread, api, box, onChange }) {
     try { await api.dipakaDelete({ id: thread.id }); box.replaceChildren(h('p', { class: 'hint', role: 'status', text: 'Deleted.' })); onChange && onChange(); } catch (e) { toast({ text: e.message }); say('Delete'); } } });
   return btn;
 }
-const Answer = (thread, api, onChange) => { const box = h('div', { class: 'dipaka__answer' }); box.append(...answerParts(thread, api, onChange, box)); return box; };
+export const Answer = (thread, api, onChange) => { const box = h('div', { class: 'dipaka__answer' }); box.append(...answerParts(thread, api, onChange, box)); return box; };
 const answerParts = (thread, api, onChange, box) => [ h('p', { class: 'hint dipaka__caution', role: 'note', text: CAUTION }), Prose(parse(thread.response)),
   h('p', { class: 'hint', text: 'Unverified. ' + (thread.model || 'The model') + ' wrote this from the facts you gave it; it is not from your notes and has not been checked. ' + usd(thread.cost) }),
   h('div', { class: 'toolbar' }, Labels({ thread, api, onChange }),

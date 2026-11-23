@@ -15,6 +15,7 @@ export const W = {
   collected: 'Collected',       // the same button once pressed
   collection: 'Collection',     // the working pile (was the "Picked up" tray)
   dipaka: 'Dipaka',             // the page where the Collection goes to the model to be illuminated (the lamp)
+  illuminations: 'Illuminations', // the page listing every earlier answer from the model
   illuminate: 'Illuminate',     // button: send the packet and get the answer
   star: 'Star',                 // button: save this fact or pair for good
   starred: 'Starred',

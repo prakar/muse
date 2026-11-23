@@ -7,16 +7,19 @@ const { createServer } = require('../code/lib/muse_server'), K = require('../cod
 const PW = 'correct horse battery', HASH = hashPassword(PW), basic = (u, p) => 'Basic ' + Buffer.from(u + ':' + p).toString('base64');
 const req = (headers = {}, addr = '203.0.113.9') => ({ headers, socket: { remoteAddress: addr } });
 
-test('the default is open: MUSE_HOST unset means every interface; the old closed value is one setting away', () => {
+test('the release default is closed: this machine only, until muse.yaml or MUSE_HOST opens it', () => {
   assert.strictEqual(OPEN_HOST, '0.0.0.0');
-  assert.strictEqual(resolveHost({}), '0.0.0.0');
+  assert.strictEqual(resolveHost({}), '127.0.0.1', 'release default: this machine only');
+  assert.strictEqual(resolveHost({}, { host: '0.0.0.0' }), '0.0.0.0', 'muse.yaml opens it');
+  assert.strictEqual(resolveHost({ MUSE_HOST: '127.0.0.1' }, { host: '0.0.0.0' }), '127.0.0.1', 'the environment wins');
   assert.strictEqual(resolveHost({ MUSE_HOST: '127.0.0.1' }), '127.0.0.1');
-  assert.strictEqual(createAccess({ env: {} }).loopbackOnly, false);
+  assert.strictEqual(createAccess({ env: {} }).loopbackOnly, true, 'release default: this machine only');
+  assert.strictEqual(createAccess({ env: { MUSE_HOST: '0.0.0.0' } }).loopbackOnly, false);
   assert.strictEqual(createAccess({ env: { MUSE_HOST: '127.0.0.1' } }).loopbackOnly, true);
 });
 
 test('the Host check only runs when closed (or when names are listed): open servers answer to any hostname', () => {
-  const open = createAccess({ env: {} }), closed = createAccess({ env: { MUSE_HOST: '127.0.0.1' } }), listed = createAccess({ env: { MUSE_ALLOWED_HOSTS: 'muse.example, homelab.local' } });
+  const open = createAccess({ env: { MUSE_HOST: '0.0.0.0' } }), closed = createAccess({ env: { MUSE_HOST: '127.0.0.1' } }), listed = createAccess({ env: { MUSE_ALLOWED_HOSTS: 'muse.example, homelab.local' } });
   assert.ok(open.hostAllowed(req({ host: 'homelab.local:3005' })) && open.hostAllowed(req({ host: '192.168.1.20:3005' })));
   assert.ok(closed.hostAllowed(req({ host: 'localhost:3005' })) && closed.hostAllowed(req({ host: '127.0.0.1:3005' })));
   assert.ok(!closed.hostAllowed(req({ host: 'evil.example' })) && !closed.hostAllowed(req({ host: 'homelab.local:3005' })));
@@ -30,14 +33,14 @@ test('password hashes verify, differ each time, and contain nothing a shell or s
 });
 
 test('from this machine nothing asks for a login; from another machine it does, and without a configured login it stays locked', () => {
-  const a = createAccess({ env: { MUSE_ADMIN_PASSWORD: PW } });
+  const a = createAccess({ env: { MUSE_HOST: '0.0.0.0', MUSE_ADMIN_PASSWORD: PW } });
   assert.ok(a.authorize(req({}, '127.0.0.1')).ok && a.authorize(req({}, '::1')).ok && a.authorize(req({}, '::ffff:127.0.0.1')).ok);
   assert.strictEqual(a.authorize(req({ 'x-forwarded-for': '203.0.113.9' }, '127.0.0.1')).status, 401, 'a proxy on this machine must not make everyone local');
   const none = a.authorize(req()); assert.strictEqual(none.status, 401); assert.ok(none.challenge);
   assert.ok(a.authorize(req({ authorization: basic('admin', PW) })).ok);
   assert.strictEqual(a.authorize(req({ authorization: basic('admin', 'nope') })).status, 401);
   assert.strictEqual(a.authorize(req({ authorization: basic('root', PW) })).status, 401, 'the name must match too');
-  const unset = createAccess({ env: {} }); assert.strictEqual(unset.authorize(req({ authorization: basic('admin', PW) })).status, 403, 'no login set means locked, never open');
+  const unset = createAccess({ env: { MUSE_HOST: '0.0.0.0' } }); assert.strictEqual(unset.authorize(req({ authorization: basic('admin', PW) })).status, 403, 'no login set means locked, never open');
   assert.ok(unset.authorize(req({}, '127.0.0.1')).ok);
 });
 
@@ -53,7 +56,7 @@ test('five wrong passwords lock that address for five minutes; a right one after
 
 async function withOpenServer(env, fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'muse-acc-')), marks = K.open(path.join(dir, 'm.jsonl'), 't'), events = [], tray = { saved: null };
-  const access = createAccess({ env, isLocal: () => false });                                      // every request counts as coming from another machine
+  const access = createAccess({ env: Object.assign({ MUSE_HOST: '0.0.0.0' }, env), isLocal: () => false });                                      // every request counts as coming from another machine
   const admin = { status: () => ({ ok: true }), runDrift: async () => ({ ok: true }) };
   const srv = createServer({ model: fakeModel(), marks, notes: fakeNotes(), version: 't', uiRoot: path.join(__dirname, '..', 'code', 'muse_ui'), access, admin,
     events: { append: o => events.push(o) }, trayStore: { load: () => ({ items: [], links: {} }), save: o => { tray.saved = o; } } });
@@ -82,7 +85,7 @@ test('open server, no login set: admin and writes are locked (403), reading stil
 }));
 
 test('modes: plain password is the default, the hash wins when both are set, lockout is off unless asked for', () => {
-  const plain = createAccess({ env: { MUSE_ADMIN_PASSWORD: PW } }), hashed = createAccess({ env: { MUSE_ADMIN_PASSWORD_HASH: HASH, MUSE_ADMIN_PASSWORD: 'other-plain-pw' } });
+  const plain = createAccess({ env: { MUSE_HOST: '0.0.0.0', MUSE_ADMIN_PASSWORD: PW } }), hashed = createAccess({ env: { MUSE_ADMIN_PASSWORD_HASH: HASH, MUSE_ADMIN_PASSWORD: 'other-plain-pw' } });
   assert.strictEqual(plain.mode, 'plain'); assert.strictEqual(hashed.mode, 'hashed'); assert.strictEqual(createAccess({ env: {} }).mode, 'none');
   assert.ok(hashed.authorize(req({ authorization: basic('admin', PW) })).ok); assert.ok(!hashed.authorize(req({ authorization: basic('admin', 'other-plain-pw') })).ok);
   for (let i = 0; i < 8; i++) assert.strictEqual(plain.authorize(req({ authorization: basic('admin', 'bad') })).status, 401, 'no lockout unless MUSE_LOGIN_LOCKOUT=on');
