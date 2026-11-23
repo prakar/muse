@@ -57,7 +57,7 @@ function createServer({ model, marks, notes, version, uiRoot, search = null, eve
     if (u.pathname.startsWith('/api/admin/') || (req.method === 'POST' && WRITE_PATHS.has(u.pathname))) { const a = access.authorize(req); if (!a.ok) return deny(res, a); }
 
     if (u.pathname === '/api/meta') return json(res, { version, notes: model.notes, burrs: model.burrs.length, sparks: model.sparks.length, wordplay: model.wordplay.length,
-      wordplayState: model.wordplayState, wordplayKinds: model.wordplayKinds(), pack: { name: Pack.current().name, description: Pack.current().description, capabilities: Pack.current().capabilities, lenses: !!Pack.current().lens }, marks: marks.counts(), search: search ? search.status().meaning : null });
+      wordplayState: model.wordplayState, wordplayKinds: model.wordplayKinds(), pack: { name: Pack.current().name, description: Pack.current().description, capabilities: Pack.current().capabilities, lenses: !!Pack.current().lens, catalogue: Pack.catalogue(), source: Pack.source() }, marks: marks.counts(), search: search ? search.status().meaning : null });
     if (u.pathname === '/api/suggest') return json(res, { items: withMarks(model.suggest(q.get('q') || '', 40), all).slice(0, 14) });
     if (u.pathname === '/api/wordplay') {
       const list = withMarks(model.wordplayPairs(q.get('kind') || '', 1e6), all), size = PAGE_SIZES.includes(+q.get('size')) ? +q.get('size') : 24;
@@ -182,6 +182,15 @@ function createServer({ model, marks, notes, version, uiRoot, search = null, eve
       if (!admin) return json(res, { error: 'Admin is not set up on this server.' }, 503);
       if (req.headers['x-muse'] !== '1') return json(res, { error: 'missing X-Muse header' }, 403);
       if (u.pathname === '/api/admin/status' && req.method === 'GET') return json(res, admin.status());
+      // Choose the profile for the next start. Writes muse.yaml only; nothing running changes. Refused while a job runs (a job's results belong to one profile).
+      if (u.pathname === '/api/admin/profile' && req.method === 'POST') {
+        if (!/application\/json/.test(req.headers['content-type'] || '')) return json(res, { error: 'json only' }, 415);
+        return readBody(req, b => {
+          if (!b || typeof b.pack !== 'string') return json(res, { error: 'bad profile request' }, 400);
+          if (ops && ops.running().length) return json(res, { error: 'A job is running. Wait for it to finish or cancel it, then choose the profile.' }, 409);
+          try { return json(res, Object.assign({ ok: true }, Pack.setActive(b.pack))); } catch (e) { return e instanceof Pack.PackError ? json(res, { error: e.message }, 400) : (console.error('[muse] could not set the profile', e && e.stack || e), json(res, { error: 'could not write the profile choice' }, 500)); }
+        });
+      }
       if (u.pathname === '/api/admin/drift' && req.method === 'POST') return admin.runDrift().then(r => json(res, r), e => json(res, { error: e.message }, 500));
       // Maintenance jobs: the same catalogue and runner the `muse ops` command uses. Starting, watching and stopping are all here, so anything that can call HTTP can drive them.
       if (ops && u.pathname === '/api/admin/ops' && req.method === 'GET') { let pending = null; try { pending = I.candidates({ dbPath: ops.ctx.dbPath, args: ['--all'], log: () => {} }); } catch (e) { /* no database */ }

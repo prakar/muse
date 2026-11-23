@@ -56,6 +56,8 @@
 .helptable { width: 100%; border-collapse: collapse; font-size: var(--fs-1); margin: var(--s-2) 0; }
 .helptable th, .helptable td { text-align: left; padding: var(--s-2) var(--s-3); border-bottom: 1px solid var(--line); vertical-align: top; }
 .helptable thead th { color: var(--text-3); font-size: var(--fs-0); text-transform: uppercase; letter-spacing: .06em; } .helptable tbody th { font-weight: 650; white-space: nowrap; }
+.profile__confirm, .profile__done { margin: var(--s-3) 0; } .profile__now { font-weight: 600; margin: var(--s-2) 0; }
+.profile__pick { display: flex; gap: var(--s-3); flex-wrap: wrap; margin: var(--s-3) 0; } .profile__pick .field { min-width: 14rem; } .profile__out { max-width: 52rem; } .profile__out ol { padding-left: var(--s-5, 1.5rem); }
 .wordlist dt { font-weight: 650; margin-top: var(--s-3); } .wordlist dd { margin: 0; color: var(--text-2); max-width: 52rem; }
 
 /* Help contents (generated from the Muse map) */

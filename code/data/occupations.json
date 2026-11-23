@@ -1,0 +1,21 @@
+{
+  "_comment": "Occupations Muse suggests on the Help page. An entry is only a name: it is 'installed' when a folder packs/<id>/pack.json exists. Muse is set up for one profile per clone; the guide for building a missing one is PACKS.md.",
+  "rows": [
+    { "id": "quiz", "label": "Quiz writer" },
+    { "id": "general", "label": "General (any collection of notes)" },
+    { "id": "lawyer", "label": "Lawyer" },
+    { "id": "teacher", "label": "Teacher" },
+    { "id": "linguist", "label": "Linguist" },
+    { "id": "accountant", "label": "Accountant" },
+    { "id": "journalist", "label": "Journalist" },
+    { "id": "historian", "label": "Historian" },
+    { "id": "researcher", "label": "Researcher" },
+    { "id": "librarian", "label": "Librarian" },
+    { "id": "editor", "label": "Editor" },
+    { "id": "translator", "label": "Translator" },
+    { "id": "analyst", "label": "Analyst" },
+    { "id": "consultant", "label": "Consultant" },
+    { "id": "engineer", "label": "Engineer" },
+    { "id": "student", "label": "Student" }
+  ]
+}

@@ -4,6 +4,7 @@ import { kindLabel } from '../kinds.mjs';
 import { W } from '../words.mjs';
 import { tasksSection } from './admin_tasks.mjs';
 import { tagsSection } from './admin_tags.mjs';
+import { profileTab } from './admin_profile.mjs';
 
 // Admin, section 1: Status and health. It reads and reports; the one thing it runs is the drift check, which only reads too. The actions (ingest, pre-process,
 // back up and restore, restart) are added one section at a time from the coverage list in the vault note "QUARRY - Muse Admin Coverage", and each lands in the
@@ -51,7 +52,8 @@ export async function adminView({ api }) {
   let tasks = null;   // the notice that Muse is behind the database is repainted with the numbers when a job ends
   const refreshBar = () => api.adminStatus().then(x => { fillBar(x); if (tasks) tasks.setFreshness(x.freshness); }).catch(() => {});
   const tagsPanel = await tagsSection({ api, onDone: refreshBar });   // drawn inside step 2 of the Tags group (the note step 'review-tags')
-  tasks = await tasksSection({ api, onJobEnd: refreshBar, freshness: s.freshness, extras: { 'review-tags': tagsPanel } });
+  const meta = typeof api.meta === 'function' ? await api.meta().catch(() => null) : null, profile = meta && meta.pack && Array.isArray(meta.pack.catalogue) ? profileTab({ api, meta }) : null;   // no catalogue (an old server): no Profile tab
+  tasks = await tasksSection({ api, onJobEnd: refreshBar, freshness: s.freshness, extras: { 'review-tags': tagsPanel }, profile: profile });
   const { actions, output } = tasks;
   const node = h('div', { class: 'admin' },
     h('div', { class: 'page-head' }, h('h1', { text: W.admin }), h('p', { text: 'What you can run from here comes first; the reports on the state of things are below. Every task checks first, shows what it would do, and asks before it spends money or deletes anything.' })),

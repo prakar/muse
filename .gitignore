@@ -68,3 +68,4 @@ logs/
 
 # Personal Muse config (muse.example.yaml is the committed template)
 muse.yaml
+muse.yaml.bak

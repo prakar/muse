@@ -18,7 +18,9 @@
     "heuristics:check": "node --no-warnings packs/quiz/tools/heuristics_build.js --check",
     "datamap": "node --no-warnings code/data_map.js",
     "datamap:check": "node --no-warnings code/data_map.js --check",
-    "test": "node --no-warnings --test test/*.test.js"
+    "test": "node --no-warnings --test test/*.test.js",
+    "pack:new": "node --no-warnings code/pack_new.js",
+    "pack:check": "node --no-warnings code/pack_check.js"
   },
   "license": "MIT",
   "type": "commonjs",

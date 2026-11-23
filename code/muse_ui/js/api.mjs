@@ -44,6 +44,7 @@ export const api = {
   dipakaDelete: body => request('/api/dipaka/delete', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Muse': '1' }, body: JSON.stringify(body) }),
   adminStatus: () => get('/api/admin/status', {}, 'admin', { 'X-Muse': '1' }),
   adminDrift: () => request('/api/admin/drift', { method: 'POST', headers: { 'X-Muse': '1' } }),
+  adminProfile: (pack) => request('/api/admin/profile', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Muse': '1' }, body: JSON.stringify({ pack }) }),
   adminOps: () => get('/api/admin/ops', {}, 'ops', { 'X-Muse': '1' }),
   adminTags: p => get('/api/admin/tags', p || {}, null, { 'X-Muse': '1' }),
   adminJobs: () => get('/api/admin/jobs', {}, 'jobs', { 'X-Muse': '1' }),

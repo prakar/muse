@@ -116,4 +116,40 @@ function current(opts) {
 const extraction = (opts) => current(opts).extraction;
 function reset() { cached = null; }
 
-module.exports = { PackError, CONTRACT, DEFAULT_PACK, ROOT, readConfig, loadPack, validateExtraction, current, extraction, reset };
+// The occupations Muse suggests (code/data/occupations.json) plus any other profile folder on disk, each marked installed or not, and which one is active.
+// Nothing here switches a profile: the active one comes from muse.yaml at start-up.
+function catalogue(opts) {
+  const o = opts || {}, root = o.root || ROOT, rows = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', 'occupations.json'), 'utf8')).rows;
+  let dirs = [];
+  try { dirs = fs.readdirSync(path.join(root, 'packs'), { withFileTypes: true }).filter((e) => e.isDirectory() && fs.existsSync(path.join(root, 'packs', e.name, 'pack.json'))).map((e) => e.name).sort(); } catch (e) { /* no packs folder */ }
+  let active = o.active; if (active === undefined) { try { active = current().name; } catch (e) { active = null; } }
+  const out = rows.map((r) => ({ id: r.id, label: r.label, installed: dirs.includes(r.id), active: r.id === active }));
+  dirs.filter((d) => !rows.some((r) => r.id === d)).forEach((d) => out.push({ id: d, label: d, installed: true, active: d === active }));
+  return out;
+}
+
+// Where the active profile is decided: the MUSE_PACK environment variable (wins), muse.yaml, or the default. For Admin to say what a change will and will not do.
+function source(root) {
+  if (process.env.MUSE_PACK) return 'env';
+  const file = process.env.MUSE_CONFIG || path.join(root || ROOT, 'muse.yaml');
+  return fs.existsSync(file) ? 'file' : 'default';
+}
+
+// Choose the profile for the NEXT start: writes `pack: <name>` into muse.yaml, keeping the rest of the file (comments too), after checking that the profile loads.
+// Nothing running changes: Muse reads its profile once, at start-up. The old file is kept as muse.yaml.bak. Returns what was done.
+function setActive(name, opts) {
+  const o = opts || {}, root = o.root || ROOT;
+  if (typeof name !== 'string' || !/^[a-z][a-z0-9-]{1,29}$/.test(name)) throw new PackError('profile name must be lowercase letters, digits and hyphens');
+  if (!fs.existsSync(path.join(root, 'packs', name, 'pack.json'))) throw new PackError('no profile named ' + name + ' is installed (packs/' + name + '/pack.json is missing)');
+  loadPack(name, root);   // refuses a profile that would not start
+  let YAML; try { YAML = require('yaml'); } catch (e) { throw new PackError('the "yaml" package is not installed. Run: npm install yaml'); }
+  const file = o.file || process.env.MUSE_CONFIG || path.join(root, 'muse.yaml'), had = fs.existsSync(file);
+  let before = null, text;
+  if (had) { before = fs.readFileSync(file, 'utf8'); let doc; try { doc = YAML.parseDocument(before); } catch (e) { throw new PackError(file + ' is not valid YAML, so it was left alone: ' + e.message); } if (doc.errors && doc.errors.length) throw new PackError(file + ' is not valid YAML, so it was left alone: ' + doc.errors[0].message); doc.set('pack', name); text = String(doc); }
+  else text = '# Written by Muse (Admin, Profile). See muse.example.yaml.\npack: ' + name + '\n';
+  if (had) fs.writeFileSync(file + '.bak', before);
+  const tmp = file + '.tmp-' + process.pid; fs.writeFileSync(tmp, text); fs.renameSync(tmp, file);
+  return { pack: name, file, created: !had, backup: had ? file + '.bak' : null, envOverrides: !!process.env.MUSE_PACK, needsRestart: true };
+}
+
+module.exports = { setActive, source, catalogue, PackError, CONTRACT, DEFAULT_PACK, ROOT, readConfig, loadPack, validateExtraction, current, extraction, reset };
