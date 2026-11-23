@@ -75,3 +75,4 @@ a.pager__page:active { transform: translateY(1px); }
 .btn--nav { position: relative; }
 .btn--nav .badge--count { position: absolute; top: -.4rem; right: -.45rem; min-width: 1.05rem; padding: 0 .3rem; font-size: .6875rem; line-height: 1.05rem; }
 .btn--nav .badge--count[hidden] { display: none; }
+.btn--nav[aria-pressed="true"]::before, .btn--nav[aria-current="true"]::before { display: none; }   /* the fill and border already say selected; a dot also pushed the icon off centre and made the bar jump */
