@@ -1,0 +1,4 @@
+{ "rows": [
+  { "id": 1, "name": "Same day", "definition": "Two facts that fall on the same calendar day.", "status": "locked", "detects": "found" },
+  { "id": 2, "name": "One name, different things", "definition": "One name used for unlike things, such as a planet and a company.", "status": "locked", "detects": "found" }
+] }

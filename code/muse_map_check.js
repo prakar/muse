@@ -41,7 +41,7 @@ async function check() {
   FEATURES.filter(f => f.route && !routes.includes(f.route)).forEach(f => bad('stale route', `${f.key}: route “${f.route}” is not in router.mjs`));
   Object.keys(byApi).filter(a => !apis.includes(a)).forEach(a => bad('stale api', `${byApi[a].join(', ')}: ${a} is not served any more`));
   Object.keys(byApi).filter(a => byApi[a].length > 1).forEach(a => bad('map', `${a} is claimed by ${byApi[a].join(' and ')}`));
-  Object.keys(byBtn).filter(b => !labels.includes(b) && !ui.replace(/export const W = \{[^}]*\};/, '').includes(`'${b}'`)).forEach(b => bad('stale button', `${byBtn[b].join(', ')}: no button “${b}” found in the UI source`));
+  Object.keys(byBtn).filter(b => !labels.includes(b) && !ui.replace(/export const W = \{[^}]*\};/, '').includes(`'${b}'`) && !ui.includes(JSON.stringify(b))).forEach(b => bad('stale button', `${byBtn[b].join(', ')}: no button “${b}” found in the UI source`));
   Object.keys(byBtn).filter(b => byBtn[b].length > 1).forEach(b => bad('map', `button “${b}” is listed by ${byBtn[b].join(' and ')}`));
   DATA.filter(d => d.file && !files.some(f => f === d.file || f.startsWith(d.file))).forEach(d => bad('stale file', `${d.id}: ${d.file} is not mentioned in the code any more`));
   Object.keys(byData).filter(d => !DATA.some(x => x.id === d)).forEach(d => bad('map', `${byData[d].join(', ')}: data “${d}” is not in DATA`));

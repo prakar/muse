@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "entries": [
+    { "type": "same-date", "h": 1, "why": "both fall on {key}", "seed": { "answer": "the date, {key}", "join": "the same calendar day", "hide": "the date" }, "browse": { "maxFacts": 5, "minNotes": 2 } },
+    { "type": "namesakes", "h": 2, "hook": "entity", "minLength": 3, "why": "{name} is a {cats}", "seed": { "answer": "{name}", "join": "one name for unlike things", "hide": "the name" } }
+  ]
+}

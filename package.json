@@ -14,8 +14,8 @@
     "muse:app": "node --no-warnings code/muse_app.js",
     "ops": "node --no-warnings code/muse_ops.js",
     "muse:report": "node --no-warnings code/muse_scratch.js",
-    "heuristics": "node --no-warnings code/heuristics_build.js",
-    "heuristics:check": "node --no-warnings code/heuristics_build.js --check",
+    "heuristics": "node --no-warnings packs/quiz/tools/heuristics_build.js",
+    "heuristics:check": "node --no-warnings packs/quiz/tools/heuristics_build.js --check",
     "datamap": "node --no-warnings code/data_map.js",
     "datamap:check": "node --no-warnings code/data_map.js --check",
     "test": "node --no-warnings --test test/*.test.js"
@@ -25,6 +25,7 @@
   "dependencies": {
     "jsonrepair": "^3.15.0",
     "llm-model-resolver": "^1.5.2",
-    "pluralize": "^8.0.0"
+    "pluralize": "^8.0.0",
+    "yaml": "^2.9.1"
   }
 }

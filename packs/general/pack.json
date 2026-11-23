@@ -1,0 +1,31 @@
+{
+  "name": "general",
+  "contract": 1,
+  "version": "1.0.0",
+  "description": "A neutral starting point for any collection of notes: every specific claim, joined by names, dates, places and numbers. Copy this folder to begin a pack for your own field.",
+  "capabilities": [],
+  "extraction": {
+    "promptVersion": "gen-v1",
+    "schemaVersion": "burr-v1",
+    "audience": "a research tool for someone working from their own notes",
+    "claimReader": "a researcher",
+    "kinds": ["fact", "definition", "decision", "opinion"],
+    "kindNotes": "\"definition\" = what a term or thing is said to mean; \"decision\" = something that was decided, ruled or agreed, and by whom; \"opinion\" = a view the note attributes to someone.",
+    "hooks": {
+      "strict": ["entity", "time", "number", "place"],
+      "loose": ["topic"],
+      "categorised": ["entity", "place"]
+    },
+    "categories": ["person", "place", "organisation", "work", "event", "object", "concept", "other"],
+    "categoryExample": "so \"Mercury\" the planet and \"Mercury\" the company differ: place vs organisation",
+    "caps": { "base": 12, "long": 20, "xl": 30, "longChars": 1200, "xlChars": 2500 },
+    "skipRule": "",
+    "example": {
+      "note": "[T] Board approves new office, Leeds, 2021",
+      "reply": "{\"burrs\":[{\"claim\":\"The board approved a new office in Leeds in 2021.\",\"src\":[\"T\"],\"kind\":\"decision\",\"hooks\":[{\"type\":\"place\",\"value\":\"Leeds\",\"cat\":\"place\"},{\"type\":\"time\",\"value\":\"2021\",\"era\":\"AD\"}],\"perishable\":false}],\"reason\":\"\"}"
+    }
+  },
+  "lenses": { "config": "packs/general/lenses.json", "registry": "packs/general/shapes.json" },
+  "vocabulary": "packs/general/vocabulary.json",
+  "files": { "glossary": "packs/general/glossary.json" }
+}

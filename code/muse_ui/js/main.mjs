@@ -19,6 +19,7 @@ import { helpView } from './views/help.mjs';
 import { dipakaView } from './views/dipaka.mjs';
 import { searchView, searchHref } from './views/search.mjs';
 import { getPref } from './prefs.mjs';
+import { setPackInfo, hasLenses } from './pack_info.mjs';
 import { W } from './words.mjs';
 import { tray, loadTray } from './components/tray.mjs';
 import { PileDrawer } from './components/pile.mjs';
@@ -102,8 +103,9 @@ function onHash() {
 async function boot() {
   await loadTray();
   const meta = await api.meta();
+  setPackInfo(meta.pack);
   store.set({ meta, marks: meta.marks });
-  const top = h('header', { class: 'top' }, h('a', { class: 'top__brand', href: build('home'), title: meta.version + ' · ' + meta.notes + ' notes · ' + meta.burrs + ' facts', text: 'Muse' }), h('div', { class: 'top__search', role: 'search', 'aria-label': 'Search' }, Search({ api, onPick: it => go(build('set', { id: it.id })), onSubmit: q => go(searchHref(q, getPref('meaning', true))) })), h('nav', { class: 'top__actions', 'aria-label': 'Tools' }, pileBtn, basketBtn, anglesBtn, Button({ label: 'Help', ic: 'note', size: 'sm', href: build('help') }), adminBtn));
+  const top = h('header', { class: 'top' }, h('a', { class: 'top__brand', href: build('home'), title: meta.version + ' · ' + meta.notes + ' notes · ' + meta.burrs + ' facts', text: 'Muse' }), h('div', { class: 'top__search', role: 'search', 'aria-label': 'Search' }, Search({ api, onPick: it => go(build('set', { id: it.id })), onSubmit: q => go(searchHref(q, getPref('meaning', true))) })), h('nav', { class: 'top__actions', 'aria-label': 'Tools' }, pileBtn, basketBtn, ...(hasLenses() ? [anglesBtn] : []), Button({ label: 'Help', ic: 'note', size: 'sm', href: build('help') }), adminBtn));
   mount(shell, h('div', { class: 'main' }, top, content), drawerHost);
   document.body.prepend(SkipLink(content));
   document.body.append(shell, announcer.node);

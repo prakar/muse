@@ -8,7 +8,7 @@
 //   node code/lab/quiz_tag.js summary [--provider gemini]
 //   node code/lab/quiz_tag.js compare --a gemini --b claude                                     -> quiz-tags.jsonl (merged, with who agreed)
 const fs = require('node:fs'), path = require('node:path');
-const DIR = path.join(__dirname, '..', '..', 'backtest'), REG = path.join(__dirname, '..', 'data', 'heuristics.json');
+const DIR = path.join(__dirname, '..', '..', 'backtest'), REG = path.join(__dirname, '..', '..', 'packs', 'quiz', 'data', 'heuristics.json');
 // Not tagged at item level. Whole-set shapes and media (61, 62, 67 to 71) are not visible in one item; a later per-quiz pass handles them. 66 Split answers fired on 42% of items
 // (any question with sub-parts). 12 Old text, new headline and 18 Trigger event were wrong 0 of 6 times each in the author's blind review of 16 of his own items (Nov 2026):
 // both models apply them to any causal sentence. 63 to 65 are about one item's layout and stay.
@@ -110,7 +110,7 @@ const rateFor = provider => (ti, to, model) => { const p = require('../lib/budge
 
 async function main() {
   const cmd = process.argv[2], a = process.argv.slice(3), arg = (n, d) => { const i = a.indexOf('--' + n); return i >= 0 ? a[i + 1] : d; };
-  const commons = fs.readFileSync(path.join(require('../heuristics_build').NOTES, 'QUARRY - Heuristics Commons.md'), 'utf8'), defs = parseDefs(commons);
+  const commons = fs.readFileSync(path.join(require('../../packs/quiz/tools/heuristics_build').NOTES, 'QUARRY - Heuristics Commons.md'), 'utf8'), defs = parseDefs(commons);
   const regIds = new Set(JSON.parse(fs.readFileSync(REG, 'utf8')).rows.map(r => r.id)); if (defs.length !== regIds.size || !defs.every(d => regIds.has(d.id))) { console.error('The Commons list and code/data/heuristics.json disagree; run node --no-warnings code/heuristics_build.js --check'); process.exit(1); }
   const fileOf = p => path.join(DIR, 'quiz-tags-' + p + '.jsonl'), merged = path.join(DIR, 'quiz-tags.jsonl'), source = arg('source', 'arre-bhai-2025');
   if (cmd === 'summary') {

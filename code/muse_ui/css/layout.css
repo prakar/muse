@@ -7,6 +7,7 @@
 .content > .crumbs { margin-bottom: var(--s-2); }
 .content:focus { outline: none; }
 .drawer { position: sticky; top: 0; height: 100vh; border-left: 1px solid var(--line); background: var(--surface); display: flex; flex-direction: column; z-index: var(--z-drawer); animation: drawer-in var(--t-med) var(--ease); }
+.drawer:empty { display: none; }   /* narrow windows make the drawer a fixed panel; with no note open it must not show */
 @keyframes drawer-in { from { opacity: 0; transform: translateX(16px); } }
 @media (max-width: 1100px) {
   .shell, .shell[data-drawer="open"] { grid-template-columns: minmax(0, 1fr); }

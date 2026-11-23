@@ -78,7 +78,7 @@ const rateFor = provider => (ti, to, model) => { const p = require('../lib/budge
 async function main() {
   const a = process.argv.slice(3), arg = (n, d) => { const i = a.indexOf('--' + n); return i >= 0 ? a[i + 1] : d; };
   if (process.argv[2] !== 'run') { console.error('usage: relation_pilot.js run [--provider grok] [--limit N] [--dry-run] [--max-usd 0.10]'); process.exit(1); }
-  const md = fs.readFileSync(path.join(require('../heuristics_build').NOTES, 'QUARRY - Heuristics Illustrations.md'), 'utf8'); let frags = parseFragments(md);
+  const md = fs.readFileSync(path.join(require('../../packs/quiz/tools/heuristics_build').NOTES, 'QUARRY - Heuristics Illustrations.md'), 'utf8'); let frags = parseFragments(md);
   if (arg('limit')) frags = pick(frags).slice(0, +arg('limit'));
   const provider = arg('provider', 'grok'), { callLLM } = require('../lib/llm'), { JsonlCache } = require('./judge'), dry = a.includes('--dry-run');
   const r = await run(frags, { callLLM, cache: new JsonlCache(path.join(DIR, 'tag-cache.jsonl')) }, { provider, maxUsd: +arg('max-usd', 0.10), dryRun: dry, rate: rateFor(provider) });

@@ -56,7 +56,7 @@
 .helptable { width: 100%; border-collapse: collapse; font-size: var(--fs-1); margin: var(--s-2) 0; }
 .helptable th, .helptable td { text-align: left; padding: var(--s-2) var(--s-3); border-bottom: 1px solid var(--line); vertical-align: top; }
 .helptable thead th { color: var(--text-3); font-size: var(--fs-0); text-transform: uppercase; letter-spacing: .06em; } .helptable tbody th { font-weight: 650; white-space: nowrap; }
-.glossary dt { font-weight: 650; margin-top: var(--s-3); } .glossary dd { margin: 0; color: var(--text-2); max-width: 52rem; }
+.wordlist dt { font-weight: 650; margin-top: var(--s-3); } .wordlist dd { margin: 0; color: var(--text-2); max-width: 52rem; }
 
 /* Help contents (generated from the Muse map) */
 .toc ul { list-style: none; padding-left: var(--s-4); margin: var(--s-1) 0; display: grid; gap: var(--s-2); }
@@ -95,6 +95,7 @@
 /* Home: two blocks of equal height that never move; the results sit below. */
 .deck { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: var(--s-4); align-items: stretch; margin-bottom: var(--s-4); }
 @media (max-width: 900px) { .deck { grid-template-columns: 1fr; } }
+.deck--solo { grid-template-columns: minmax(0, 1fr); }
 .panel { display: flex; flex-direction: column; gap: var(--s-3); padding: var(--s-4); border: 1px solid var(--line); border-radius: var(--r-3, 12px); background: var(--surface); }
 .panel--on { border-color: var(--accent, #f08a5d); }
 .panel--idle { opacity: .72; }

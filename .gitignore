@@ -65,3 +65,6 @@ muse-tag-writeback.jsonl
 
 # Muse ops: job logs and reports (local, regenerated)
 logs/
+
+# Personal Muse config (muse.example.yaml is the committed template)
+muse.yaml

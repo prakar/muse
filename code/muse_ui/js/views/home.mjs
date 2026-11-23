@@ -1,4 +1,5 @@
 import { tidyQuote } from '../tidy.mjs';
+import { can } from '../pack_info.mjs';
 import { h } from '../dom.mjs';
 import { build } from '../router.mjs';
 import { kindLabel, kindBlurb } from '../kinds.mjs';
@@ -158,6 +159,6 @@ export async function homeView({ route, api, store, nav, actions }) {
   }
   const count = focused ? 'in focus' : opened ? (opened.surface || 'A hidden pair') : pairsMode ? `${n(pr.total)} ${pr.total === 1 ? 'pair' : 'pairs'}` : `${n(r.total)} ${r.total === 1 ? 'fact' : 'facts'}`;
   const resultsBox = ResultsPanel({ count: count + (pairsMode && !opened ? ' of wordplay' : '') + (skippedNote ? ' · ' + skippedNote : ''), tip: resultsTip, extra: headExtra }, results);
-  const node = h('div', {}, h('h1', { class: 'sr-only', text: W.home }), h('div', { class: 'deck' }, factsBlock, wordBlock), recentNav, resultsBox, pager);
+  const node = h('div', {}, h('h1', { class: 'sr-only', text: W.home }), h('div', { class: 'deck' + (can('wordplay') ? '' : ' deck--solo') }, factsBlock, ...(can('wordplay') ? [wordBlock] : [])), recentNav, resultsBox, pager);
   return { node, title: W.home, announce: count + (changed || pairsMode ? '' : ' in all'), after: ({ keepScroll } = {}) => { if (opened || focused) { const r = resultsBox.getBoundingClientRect(); if (r.top > window.innerHeight - 160) resultsBox.scrollIntoView({ block: 'start' }); }   /* only when Results starts below the fold; never yank the page when you can already see it, so Facts and Wordplay stay put */ else if (!keepScroll) node.querySelector('.is-selected')?.scrollIntoView({ block: 'center' }); } };
 }

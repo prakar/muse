@@ -1,7 +1,7 @@
 'use strict';
 // The Muse app's HTTP layer: static files for the interface, a small JSON API, and nothing else. Dependencies are passed in, so tests use fakes.
 const http = require('http'), fs = require('fs'), path = require('path');
-const angles = require('./angles'), C = require('./connect'), I = require('./ops_internal'), { createAccess } = require('./muse_access');
+const Pack = require('./pack'), angles = require('./angles'), C = require('./connect'), I = require('./ops_internal'), { createAccess } = require('./muse_access');
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.txt': 'text/plain; charset=utf-8' };
@@ -32,13 +32,14 @@ function createServer({ model, marks, notes, version, uiRoot, search = null, eve
   const anglesIndex = () => {
     if (anglesCache) return anglesCache;
     const half = new Set(), all = model.allPile(), noteOf = new Map(all.map(b => [b.id, b.noteId])), byH = new Map(), names = new Map();
-    const days = angles.sameMoment(all).filter(r => r.ids.length <= 5 && new Set(r.ids.map(i => noteOf.get(i))).size >= 2);
-    [].concat(angles.etymology(all), angles.uniqueness(all), angles.homonyms(all), angles.relations(all), angles.cueShapes(all), days).forEach(r => { names.set(r.h, r.name); if (r.half) half.add(r.h); if (!byH.has(r.h)) byH.set(r.h, []); byH.get(r.h).push(r); });
+    angles.browse(all, { noteOf }).forEach(r => { names.set(r.h, r.name); if (r.half) half.add(r.h); if (!byH.has(r.h)) byH.set(r.h, []); byH.get(r.h).push(r); });
     return (anglesCache = { byH, names, half });
   };
   const readBody = (req, cb, max = 10000) => { let b = ''; req.on('data', d => { b += d; if (b.length > max) req.destroy(); }); req.on('end', () => { try { cb(JSON.parse(b)); } catch (e) { cb(null); } }); };
 
   function serveStatic(res, urlPath) {
+    // The UI's words come from the active pack, not from a file: the file on disk is only the default pack's copy for tests and a fresh clone.
+    if (urlPath === '/js/pack_vocab.mjs') return send(res, 200, MIME['.mjs'] || 'text/javascript', require('./pack_vocab').moduleText(Pack.current().vocabulary));
     let rel; try { rel = decodeURIComponent(urlPath); } catch (e) { return send(res, 400, MIME['.txt'], 'bad path'); }
     const file = path.resolve(root, '.' + path.posix.normalize('/' + (rel === '/' ? 'index.html' : rel)));
     if (file !== root && !file.startsWith(root + path.sep)) return send(res, 403, MIME['.txt'], 'forbidden');
@@ -56,7 +57,7 @@ function createServer({ model, marks, notes, version, uiRoot, search = null, eve
     if (u.pathname.startsWith('/api/admin/') || (req.method === 'POST' && WRITE_PATHS.has(u.pathname))) { const a = access.authorize(req); if (!a.ok) return deny(res, a); }
 
     if (u.pathname === '/api/meta') return json(res, { version, notes: model.notes, burrs: model.burrs.length, sparks: model.sparks.length, wordplay: model.wordplay.length,
-      wordplayState: model.wordplayState, wordplayKinds: model.wordplayKinds(), marks: marks.counts(), search: search ? search.status().meaning : null });
+      wordplayState: model.wordplayState, wordplayKinds: model.wordplayKinds(), pack: { name: Pack.current().name, description: Pack.current().description, capabilities: Pack.current().capabilities, lenses: !!Pack.current().lens }, marks: marks.counts(), search: search ? search.status().meaning : null });
     if (u.pathname === '/api/suggest') return json(res, { items: withMarks(model.suggest(q.get('q') || '', 40), all).slice(0, 14) });
     if (u.pathname === '/api/wordplay') {
       const list = withMarks(model.wordplayPairs(q.get('kind') || '', 1e6), all), size = PAGE_SIZES.includes(+q.get('size')) ? +q.get('size') : 24;
@@ -79,10 +80,10 @@ function createServer({ model, marks, notes, version, uiRoot, search = null, eve
         .filter(Boolean).reverse();
       return json(res, { items: out, marks: marks.counts() });
     }
-    // The glossary: Muse's own meaning for each heuristic label (code/data/glossary.json, in the repo) plus one example each from a local file that never leaves this machine.
+    // The glossary: Muse's own meaning for each heuristic label (the active pack's glossary file, in the repo) plus one example each from a local file that never leaves this machine.
     if (u.pathname === '/api/glossary') {
       const read = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) { return null; } };
-      const g = read(path.join(__dirname, '..', 'data', 'glossary.json')), ex = read(path.join(__dirname, '..', '..', 'backtest', 'glossary-examples.json')) || {};
+      const g = read(Pack.current().files.glossary || ''), ex = read(path.join(__dirname, '..', '..', 'backtest', 'glossary-examples.json')) || {};
       if (!g) return json(res, { error: 'the glossary is not available' }, 503);
       return json(res, { rows: g.rows.map(r => Object.assign({}, r, { example: ex[r.id] ? { text: ex[r.id].text, own: !!ex[r.id].own } : null })), hasExamples: !!Object.keys(ex).length });
     }

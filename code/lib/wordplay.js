@@ -55,7 +55,7 @@ const VOWELS = new Set('aeiou'.split(''));
 const TRANSLIT = ['vw', 'ck', 'sz', 'jz', 'iy'].map(function (p) { return new Set(p.split('')); });
 function translit(x, y) { return TRANSLIT.some(function (t) { return t.has(x) && t.has(y); }); }
 function oneLetterOff(names) {
-  // single-word names only: puns and parodies are single words (Drainspotting / Trainspotting); multi-word pairs are almost always spelling variants
+  // single-word names only: playful renamings and parodies are single words (Drainspotting / Trainspotting); multi-word pairs are almost always spelling variants
   const items = distinctNames(names).filter(function (n) { return n.category !== 'person' && /^[A-Za-z]{6,}$/.test(String(n.name).trim()); }).map(function (n) { return { n: n, l: letters(n.name) }; });
   const byKey = new Map(), add = function (key, it) { if (!byKey.has(key)) byKey.set(key, []); byKey.get(key).push(it); };
   items.forEach(function (it) { add('=' + it.l, it); add('-' + it.l, it); for (let i = 0; i < it.l.length; i++) add('-' + it.l.slice(0, i) + it.l.slice(i + 1), it); });
@@ -72,7 +72,7 @@ function oneLetterOff(names) {
       seen.add(id); out.push({ a: x.n.name, b: y.n.name, kind: d.kind, pos: d.pos, first_letter: d.pos === 0 });
     }
   });
-  return out.sort(function (p, q) { return (q.first_letter ? 1 : 0) - (p.first_letter ? 1 : 0); });   // a changed first letter is the strongest pun
+  return out.sort(function (p, q) { return (q.first_letter ? 1 : 0) - (p.first_letter ? 1 : 0); });   // a changed first letter is the strongest play on a name
 }
 function diffOne(s, t) {
   if (s.length === t.length) { let at = -1; for (let i = 0; i < s.length; i++) if (s[i] !== t[i]) { if (at >= 0) return null; at = i; } return at >= 0 ? { kind: 'substitute', pos: at, letter: t[at] } : null; }
@@ -131,7 +131,7 @@ function anagrams(names) {
 }
 
 // 51. Acronym with its expansion in the claim, e.g. "NASA (National Aeronautics and Space Administration)" or "Foo Bar Baz (FBB)".
-// pronounceable acronyms are the likelier backronyms and pun-titles.
+// pronounceable acronyms are the likelier backronyms and play-on-words titles.
 function initialsOf(words) { return words.filter(function (w) { return !SMALL.has(w.toLowerCase()); }).map(function (w) { return w[0].toUpperCase(); }).join(''); }
 function acronyms(claims, vocab) {
   const out = [];
@@ -152,7 +152,7 @@ function vocabOf(claims) { const m = new Map(); claims.forEach(function (c) { (S
 function roundCapable(counts, size) { size = size || 8; return Object.keys(counts).filter(function (k) { return counts[k] >= size; }); }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
-// More quiz wordplay, all from the vault's own text. `lexicon` is a Set of everyday words (the vault's lowercase vocabulary), standing in for a dictionary.
+// More wordplay, all from the vault's own text. `lexicon` is a Set of everyday words (the vault's lowercase vocabulary), standing in for a dictionary.
 function lexiconOf(vocab, min) { const s = new Set(); (vocab || new Map()).forEach(function (n, w) { if (n >= (min || 5) && /^[a-z]{3,}$/.test(w)) s.add(w); }); return s; }
 function reverseStr(s) { return s.split('').reverse().join(''); }
 

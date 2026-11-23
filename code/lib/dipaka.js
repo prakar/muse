@@ -7,10 +7,13 @@
 // Everything outside is passed in (the model, the LLM call, the price table), so tests use fakes. The database is never touched; only the one file given.
 const fs = require('fs');
 
-const PROMPT_VERSION = 'dip-v6';   // v2 carried quotes, notes and link lines and asked two things; v3 was the bare facts and one ask; v4 put the note title before each fact and asked for concision; v5 added etymologies, pop-culture and historical references to the wanted list; v6 appends the author’s own line after a fact, in brackets
+const Pack = require('./pack');
+// What the lamp asks for is the pack's: the author's own taste (intro) and the ask itself (question). With no pack file, a neutral pair is used.
+const PK = Pack.current().dipaka || { promptVersion: 'dip-n1', intro: 'These facts come from my own notes.', question: 'What related things should I know that these facts do not already cover?' };
+const PROMPT_VERSION = PK.promptVersion;   // v2 carried quotes, notes and link lines and asked two things; v3 was the bare facts and one ask; v4 put the note title before each fact and asked for concision; v5 added etymologies, pop-culture and historical references to the wanted list; v6 appends the author’s own line after a fact, in brackets
 const LABELS = ['yielded', 'generic', 'already-knew', 'wrong'];
-const INTRO = 'I value interesting, unexpected, and surprising connections, and lesser-known facts about well-known entities, including etymologies, pop-culture references, and interesting historical references if any. I know these facts:';
-const QUESTION = 'What I want you to do is illuminate the gaps between these facts: tell me things, in the manner I described above, that I would like to know but did not cover in the facts because I don’t know them yet. Be concise: no preamble, no restating my facts, no repetition, and no padding.';
+const INTRO = PK.intro;
+const QUESTION = PK.question;
 const SYSTEM = null;   // dip-v4: no system prompt. The packet is the whole request.
 const MAX_FACTS = 20, MAX_PACKET = 30000, EXPECTED_OUT_TOKENS = 2500, MAX_OUT_TOKENS = 4000;
 

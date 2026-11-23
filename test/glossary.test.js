@@ -1,6 +1,6 @@
 'use strict';
 const test = require('node:test'), assert = require('node:assert'), fs = require('node:fs'), os = require('node:os'), path = require('node:path'), http = require('node:http');
-const G = require('../code/data/glossary.json'), H = require('../code/data/heuristics.json'), { pickExamples } = require('../code/lab/glossary_examples');
+const G = require('../packs/quiz/data/glossary.json'), H = require('../packs/quiz/data/heuristics.json'), { pickExamples } = require('../code/lab/glossary_examples');
 
 test('the glossary covers every heuristic once, in the repo, with no examples in it', () => {
   assert.deepStrictEqual(G.rows.map((r) => r.id), H.rows.map((r) => r.id));

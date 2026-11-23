@@ -2,7 +2,7 @@
   "generated_from": [
     "QUARRY - Heuristics Commons",
     "QUARRY - Heuristics Illustrations",
-    "code/data/heuristic_overlay.json"
+    "packs/quiz/data/heuristic_overlay.json"
   ],
   "assessed": "2026-10-28 against the nug-v6 prompt and schema (code/lib/burrs.js) and the measurements in code/lab/out/nug-v6/heuristic_gap.json",
   "relations": [

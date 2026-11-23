@@ -1,0 +1,87 @@
+{
+  "name": "quiz",
+  "contract": 1,
+  "version": "1.0.0",
+  "description": "For writers of quizzes and puzzles: facts worth building a question around, hooks for wordplay, etymology and coincidence, and the 71 quiz-setting shapes (heuristics).",
+  "capabilities": [
+    "wordplay"
+  ],
+  "extraction": {
+    "promptVersion": "nug-v6",
+    "schemaVersion": "burr-v1",
+    "audience": "a quiz author's research tool",
+    "claimReader": "a quiz author",
+    "kinds": [
+      "fact",
+      "etymology",
+      "aside",
+      "pattern",
+      "opinion"
+    ],
+    "kindNotes": "\"aside\" = a side detail in a digression; \"pattern\" = a streak, gap or count across a list or table; \"etymology\" = where a word or name comes from.",
+    "hooks": {
+      "strict": [
+        "entity",
+        "time",
+        "number",
+        "etymon",
+        "material",
+        "place",
+        "homonym"
+      ],
+      "loose": [
+        "set",
+        "uniqueness",
+        "mechanism",
+        "former-role"
+      ],
+      "categorised": [
+        "entity",
+        "place",
+        "material"
+      ]
+    },
+    "categories": [
+      "person",
+      "place",
+      "organisation",
+      "work",
+      "event",
+      "food",
+      "animal",
+      "plant",
+      "substance",
+      "object",
+      "concept",
+      "language",
+      "myth",
+      "other"
+    ],
+    "categoryExample": "so \"Mercury\" the planet and \"Mercury\" the metal differ: place vs substance",
+    "caps": {
+      "base": 6,
+      "long": 10,
+      "xl": 14,
+      "longChars": 1200,
+      "xlChars": 2500
+    },
+    "skipRule": "9a. Skip text that documents software, markup or website features (for example how links or headers work); it is not a fact about the world.",
+    "example": {
+      "note": "[T] Quokka selfie craze, Rottnest, 2015",
+      "reply": "{\"burrs\":[{\"claim\":\"Quokkas on Rottnest Island became a selfie craze in 2015.\",\"src\":[\"T\"],\"kind\":\"fact\",\"hooks\":[{\"type\":\"entity\",\"value\":\"Quokka\",\"cat\":\"animal\"},{\"type\":\"place\",\"value\":\"Rottnest\",\"cat\":\"place\"},{\"type\":\"time\",\"value\":\"2015\",\"era\":\"AD\"}],\"perishable\":false}],\"reason\":\"\"}"
+    }
+  },
+  "files": {
+    "heuristics": "packs/quiz/data/heuristics.json",
+    "heuristicOverlay": "packs/quiz/data/heuristic_overlay.json",
+    "glossary": "packs/quiz/data/glossary.json",
+    "heuristicsBuild": "packs/quiz/tools/heuristics_build.js",
+    "tagVocabulary": "code/data/tag_vocabulary.json"
+  },
+  "lenses": {
+    "config": "packs/quiz/lenses.json",
+    "registry": "packs/quiz/data/heuristics.json"
+  },
+  "vocabulary": "packs/quiz/vocabulary.json",
+  "dipaka": "packs/quiz/dipaka.json"
+}

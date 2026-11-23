@@ -17,6 +17,8 @@ const PROVIDERS = ['gemini', 'claude', 'grok', 'openrouter'];
 
 const bad = m => { const e = new Error(m); e.userError = true; return e; };
 const script = (label, file, args = []) => ({ label, script: file, args });
+// The registry builder belongs to the active pack (pack.json files.heuristicsBuild); a pack without one has no registry to build.
+const heuristicsStep = go => { const f = require('./pack').current().files.heuristicsBuild; return f ? script(go ? 'Rebuild the registry' : 'Check the registry', path.relative(path.join(ROOT, 'code'), f), go ? [] : ['--check']) : { label: 'No registry', cmd: process.execPath, args: ['-e', "console.log('This pack has no heuristic registry.')"] }; };
 const internal = (label, name, args = []) => ({ label, script: 'muse_ops.js', args: ['_do', name, ...args] });
 
 function parseParam(def, raw) {
@@ -106,7 +108,7 @@ const TASKS = [
     params: [P('mode', 'enum', 'Real run does', { values: ['apply', 'undo'], default: 'apply' })],
     build: (p, go) => [script(go ? (p.mode === 'undo' ? 'Clear wordplay' : 'Store wordplay') : 'Wordplay report', 'wordplay.js', go ? [p.mode === 'undo' ? '--undo' : '--apply'] : [])] },
   { id: 'heuristics', area: 'prep', title: 'Heuristic registry', does: 'Check the registry against its source (default), or rebuild it.', effect: 'writes files', group: null, dry: true, params: [],
-    build: (p, go) => [script(go ? 'Rebuild the registry' : 'Check the registry', 'heuristics_build.js', go ? [] : ['--check'])] },
+    build: (p, go) => [heuristicsStep(go)] },
   { id: 'search-build', area: 'prep', title: 'Rebuild search by meaning', does: 'Compute vectors for new or changed facts (needs the embedding server), or use only what is cached. Safe to repeat.', effect: 'writes files', group: 'search',
     params: [P('noEmbed', 'bool', 'Cached vectors only, no embedding server', { default: false })],
     build: p => [script('Build vectors', 'search_build.js', p.noEmbed ? ['--no-embed'] : [])] },

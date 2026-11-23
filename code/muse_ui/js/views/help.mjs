@@ -38,7 +38,7 @@ export async function helpView({ route }) {
     contents(), which, recipes,
     h('section', { class: 'section' }, h('h2', { text: 'Keys' }), table(['Key', 'What it does'], QUICK_KEYS)),
     h('section', { class: 'section' }, h('h2', { text: 'Where things are saved' }), table(['What', 'Where', 'Notes'], SAVED)),
-    h('section', { class: 'section' }, h('h2', { text: 'Words used in Muse' }), h('dl', { class: 'glossary' }, GLOSSARY.flatMap(([t, d]) => [h('dt', { text: t }), h('dd', { text: d })]))),
+    h('section', { class: 'section' }, h('h2', { text: 'Words used in Muse' }), h('dl', { class: 'wordlist' }, GLOSSARY.flatMap(([t, d]) => [h('dt', { text: t }), h('dd', { text: d })]))),
     h('section', { class: 'section' }, h('h2', { text: 'What is coming' }), table(['', ''], COMING)),
     h('section', { class: 'section', id: 'sysadmin' }, h('h2', { text: 'Sys Admin' }), h('p', { class: 'hint', text: SYSADMIN.intro }),
       table(['Command', 'What it does'], SYSADMIN.commands), h('p', { class: 'hint', text: SYSADMIN.refuses }),

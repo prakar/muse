@@ -12,26 +12,31 @@ const { jsonrepair } = require('jsonrepair');
 const crypto = require('crypto');
 const L = require('./bristles');
 const U = require('./units');
+const Pack = require('./pack');
 
-const PROMPT_VERSION = 'nug-v6';
-const SCHEMA_VERSION = 'burr-v1';
+// What gets extracted, and the words that ask for it, belong to the active pack (packs/<name>/pack.json). This file keeps what is true for any pack:
+// the facts must come from the note, quotes must be in it, numbers must appear in it, hooks are checked against it.
+const EX = Pack.extraction();
+
+const PROMPT_VERSION = EX.promptVersion;
+const SCHEMA_VERSION = EX.schemaVersion;
 const MAX_BODY_CHARS = 6000;
-const MAX_BURRS      = 6;
-const MAX_BURRS_LONG = 10;   // notes over LONG_NOTE_CHARS
-const MAX_BURRS_XL   = 14;   // notes over XL_NOTE_CHARS (nug-v5: the late burrs of long notes were as good as the early ones)
-const LONG_NOTE_CHARS = 1200;
-const XL_NOTE_CHARS   = 2500;
-function burrCap(cleaned) { const n = String(cleaned || '').length; return n > XL_NOTE_CHARS ? MAX_BURRS_XL : n > LONG_NOTE_CHARS ? MAX_BURRS_LONG : MAX_BURRS; }
+const MAX_BURRS      = EX.caps.base;   // per-note caps by note length; the pack decides how many (nug-v5: the late burrs of long notes were as good as the early ones)
+const MAX_BURRS_LONG = EX.caps.long;
+const MAX_BURRS_XL   = EX.caps.xl;
+const LONG_NOTE_CHARS = EX.caps.longChars;
+const XL_NOTE_CHARS   = EX.caps.xlChars;
+function burrCap(cleaned, caps) { caps = caps || EX.caps; const n = String(cleaned || '').length; return n > caps.xlChars ? caps.xl : n > caps.longChars ? caps.long : caps.base; }
 
 // nug-v5: entity, place and material hooks carry a coarse category, so "Panini" the grammarian and "Panini" the
 // sandwich can be told apart without context similarity. Anything else the model writes becomes 'other'.
-const CATEGORIES = ['person', 'place', 'organisation', 'work', 'event', 'food', 'animal', 'plant', 'substance', 'object', 'concept', 'language', 'myth', 'other'];
-const CAT_HOOKS  = ['entity', 'place', 'material'];
+const CATEGORIES = EX.categories;
+const CAT_HOOKS  = EX.hooks.categorised;
 
-const KINDS         = ['fact', 'etymology', 'aside', 'pattern', 'opinion'];
+const KINDS         = EX.kinds;
 // Hook values of these types must be found in the note text; the others are abstract phrases.
-const STRICT_HOOKS  = ['entity', 'time', 'number', 'etymon', 'material', 'place', 'homonym'];
-const LOOSE_HOOKS   = ['set', 'uniqueness', 'mechanism', 'former-role'];
+const STRICT_HOOKS  = EX.hooks.strict;
+const LOOSE_HOOKS   = EX.hooks.loose;
 const HOOK_TYPES    = STRICT_HOOKS.concat(LOOSE_HOOKS);
 
 // Single source of truth for the Muse tables: migrate.js (M012) and the tests both use it.
@@ -194,28 +199,34 @@ function buildInput(note, cleaned) {
   return 'SOURCE_URL: ' + (note.source_url || 'none') + '\n[T] ' + squash(stripLinks(note.title)) + '\n' + lines.join('\n');
 }
 
-function buildPrompt(note, cleaned) {
-  const system = 'You extract atomic, citable claims from ONE personal note for a quiz author\'s research tool. You never add facts.';
+const andList = (a) => a.length < 2 ? a.join('') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1];
+
+// The rules about faithfulness are written here and are the same for every pack. The pack fills the slots: who the reader is, the kinds, the hook
+// vocabulary, the categories, the skip rule and the worked example. `ex` defaults to the active pack; tests pass another.
+function buildPrompt(note, cleaned, ex) {
+  ex = ex || EX;
+  const hooks = ex.hooks, hookTypes = hooks.strict.concat(hooks.loose);
+  const skipLine = ex.skipRule ? ex.skipRule + '\n' : '';
+  const system = 'You extract atomic, citable claims from ONE personal note for ' + ex.audience + '. You never add facts.';
   const prompt =
 `Extract the specific facts ("burrs") that this note states. Rules:
 1. Use ONLY what the note states (title included). Never add outside knowledge, never correct the note, never infer unstated causes or dates.
-2. A burr is ONE claim a quiz author could cite, written as a complete plain sentence with the specifics (names, dates, numbers, places). A topic label or a bare link title is not a burr. Write each claim so it makes sense with no other context: name the people and things, no pronouns, no "the fungus" or "the author". State facts neutrally: no judgement words like "iconic" unless the note attributes them to someone.
+2. A burr is ONE claim ${ex.claimReader} could cite, written as a complete plain sentence with the specifics (names, dates, numbers, places). A topic label or a bare link title is not a burr. Write each claim so it makes sense with no other context: name the people and things, no pronouns, no "the fungus" or "the author". State facts neutrally: no judgement words like "iconic" unless the note attributes them to someone.
 3. "src": the ids of the 1 to 3 numbered lines that state the claim, e.g. ["T"] for the title or [2,3]. Give ids only; do not copy text. Cite only lines that really contain the claim.
 4. Every number or year in "claim" must appear in the cited lines.
-5. "kind": fact | etymology | aside | pattern | opinion. "aside" = a side detail in a digression; "pattern" = a streak, gap or count across a list or table; "etymology" = where a word or name comes from.
-6. "hooks": handles another note could share: [{"type": T, "value": V, "cat": C}] where T is one of: entity, time, number, etymon, material, place, homonym, set, uniqueness, mechanism, former-role. For entity, time, number, etymon, material, place and homonym, V must be copied exactly from the note. For set, uniqueness, mechanism and former-role, V is a short phrase. For entity, place and material add "cat", the kind of thing V is here, one of: person, place, organisation, work, event, food, animal, plant, substance, object, concept, language, myth, other (so "Mercury" the planet and "Mercury" the metal differ: place vs substance).
+5. "kind": ${ex.kinds.join(' | ')}. ${ex.kindNotes}
+6. "hooks": handles another note could share: [{"type": T, "value": V, "cat": C}] where T is one of: ${hookTypes.join(', ')}. For ${andList(hooks.strict)}, V must be copied exactly from the note. For ${andList(hooks.loose)}, V is a short phrase. For ${andList(hooks.categorised)} add "cat", the kind of thing V is here, one of: ${ex.categories.join(', ')} (${ex.categoryExample}).
 6b. nug-v6, time hooks: V is a calendar year or decade as written in the note ("1066", "476", "1960s"); add "era": "AD" or "BC". Use "AD" for a year after 1000 when the note gives no era; if you cannot tell the era, leave the hook out. A duration or an age ("150 years", "three decades", "1400 years ago", "aged 30", "2000 years old") is NOT a time hook: make it a number hook with unit "year". A century ("the 2nd century BC") is a time hook whose value is the century as written and whose era is AD or BC.
 6c. nug-v6, number hooks: V is a quantity written in the note; add "unit": what is counted or measured, as one lowercase singular word or a standard symbol (km, kg, usd, %, °c, run, person, tiger, page, year). Do not invent a unit the note does not imply. A number that is only a label or identifier (Windows 95, store #2000, Route 66, a jersey number, a year used as part of a name) is NOT a number hook: leave it out. Only number hooks carry "unit" and only time hooks carry "era".
 7. "perishable": true if the claim is a present-tense figure or status that can go stale (a population, price, record, office holder, "currently", "today", "latest"); otherwise false.
 8. Telegraphic notes are fine: turn shorthand into a sentence using only the words and facts in the note.
-9a. Skip text that documents software, markup or website features (for example how links or headers work); it is not a fact about the world.
-9. If the note holds no specific citable claim, return {"burrs": [], "reason": "<short reason>"}.
+${skipLine}9. If the note holds no specific citable claim, return {"burrs": [], "reason": "<short reason>"}.
 10. A burr must say something about the world: a person, thing, event, word, number or place. Never write a claim about the note itself, its title, a URL, a file name, an image or a web page ("The note is titled...", "The URL is about...", "The image is dated...", "The year 2006 is mentioned"). Link-only, image-only and bare-title notes have no burrs: return an empty list.
-11. At most ${burrCap(cleaned)} burrs. Reply with JSON only, no prose, no code fences.
+11. At most ${burrCap(cleaned, ex.caps)} burrs. Reply with JSON only, no prose, no code fences.
 
 Example note:
-[T] Quokka selfie craze, Rottnest, 2015
-Reply: {"burrs":[{"claim":"Quokkas on Rottnest Island became a selfie craze in 2015.","src":["T"],"kind":"fact","hooks":[{"type":"entity","value":"Quokka","cat":"animal"},{"type":"place","value":"Rottnest","cat":"place"},{"type":"time","value":"2015","era":"AD"}],"perishable":false}],"reason":""}
+${ex.example.note}
+Reply: ${ex.example.reply}
 
 Schema: {"burrs":[{"claim":"","src":[],"kind":"fact","hooks":[{"type":"","value":"","cat":"","unit":"","era":""}],"perishable":false}],"reason":""}
 
@@ -359,6 +370,9 @@ function qualifyHook(type, value, claim, h) {
  */
 function verifyBurrs(burrsIn, note, opts) {
   const requireUnits = !opts || opts.requireUnits !== false;
+  // The vocabulary is the pack's (opts.ex for tests); the checks below are the same for every pack.
+  const X = (opts && opts.ex) || EX;
+  const HOOK_TYPES = X.hooks.strict.concat(X.hooks.loose), STRICT_HOOKS = X.hooks.strict, CAT_HOOKS = X.hooks.categorised, CATEGORIES = X.categories, KINDS = X.kinds;
   const title = squash(stripLinks(note.title)), body = squash(note.cleaned);
   const hays = [title, body];
   const units = segment(note.cleaned);
@@ -367,7 +381,7 @@ function verifyBurrs(burrsIn, note, opts) {
   const accepted = [], rejected = [];
   const seen = new Set();
   let hooksDropped = 0;
-  const cap = burrCap(note.cleaned);
+  const cap = burrCap(note.cleaned, X.caps);
 
   for (const b of burrsIn) {
     if (accepted.length >= cap) { rejected.push({ reason: 'over_cap', claim: squash(b && b.claim).slice(0, 80) }); continue; }

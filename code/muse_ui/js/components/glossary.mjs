@@ -1,5 +1,6 @@
 import { h, mount } from '../dom.mjs';
 import { Button } from './button.mjs';
+import PACK from '../pack_vocab.mjs';
 
 // The Angles glossary: a fly-out that says what each shape name means in Muse. One entry per heuristic: the definition, an example (from a local file, so it may be
 // missing), whether the definition is still a draft, and how fully Muse can find the shape. Opens at one entry when a card's shape name is pressed. Esc closes it.
@@ -13,7 +14,7 @@ export function Glossary({ api }) {
   const entry = r => h('article', { class: 'glossary__entry', id: 'gloss-' + r.id },
     h('h3', {}, r.name, ' ', h('span', { class: 'badge', text: r.status === 'locked' ? 'locked' : 'draft', title: r.status === 'locked' ? 'Muse’s agreed meaning' : 'Wording not yet agreed' })),
     h('p', { text: r.definition }),
-    r.example ? h('p', { class: 'hint', text: 'Example: ' + r.example.text + (r.example.own ? '' : ' (from another setter; shown on this machine only)') }) : null,
+    r.example ? h('p', { class: 'hint', text: 'Example: ' + r.example.text + (r.example.own ? '' : (PACK.glossaryOthers || ' (from someone else; shown on this machine only)')) }) : null,
     h('p', { class: 'hint', text: DETECTS[r.detects] || DETECTS.none }));
   function draw() {
     const needle = q.trim().toLowerCase(), list = (rows || []).filter(r => !needle || (r.name + ' ' + r.definition).toLowerCase().includes(needle));

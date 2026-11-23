@@ -4,13 +4,13 @@
  *
  * One source of truth per field, so nothing can drift:
  *  - name, detection tag and group  <- vault note "QUARRY - Heuristics Commons" (parsed, never copied)
- *  - fragment count and confidence  <- vault note "QUARRY - Heuristics Illustrations" (counts only; no quiz text is read out)
- *  - route, v6 coverage, gaps, joins, relations, detector, note <- code/data/heuristic_overlay.json (authored, canonical)
- * code/data/heuristics.json is GENERATED from those three by code/heuristics_build.js and checked for drift by the tests.
+ *  - fragment count and confidence  <- vault note "QUARRY - Heuristics Illustrations" (counts only; no question text is read out)
+ *  - route, v6 coverage, gaps, joins, relations, detector, note <- packs/quiz/data/heuristic_overlay.json (authored, canonical)
+ * packs/quiz/data/heuristics.json is GENERATED from those three by packs/quiz/tools/heuristics_build.js and checked for drift by the tests.
  *
  * Pure functions, no I/O.
  */
-const B = require('./burrs');
+const B = require('../../../code/lib/burrs');
 
 const GROUPS = [[1, 44, 'A', 'link structures'], [45, 57, 'B', 'names and words'], [58, 60, 'C', 'surface-form'], [61, 71, 'D', 'set and round shapes']];
 const ROUTES = ['join', 'string', 'relation', 'judge', 'card', 'author'];
@@ -60,7 +60,7 @@ function build(commonsMd, illustrationsMd, overlay) {
       fragments: f.fragments, conf: f.conf
     });
   });
-  return { generated_from: ['QUARRY - Heuristics Commons', 'QUARRY - Heuristics Illustrations', 'code/data/heuristic_overlay.json'], assessed: overlay.assessed, relations: overlay.relations, gaps: overlay.gaps, rows: rows };
+  return { generated_from: ['QUARRY - Heuristics Commons', 'QUARRY - Heuristics Illustrations', 'packs/quiz/data/heuristic_overlay.json'], assessed: overlay.assessed, relations: overlay.relations, gaps: overlay.gaps, rows: rows };
 }
 
 // Returns a list of problems; empty means valid.

@@ -54,3 +54,11 @@ test('note API serves a note with its passage, and 404s the unknown', () => with
   assert.strictEqual((await call('/api/note?title=Linked%20Note')).status, 200);
   assert.strictEqual((await call('/api/note?id=')).status, 404);
 }));
+
+test('the UI words come from the active pack, and /api/meta says which pack is active', () => withServer(async call => {
+  const m = await call('/js/pack_vocab.mjs');
+  assert.strictEqual(m.status, 200); assert.match(m.headers['content-type'], /text\/javascript/);
+  assert.match(m.body, /export default \{/); assert.match(m.body, /"purpose"/);
+  const meta = JSON.parse((await call('/api/meta')).body);
+  assert.strictEqual(meta.pack.name, 'quiz'); assert.strictEqual(meta.pack.lenses, true); assert.ok(meta.pack.capabilities.includes('wordplay'));
+}));

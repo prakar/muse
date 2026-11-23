@@ -3,12 +3,18 @@
 
 import { DATA } from './muse_map.mjs';
 import { fill } from './words.mjs';
+import PACK from './pack_vocab.mjs';
+import { overlay } from './overlay.mjs';
 
 // Names of actions and places are tokens ({focus}, {collect}, {collection}, {star}, {starred}, {stick}, {inFocus}) filled from words.mjs when this module loads,
 // so a rename there reaches every sentence below and cannot leave Help saying something the buttons no longer say.
 const RAW = {};
+// The recipes a pack adds or rewords (Angles, Wordplay, and the quiz wording of Test and the Collection steps) come from the pack: a pack entry with an existing key
+// patches that recipe, a new key is inserted after its `after`.
 
-RAW.INTRO = 'Muse shows you the connections hidden in your notes, so you can write quiz questions of your own. It never writes a question for you. {home} shows the whole vault at a glance; {home} narrows it by how well connected a fact is and by what connects it; {stick} puts one fact in focus and shows what clings to it. Search sits above all of them.';
+
+// The first sentence's purpose clause is the pack's (what the connections are for); with none, the sentence simply ends.
+RAW.INTRO = 'Muse shows you the connections hidden in your notes' + (PACK.purpose ? ', ' + PACK.purpose : '.') + ' {home} shows the whole vault at a glance; {home} narrows it by how well connected a fact is and by what connects it; {stick} puts one fact in focus and shows what clings to it. Search sits above all of them.';
 
 RAW.QUICK_KEYS = [['/', 'Jump to the search box from anywhere.'], ['Enter', 'In the search box: run a search over your notes. Choose a suggestion with the arrow keys first to open that handle instead.'], ['Esc', 'Close the suggestions, or close the open note.'], ['Tab, Space', 'Move between buttons and press them. Everything works from the keyboard.']];
 
@@ -22,12 +28,8 @@ RAW.WHICH = [
 RAW.RECIPES = [
   { key: 'link', title: 'Where do I write the line that connects two facts?', goal: 'Record, in your own words, how two facts link, so the {collection} becomes the sketch of a question.',
     start: { t: 'Any fact, on any page', href: '#/search' },
-    steps: ['Press {collect} on a fact. It joins your {collection}. Open the {collection} with the button at the top of any page; it slides in beside what you are reading.', 'Press {collect} on a second fact. A dashed field marked ↳ appears between the two facts, with the hint “How do these two link? (optional)”.', 'Click the field and type your line (up to 200 characters). It saves itself a moment after you stop typing; the box header shows Autosaving… then Autosaved.', 'With three facts you get two fields: one between facts 1 and 2, one between 2 and 3. Each line belongs to that pair, as they sit in the list.', 'Under the list, Angles names the quiz shapes your facts already hint at (a shared date, the same name for two kinds of thing, a word with a story, a “because”), with the facts involved. It is a pointer, not a question; it costs nothing and uses no model.', 'Press Copy cluster. Your lines are copied between the facts, each starting with ↳.'],
+    steps: ['Press {collect} on a fact. It joins your {collection}. Open the {collection} with the button at the top of any page; it slides in beside what you are reading.', 'Press {collect} on a second fact. A dashed field marked ↳ appears between the two facts, with the hint “How do these two link? (optional)”.', 'Click the field and type your line (up to 200 characters). It saves itself a moment after you stop typing; the box header shows Autosaving… then Autosaved.', 'With three facts you get two fields: one between facts 1 and 2, one between 2 and 3. Each line belongs to that pair, as they sit in the list.', 'Press Copy cluster. Your lines are copied between the facts, each starting with ↳.'],
     then: 'If you remove a fact and collect it again it goes to the end of the list, so its neighbours change and the old line stays with the old pair.' },
-  { key: 'angles', title: 'I want to start from a quiz shape, not a pile', goal: 'Browse every place in your notes where a shape shows up (a word with a story, a first-or-only claim, two facts on one day, a stated cause), and collect the ones that spark something.',
-    start: { t: 'Angles', href: '#/angles' },
-    steps: ['Press Angles at the top of any page. The first visit takes a few seconds while Muse reads every fact once.', 'Pick a shape from the row of chips. The number is how many findings it has.', 'Each card names the shape, says why it fired, and gives a seed: what the answer would be, what joins the facts, and what you would hide. Below are the facts themselves.', 'Wordplay pairs opens Home’s Wordplay block (anagrams, one-letter-off pairs, hidden words and more). Press Glossary to see what each shape name means in Muse, with an example and how fully Muse can find it. Clicking a card’s shape name opens its entry.', 'Press {collect} on facts that spark something. The {collection} then shows the shapes your own pile hints at.'],
-    then: 'A card is a pointer, not a question. Some are wrong: a word with a story can be a dull plural, and a “because” can be trivial. Skip those.' },
   { key: 'focus', title: 'What is Focus, and when do I use it?', goal: 'Aim at one fact to see what else in the vault touches it: the other notes that share its names, places and dates.',
     start: { t: 'Search, or any fact', href: '#/search' },
     steps: ['Find any fact: search for it, open a set from {home}, or narrow the facts on {home}.', 'Press {focusEmoji} {focus} on the fact. It opens at the top of the {stick} page.', 'Read below it: each heading is a hook (a name, place or year the fact mentions) that also appears in other notes, with facts from those notes underneath.', 'Press {focus} on one of those facts to move to it, and see what clings to that one. You are walking from fact to fact through the vault.', 'Press {collect} on the ones that fit a question you are building.'],
@@ -48,11 +50,7 @@ RAW.RECIPES = [
     start: { t: '{home}', href: '#/' },
     steps: ['Search for the handle, or browse the wordplay kinds on {home} (anagrams, hidden words, sound-alikes…). Choose a suggestion to open its set.', 'Set how many facts you want and the order (hard to easy, or easy to hard).', 'Press {star} on the facts you want, or {star} this pair / handle for the whole set.', 'Press Copy as text for the list, or open {starred} later to browse everything you starred.'],
     then: 'Dull removes a fact from the set; Wrong sense removes a fact that matched the word but not the meaning. Both can be undone, and Show dull brings them back into view.' },
-  { key: 'wordplay', title: 'I want a pun or a trick of spelling to build a question on', goal: 'Find pairs of names and words that echo each other by sound or by letters, for puns, anagrams and hidden-word questions.',
-    start: { t: '{home}, Wordplay', href: '#/' },
-    steps: ['In the Wordplay block on {home}, pick a trick: Sound-alikes, One letter apart, Letter dropped, Anagram pairs, Anagram of a word, Hidden word, Backwards or Digit look-alike. All wordplay shows every kind together.', 'Each tile is one pair, such as a name and the everyday word it sounds like. Open one to see the facts about it.', 'On the set page press {star} this pair to save it to {starred}, or Dull if the pair is only chance.', 'To build on it, press {focus} on one of its facts, then {collect} the facts that fit the trick (see the recipe on writing the link line).'],
-    then: 'Pairs come from a detector that guesses, so expect some chance matches; Dull and Wrong sense teach nothing to the detector but keep them out of your way.' },
-  { key: 'test', title: 'I want to test whether I can guess the link', goal: 'Practise the quiz setter’s view: facts first, link hidden.',
+  { key: 'test', title: 'I want to test whether I can guess the link', goal: 'Practise the other way round: facts first, link hidden.',
     start: { t: '{home}, any set', href: '#/' },
     steps: ['Open a set.', 'Press Reveal last. The handle is blanked in the facts, their quotes and the note titles.', 'Read the facts and guess the handle.', 'Press Show the handle to check.'],
     then: '{focus} and the note title stay switched off until the handle is shown, because they would give the answer away.' },
@@ -78,6 +76,7 @@ RAW.RECIPES = [
     then: 'A Reflection button that finds weak facts for you is planned; it will list them in a queue for you to star, retire or fix.' }
 ];
 
+RAW.RECIPES = overlay(RAW.RECIPES, PACK.recipes);
 export const { INTRO, QUICK_KEYS, WHICH, RECIPES } = fill(RAW);
 
 // Generated from the Muse map, so this table cannot drift from the code (see muse_map.mjs and `node code/muse_map_check.js`).

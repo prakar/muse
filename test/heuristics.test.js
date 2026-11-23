@@ -2,8 +2,8 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs'), path = require('path');
-const H = require('../code/lib/heuristics');
-const BUILD = require('../code/heuristics_build');
+const H = require('../packs/quiz/tools/heuristics');
+const BUILD = require('../packs/quiz/tools/heuristics_build');
 
 const COMMONS = [
   '# Commons', '## A', '1. **Chain with pivot:** a scenario, then its consequence. [LLM]', '29. **Anomaly in a corpus:** the outlier. [SQL if counts are stored]',
@@ -64,11 +64,11 @@ const haveNotes = fs.existsSync(path.join(BUILD.NOTES, 'QUARRY - Heuristics Comm
 test('the real registry is valid and in sync with its sources', { skip: !haveNotes && 'vault notes not on this machine' }, () => {
   const s = BUILD.sources(), reg = H.build(s.commons, s.illustrations, s.overlay);
   assert.deepStrictEqual(H.validate(reg, s.overlay), []);
-  const file = path.join(__dirname, '..', 'code', 'data', 'heuristics.json');
-  assert.strictEqual(fs.readFileSync(file, 'utf8'), JSON.stringify(reg, null, 2) + '\n', 'run: node --no-warnings code/heuristics_build.js');
+  const file = path.join(__dirname, '..', 'packs', 'quiz', 'data', 'heuristics.json');
+  assert.strictEqual(fs.readFileSync(file, 'utf8'), JSON.stringify(reg, null, 2) + '\n', 'run: node --no-warnings packs/quiz/tools/heuristics_build.js');
 });
 test('the committed registry holds no quiz text: only names, tags, counts and grades', () => {
-  const file = path.join(__dirname, '..', 'code', 'data', 'heuristics.json');
+  const file = path.join(__dirname, '..', 'packs', 'quiz', 'data', 'heuristics.json');
   if (!fs.existsSync(file)) return;
   const reg = JSON.parse(fs.readFileSync(file, 'utf8'));
   reg.rows.forEach(r => assert.deepStrictEqual(Object.keys(r).sort(), ['conf', 'detector', 'fragments', 'gaps', 'group', 'id', 'join_on', 'name', 'note', 'rel', 'route', 'tag', 'v6']));
@@ -78,6 +78,6 @@ test('relation names in the vault gap note match the registry vocabulary', { ski
   const md = fs.readFileSync(path.join(BUILD.NOTES, 'QUARRY - Heuristics Gap Analysis.md'), 'utf8');
   const sec = md.slice(md.indexOf('## Draft relation vocabulary'));
   const names = (sec.slice(0, sec.indexOf('\n## ', 5) > 0 ? sec.indexOf('\n## ', 5) : undefined).match(/^\| `([a-z-]+)` \|/gm) || []).map(x => /`([a-z-]+)`/.exec(x)[1]);
-  const overlay = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'code', 'data', 'heuristic_overlay.json'), 'utf8'));
+  const overlay = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'packs', 'quiz', 'data', 'heuristic_overlay.json'), 'utf8'));
   assert.deepStrictEqual(names.slice().sort(), overlay.relations.slice().sort());
 });

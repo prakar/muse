@@ -16,7 +16,7 @@ function pickExamples(frags) {
 }
 module.exports = { pickExamples };
 if (require.main === module) {
-  const md = fs.readFileSync(path.join(require('../heuristics_build').NOTES, 'QUARRY - Heuristics Illustrations.md'), 'utf8'), ex = pickExamples(parseFragments(md));
+  const md = fs.readFileSync(path.join(require('../../packs/quiz/tools/heuristics_build').NOTES, 'QUARRY - Heuristics Illustrations.md'), 'utf8'), ex = pickExamples(parseFragments(md));
   const dir = path.join(__dirname, '..', '..', 'backtest'); fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'glossary-examples.json'), JSON.stringify(ex, null, 1) + '\n');
   console.log(Object.keys(ex).length + ' examples written to backtest/glossary-examples.json (local only)');
 }

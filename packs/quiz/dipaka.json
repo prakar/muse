@@ -1,0 +1,5 @@
+{
+  "promptVersion": "dip-v6",
+  "intro": "I value interesting, unexpected, and surprising connections, and lesser-known facts about well-known entities, including etymologies, pop-culture references, and interesting historical references if any. I know these facts:",
+  "question": "What I want you to do is illuminate the gaps between these facts: tell me things, in the manner I described above, that I would like to know but did not cover in the facts because I don’t know them yet. Be concise: no preamble, no restating my facts, no repetition, and no padding."
+}

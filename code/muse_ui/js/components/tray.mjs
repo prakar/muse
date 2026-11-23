@@ -6,6 +6,7 @@ import { toast } from './toast.mjs';
 import { api } from '../api.mjs';
 import { FocusButton } from './focus.mjs';
 import { W } from '../words.mjs';
+import { hasLenses } from '../pack_info.mjs';
 
 // The Collection: the facts you have collected while walking the stick through the vault, with one line between neighbours for how they link.
 // Saved automatically to Muse's own small file (muse-tray.json) a moment after every change, and loaded when a Stick page opens, so it survives a refresh,
@@ -45,7 +46,7 @@ export function Tray() {
         inp.addEventListener('input', () => tray.setLink(x.id, its[i + 1].id, inp.value)); ol.append(h('li', { class: 'tray__gap' }, '↳ ', inp));
       }
     });
-    box.append(ol, AnglesBlock(its, () => { if (box.isConnected) draw(); }), h('div', { class: 'toolbar' },
+    box.append(ol, ...(hasLenses() ? [AnglesBlock(its, () => { if (box.isConnected) draw(); })] : []), h('div', { class: 'toolbar' },
       Button({ label: 'Copy cluster', ic: 'copy', onClick: async () => { try { await navigator.clipboard.writeText(tray.text()); toast({ text: `Copied ${its.length} facts.` }); } catch (e) { toast({ text: 'The browser blocked copying.' }); } } }),
       Button({ label: W.illuminate, ic: 'search', href: build('dipaka'), title: 'Send these facts to the model and ask what you did not think to ask. You see the packet and the cost first.' }),
       Button({ label: 'Clear', variant: 'ghost', onClick: () => tray.clear() })));
@@ -54,8 +55,8 @@ export function Tray() {
   let seen = false; const off = tray.subscribe(() => { if (box.isConnected) { seen = true; draw(); } else if (seen) off(); });
   draw(); loadTray(); return box;
 }
-// Angles: which of the 71 quiz heuristics the Collection already hints at, worked out from the facts' own hooks and wording (no model, no cost).
-// It points at a shape; whether it makes a question is your call. Fetched once per set of facts (the key), so typing a link line never refetches.
+// Angles: which of the pack's shapes the Collection already hints at, worked out from the facts' own hooks and wording (no model, no cost).
+// It points at a shape; whether it is worth using is your call. Fetched once per set of facts (the key), so typing a link line never refetches.
 const ang = { key: '', data: null, error: '' };
 function AnglesBlock(its, redraw) {
   const key = its.map(x => x.id).join(',');

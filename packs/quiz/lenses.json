@@ -1,0 +1,295 @@
+{
+  "version": 1,
+  "relations": {
+    "cues": {
+      "cause": {
+        "re": "\\b(because(?: of)?|due to|owing to|as a result|resulted in|led to|leading to|caused|triggered|in response to|so that|to avoid|circumvent(?:ed|ing)?)\\b",
+        "flags": "i"
+      },
+      "named-for": {
+        "re": "\\b(named (?:after|for|from)|takes? its name|derives? (?:its|his|her) name|coined from|named in honou?r of)\\b",
+        "flags": "i"
+      },
+      "inspired-by": {
+        "re": "\\b(inspired by|inspiration (?:for|from)|based on|modell?ed (?:on|after)|homage to|adapted from)\\b",
+        "flags": "i"
+      },
+      "explains-practice": {
+        "re": "\\b(according to (?:legend|myth|tradition)|legend has it|to commemorate|in memory of|commemorates?)\\b",
+        "flags": "i"
+      },
+      "copy-of": {
+        "re": "\\b(clone of|rebadged|rebranded version|copy of)\\b",
+        "flags": "i"
+      },
+      "applied-elsewhere": {
+        "re": "\\b(adopted from|borrowed from|imported from|studied (?:the|in)\\b.{0,40}\\b(?:to|for))\\b",
+        "flags": "i"
+      },
+      "reason-chosen": {
+        "re": "\\b(chosen because|selected because|picked because|for convenience|because of its location)\\b",
+        "flags": "i"
+      },
+      "ignored-because": {
+        "re": "\\b(ignored because|overlooked because|unrecognised because|unrecognized because|neglected because|went unnoticed because)\\b",
+        "flags": "i"
+      }
+    },
+    "pointsAt": {
+      "cause": {
+        "h": 1,
+        "also": [
+          14,
+          18,
+          19
+        ]
+      },
+      "named-for": {
+        "h": 8,
+        "also": [
+          54,
+          52
+        ]
+      },
+      "inspired-by": {
+        "h": 6,
+        "also": []
+      },
+      "explains-practice": {
+        "h": 11,
+        "also": []
+      },
+      "copy-of": {
+        "h": 5,
+        "also": []
+      },
+      "applied-elsewhere": {
+        "h": 13,
+        "also": []
+      },
+      "reason-chosen": {
+        "h": 9,
+        "also": []
+      },
+      "ignored-because": {
+        "h": 15,
+        "also": []
+      }
+    },
+    "states": {
+      "cause": "A stated cause",
+      "named-for": "A stated naming",
+      "inspired-by": "A stated inspiration",
+      "explains-practice": "A stated explanation of a practice",
+      "copy-of": "A stated copy",
+      "applied-elsewhere": "A stated borrowing",
+      "reason-chosen": "A stated reason for a choice",
+      "ignored-because": "A stated reason for neglect"
+    },
+    "next": {
+      "cause": "picks up from the effect, such as what happened next or what else it led to",
+      "named-for": "is about the person or thing it was named for, or about something else with the same name",
+      "inspired-by": "is about what it inspired, or about what inspired it",
+      "explains-practice": "is about the custom or rule the story accounts for",
+      "copy-of": "is about the original, or about another copy",
+      "applied-elsewhere": "is about where the solution came from, or where else it was used",
+      "reason-chosen": "is about the choice itself: who made it, and what else was considered",
+      "ignored-because": "is about how the finding was used later"
+    },
+    "chainRel": [
+      "cause",
+      "named-for",
+      "inspired-by"
+    ],
+    "chainShape": {
+      "cause": 1,
+      "named-for": 1,
+      "inspired-by": 6
+    },
+    "seed": {
+      "answer": "one side of the link",
+      "join": "{rel}",
+      "hide": "the cause, the effect or the name, whichever you choose"
+    },
+    "chainSeed": {
+      "answer": "the pivot, {name}, or the end of the chain",
+      "join": "{rel} handed on through {name}",
+      "hide": "the pivot or the middle link"
+    },
+    "chainWhyStrong": "\"{name}\" joins two stated links ({rel})",
+    "chainWhyWeak": "\"{name}\" follows a stated link ({rel}): the other fact may be the next hop"
+  },
+  "entries": [
+    {
+      "type": "same-date",
+      "h": 3,
+      "why": "both fall on {key}",
+      "seed": {
+        "answer": "the date, {key}",
+        "join": "the same calendar day",
+        "hide": "the date"
+      },
+      "browse": {
+        "maxFacts": 5,
+        "minNotes": 2
+      }
+    },
+    {
+      "type": "namesakes",
+      "h": 7,
+      "hook": "entity",
+      "minLength": 3,
+      "why": "{name} is a {cats}",
+      "seed": {
+        "answer": "{name}",
+        "join": "one name for unlike things",
+        "hide": "the name"
+      }
+    },
+    {
+      "type": "hook-flag",
+      "h": 36,
+      "hook": "uniqueness",
+      "why": "{value}",
+      "seed": {
+        "answer": "what the fact is about",
+        "join": "a first, only or extreme claim",
+        "hide": "the name; keep the claim"
+      },
+      "browse": true
+    },
+    {
+      "type": "hook-flag",
+      "h": 45,
+      "hook": "etymon",
+      "kind": "etymology",
+      "why": "the word {value} has a story",
+      "whyBare": "an etymology fact",
+      "seed": {
+        "answer": "{value|the word}",
+        "join": "a word and the story of its root",
+        "hide": "the word; keep the root"
+      },
+      "browse": true
+    },
+    {
+      "type": "hook-flag",
+      "h": 48,
+      "hook": "homonym",
+      "why": "{value} means more than one thing",
+      "seed": {
+        "answer": "{value}",
+        "join": "one name, several meanings",
+        "hide": "the name"
+      },
+      "browse": true
+    },
+    {
+      "type": "relations",
+      "browse": true
+    },
+    {
+      "type": "chains",
+      "hook": "entity",
+      "minPivotLength": 4,
+      "minGroup": 2,
+      "maxGroup": 6
+    },
+    {
+      "type": "cue-shapes",
+      "shapes": [
+        {
+          "h": 57,
+          "re": "\\b(renamed|formerly (?:known|called)|changed (?:its|his|her|their) name|rebranded|name was changed|used to be called|was later (?:called|renamed))\\b",
+          "flags": "i",
+          "seed": {
+            "answer": "the old name or the new one",
+            "join": "one thing with two names",
+            "hide": "the old name"
+          }
+        },
+        {
+          "h": 55,
+          "re": "\\b(folk etymology|not named (?:after|for)|is not named)\\b",
+          "flags": "i",
+          "seed": {
+            "answer": "the real origin of the name",
+            "join": "the expected source and the true one",
+            "hide": "the true source"
+          }
+        },
+        {
+          "h": 27,
+          "re": "\\b(is a myth|popular myth|myth that|misattributed|contrary to popular (?:belief|opinion))\\b",
+          "flags": "i",
+          "seed": {
+            "answer": "what is actually true",
+            "join": "a popular belief and the fact behind it",
+            "hide": "the true answer"
+          }
+        },
+        {
+          "h": 63,
+          "re": "\\b(?:longest|tallest|largest|highest|oldest|smallest|deepest|fastest|biggest|richest|heaviest|lightest|coldest|hottest|driest|wettest)\\b.{0,60}\\b(?:in the world|in (?:india|asia|europe|africa|america)|on earth|of all time)\\b",
+          "flags": "i",
+          "seed": {
+            "answer": "the item that tops the list",
+            "join": "a superlative and the list it tops",
+            "hide": "the item, or the list"
+          }
+        }
+      ],
+      "browse": true
+    },
+    {
+      "type": "string-play",
+      "hook": "entity",
+      "parts": [
+        {
+          "play": "shared-parts",
+          "h": 50,
+          "hAcrossKinds": 59,
+          "why": "\"{token}\" in {names}",
+          "namesSep": ", ",
+          "seed": {
+            "answer": "{token}",
+            "join": "a word shared by different names",
+            "hide": "the shared word"
+          }
+        },
+        {
+          "play": "anagrams",
+          "h": 58,
+          "why": "{names} use the same letters",
+          "namesSep": " / ",
+          "seed": {
+            "answer": "{first}",
+            "join": "the same letters, rearranged",
+            "hide": "one of the names"
+          }
+        },
+        {
+          "play": "digit-names",
+          "h": 60,
+          "why": "{name} carries a number",
+          "seed": {
+            "answer": "{name}",
+            "join": "a number inside a name",
+            "hide": "the name or the number"
+          }
+        },
+        {
+          "play": "one-letter-off",
+          "h": 49,
+          "why": "{names} differ by one letter",
+          "namesSep": " / ",
+          "seed": {
+            "answer": "{first}",
+            "join": "names one letter apart",
+            "hide": "one of the names"
+          }
+        }
+      ]
+    }
+  ]
+}
