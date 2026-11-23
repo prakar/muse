@@ -35,8 +35,11 @@ function saneTag(t) {
   return segs.every(s => { const w = s.split('-'); return w.length <= 3 && w.every(x => x) && !STOP.has(w[0]) && !w.some(x => STOP.has(x)) && !/^\d/.test(s); });
 }
 
+// The approved tags come from the active pack (files.tagVocabulary). A pack with none starts empty: every tag the model names waits for the author's review.
 function loadVocabulary(file) {
-  const j = JSON.parse(fs.readFileSync(file || path.join(__dirname, '..', 'data', 'tag_vocabulary.json'), 'utf8'));
+  file = file || require('./pack').current().files.tagVocabulary;
+  if (!file) return new Set();
+  const j = JSON.parse(fs.readFileSync(file, 'utf8'));
   return new Set(j.tags.map(clean));
 }
 // The vocabulary the author has now: the exported file plus out-of-vocabulary tags the author approved since.

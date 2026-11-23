@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 /**
- * QUARRY slim tagger: tags notes that have no tags, from the approved vocabulary (code/data/tag_vocabulary.json) and the ontology rules in lib/tagging.js.
+ * QUARRY slim tagger: tags notes that have no tags, from the approved vocabulary (the active pack's tag vocabulary) and the ontology rules in lib/tagging.js.
  *
  *   node code/tagger.js --dry-run [--limit N]          count the untagged notes and estimate the cost. No LLM call, nothing written.
  *   node code/tagger.js --limit N [--provider P]       tag N untagged notes (shortest first). In-vocabulary tags are approved at once; new tags wait for review.

@@ -12,8 +12,10 @@
  */
 const L = require('./bristles');
 
-const DEAD_END = new Set(['set', 'mechanism', 'uniqueness', 'former-role', 'homonym', 'etymon']);
-const COMMON_TYPES = new Set(['entity', 'material', 'etymon', 'homonym', 'place']);
+const Pack = require('./pack');
+const ROLES = Pack.current().hookRoles;
+const DEAD_END = new Set(ROLES.deadEnd);
+const COMMON_TYPES = new Set(ROLES.common);
 const DURATION = /\b\d[\d,.]*\s*[-+]?\s*(?:year|month|week|day|decade|century|centuries|hour|minute)s?\b/i;
 const REL = /\b(this|last|next) (week|weekend|month|year|season|summer|winter|spring|autumn|fall)\b|\btoday\b|\bcurrently\b|\brecently\b|\bnow\b|\bnewly\b|\bupcoming\b/i;
 
@@ -212,7 +214,7 @@ function build(db, version, opts) {
       const d = L.tagDistance(noteTags.get(bs[i].note_id), noteTags.get(bs[j].note_id)); if (d != null) { ds += d; dn++; } }
     return { cos: cn ? cs / cn : 0, dist: dn ? ds / dn : null };
   };
-  const sparkRows = [], knotRows = [], sliceRows = [], excluded = {}, SURF = new Set(['entity', 'homonym', 'material', 'place', 'etymon', 'title']);
+  const sparkRows = [], knotRows = [], sliceRows = [], excluded = {}, SURF = new Set(ROLES.surface);
   index.forEach(function (e, key) {
     const df = e.notes.size;
     const why = df >= 2 && df <= 8 ? sparkExclusion(key, e) : '';

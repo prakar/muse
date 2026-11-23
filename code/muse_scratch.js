@@ -119,7 +119,7 @@ console.log('\n-- seeded SAMPLE of cross-domain sparks (what a card stream would
 
 // ---------- 4. knots ----------
 hr('4. Knots (one surface, 2-40 notes, different contexts)');
-const SURF = new Set(['entity', 'homonym', 'material', 'place', 'etymon', 'title']);
+const SURF = new Set(require('./lib/pack').current().hookRoles.surface);
 const knots = [];
 index.forEach(function (e, key) {
   const df = e.notes.size; if (df < 2 || df > 40 || L.isYearKey(key)) return;

@@ -53,6 +53,24 @@ function validateExtraction(ex, where) {
   try { JSON.parse(ex.example.reply); } catch (e) { bad('example.reply must be valid JSON'); }
 }
 
+// Which hook types play which part in the model's checks. Optional in pack.json as "hookRoles":
+//   deadEnd - types that link nothing when seen in only one note (default: the loose hooks)
+//   common  - types that are often an ordinary word (default: none)
+//   surface - types whose shared wording can hide different meanings (default: the categorised hooks)
+function readHookRoles(p, file) {
+  const x = p.hookRoles == null ? {} : p.hookRoles, h = p.extraction.hooks, out = {};
+  if (typeof x !== 'object' || Array.isArray(x)) throw new PackError(file + ': hookRoles must be an object');
+  const all = new Set(h.strict.concat(h.loose, ['title']));
+  const def = { deadEnd: h.loose, common: [], surface: h.categorised };
+  for (const k of Object.keys(x)) if (!(k in def)) throw new PackError(file + ': hookRoles.' + k + ' is not a role (deadEnd, common, surface)');
+  for (const k of Object.keys(def)) {
+    const v = x[k] == null ? def[k] : x[k];
+    if (!isStrList(v) && v.length) throw new PackError(file + ': hookRoles.' + k + ' must be a list of hook types');
+    for (const t of v) if (!all.has(t)) throw new PackError(file + ': hookRoles.' + k + ' names "' + t + '", which is not one of this pack\'s hook types');
+    out[k] = Object.freeze(v.slice());
+  }
+  return Object.freeze(out);
+}
 function loadPack(name, root) {
   root = root || ROOT;
   if (!SLUG.test(String(name))) throw new PackError('pack name "' + name + '" is not a plain folder name (letters, digits, hyphens)');
@@ -72,6 +90,7 @@ function loadPack(name, root) {
     if (!fs.existsSync(abs)) throw new PackError(file + ': files.' + k + ' names ' + rel + ', which does not exist');
     files[k] = abs;
   }
+  const hookRoles = readHookRoles(p, file);
   let lens = null;
   if (p.lenses != null) {
     if (!p.lenses || !isStr(p.lenses.config) || !isStr(p.lenses.registry)) throw new PackError(file + ': lenses needs config and registry (project-relative file paths)');
@@ -100,7 +119,7 @@ function loadPack(name, root) {
     try { dipaka = JSON.parse(fs.readFileSync(abs, 'utf8')); } catch (e) { throw new PackError(file + ': dipaka (' + p.dipaka + ') cannot be read as JSON: ' + e.message); }
     if (!dipaka || !['promptVersion', 'intro', 'question'].every((k) => isStr(dipaka[k]))) throw new PackError(file + ': dipaka needs promptVersion, intro and question (non-empty strings)');
   }
-  return Object.freeze({ dipaka, lens, vocabulary: Object.freeze(vocabulary), name: p.name, version: p.version || '0.0.0', description: p.description, capabilities: Object.freeze((p.capabilities || []).slice()), extraction: p.extraction, files: Object.freeze(files), dir });
+  return Object.freeze({ dipaka, lens, vocabulary: Object.freeze(vocabulary), name: p.name, version: p.version || '0.0.0', description: p.description, capabilities: Object.freeze((p.capabilities || []).slice()), extraction: p.extraction, hookRoles, files: Object.freeze(files), dir });
 }
 
 let cached = null;

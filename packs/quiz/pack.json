@@ -71,12 +71,37 @@
       "reply": "{\"burrs\":[{\"claim\":\"Quokkas on Rottnest Island became a selfie craze in 2015.\",\"src\":[\"T\"],\"kind\":\"fact\",\"hooks\":[{\"type\":\"entity\",\"value\":\"Quokka\",\"cat\":\"animal\"},{\"type\":\"place\",\"value\":\"Rottnest\",\"cat\":\"place\"},{\"type\":\"time\",\"value\":\"2015\",\"era\":\"AD\"}],\"perishable\":false}],\"reason\":\"\"}"
     }
   },
+  "hookRoles": {
+    "deadEnd": [
+      "set",
+      "mechanism",
+      "uniqueness",
+      "former-role",
+      "homonym",
+      "etymon"
+    ],
+    "common": [
+      "entity",
+      "material",
+      "etymon",
+      "homonym",
+      "place"
+    ],
+    "surface": [
+      "entity",
+      "homonym",
+      "material",
+      "place",
+      "etymon",
+      "title"
+    ]
+  },
   "files": {
     "heuristics": "packs/quiz/data/heuristics.json",
     "heuristicOverlay": "packs/quiz/data/heuristic_overlay.json",
     "glossary": "packs/quiz/data/glossary.json",
     "heuristicsBuild": "packs/quiz/tools/heuristics_build.js",
-    "tagVocabulary": "code/data/tag_vocabulary.json"
+    "tagVocabulary": "packs/quiz/data/tag_vocabulary.json"
   },
   "lenses": {
     "config": "packs/quiz/lenses.json",
