@@ -16,6 +16,7 @@ const { createAccess } = require('./lib/muse_access');
 const M = require('./lib/muse_model'), K = require('./lib/marks'), { createServer } = require('./lib/muse_server'), { createNoteStore } = require('./lib/note_store');
 
 const args = process.argv.slice(2), opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : d; };
+{ const c = require('./lib/pack').ensureConfig(); if (c.note) console.log(c.note); }
 const PORT = parseInt(opt('--port', '3005'), 10), VERSION = opt('--version', 'nug-v6');
 const HOME = process.env.QUARRY_HOME || path.join(__dirname, '..'), DB = process.env.QUARRY_DB || path.join(HOME, 'vault.db');
 const TRAY_FILE = process.env.MUSE_TRAY || path.join(HOME, 'muse-tray.json');

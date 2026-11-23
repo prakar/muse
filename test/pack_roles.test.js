@@ -36,3 +36,17 @@ test('tag vocabulary comes from the pack; a pack without one starts empty', () =
   assert.strictEqual(Pack.loadPack('general', ROOT).files.tagVocabulary, undefined);
   assert.strictEqual(T.loadVocabulary(null) instanceof Set, true);
 });
+
+test('ensureConfig writes an explicit muse.yaml once, and leaves an existing one alone', () => {
+  const fsx = require('fs'), osx = require('os');
+  const dir = fsx.mkdtempSync(path.join(osx.tmpdir(), 'muse-cfg-'));
+  fsx.cpSync(path.join(ROOT, 'packs'), path.join(dir, 'packs'), { recursive: true });
+  fsx.cpSync(path.join(ROOT, 'code', 'data'), path.join(dir, 'code', 'data'), { recursive: true });
+  const saved = { p: process.env.MUSE_PACK, c: process.env.MUSE_CONFIG }; delete process.env.MUSE_PACK; delete process.env.MUSE_CONFIG;
+  try {
+    const a = Pack.ensureConfig({ root: dir });
+    assert.ok(a.written && /choosing the "quiz" profile/.test(a.note));
+    assert.match(fsx.readFileSync(path.join(dir, 'muse.yaml'), 'utf8'), /^pack: quiz$/m);
+    assert.strictEqual(Pack.ensureConfig({ root: dir }).written, false);
+  } finally { if (saved.p) process.env.MUSE_PACK = saved.p; if (saved.c) process.env.MUSE_CONFIG = saved.c; }
+});

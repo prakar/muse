@@ -4,7 +4,7 @@ import { guide, slug, OTHER } from '../pack_guide.mjs';
 
 // Admin, first tab: Profile. Which profile this copy of Muse runs, the ones installed, and what it takes to add another. Choosing an installed one is the one
 // action here: it asks you to confirm, writes `pack:` into muse.yaml, and says plainly that nothing changes until Muse is restarted. It never switches a running Muse.
-const SOURCE = { env: 'The MUSE_PACK environment variable is set and decides this; muse.yaml is ignored while it is.', file: 'It comes from muse.yaml.', default: 'There is no muse.yaml, so Muse uses its default.' };
+const SOURCE = { env: 'The MUSE_PACK environment variable is set and decides this; muse.yaml is ignored while it is.', file: 'It comes from muse.yaml.', default: 'There is no muse.yaml yet; Muse is using its default profile. It writes the file the next time it starts.' };
 
 export function profileTab({ api, meta }) {
   const pk = (meta && meta.pack) || {}, rows = Array.isArray(pk.catalogue) ? pk.catalogue : [];

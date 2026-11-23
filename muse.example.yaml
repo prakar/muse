@@ -1,5 +1,5 @@
 # Copy this file to muse.yaml (which is not committed) to choose how Muse behaves.
-# With no muse.yaml, Muse uses the "quiz" pack.
+# With no muse.yaml, Muse writes one (choosing "quiz") the first time it starts.
 #
 # pack: the folder under packs/ that gives Muse its character: how facts are extracted,
 #       which links count, what the screens say. Try: quiz

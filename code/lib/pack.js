@@ -154,6 +154,15 @@ function source(root) {
   return fs.existsSync(file) ? 'file' : 'default';
 }
 
+// First start with no muse.yaml and no MUSE_PACK: write one naming the default profile, so the choice is on disk where the owner can see and change it.
+// Never throws: if it cannot write (no yaml package, read-only folder) Muse still starts on the default and says why. Returns { written, file, pack, note }.
+function ensureConfig(opts) {
+  const o = opts || {};
+  if (source(o.root) !== 'default') return { written: false, file: null, pack: null, note: '' };
+  try { const r = setActive(DEFAULT_PACK, o); return { written: true, file: r.file, pack: r.pack, note: 'No muse.yaml was found, so Muse wrote ' + r.file + ' choosing the "' + r.pack + '" profile. Edit it to change profile.' }; }
+  catch (e) { return { written: false, file: null, pack: DEFAULT_PACK, note: 'No muse.yaml and it could not be written (' + e.message + '). Muse is using the "' + DEFAULT_PACK + '" profile for now.' }; }
+}
+
 // Choose the profile for the NEXT start: writes `pack: <name>` into muse.yaml, keeping the rest of the file (comments too), after checking that the profile loads.
 // Nothing running changes: Muse reads its profile once, at start-up. The old file is kept as muse.yaml.bak. Returns what was done.
 function setActive(name, opts) {
@@ -171,4 +180,4 @@ function setActive(name, opts) {
   return { pack: name, file, created: !had, backup: had ? file + '.bak' : null, envOverrides: !!process.env.MUSE_PACK, needsRestart: true };
 }
 
-module.exports = { setActive, source, catalogue, PackError, CONTRACT, DEFAULT_PACK, ROOT, readConfig, loadPack, validateExtraction, current, extraction, reset };
+module.exports = { ensureConfig, setActive, source, catalogue, PackError, CONTRACT, DEFAULT_PACK, ROOT, readConfig, loadPack, validateExtraction, current, extraction, reset };
