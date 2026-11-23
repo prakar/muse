@@ -14,8 +14,8 @@ What it extracts and how it speaks come from a **profile** (a folder under `pack
 ## Quick start
 
 ```sh
-git clone https://github.com/prakar/quarry.git
-cd quarry
+git clone https://github.com/prakar/muse.git
+cd muse
 npm install
 
 export QUARRY_HOME="$PWD"                 # where vault.db and logs live
