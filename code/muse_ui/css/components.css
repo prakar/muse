@@ -70,3 +70,8 @@ a.pager__page:active { transform: translateY(1px); }
 @keyframes shimmer { to { background-position: -200% 0; } }
 .empty { color: var(--text-2); padding: var(--s-6) 0; text-align: center; }
 .empty--error { color: var(--danger); }
+
+/* Top bar: icon-only buttons; the count sits on the corner of its icon. */
+.btn--nav { position: relative; }
+.btn--nav .badge--count { position: absolute; top: -.4rem; right: -.45rem; min-width: 1.05rem; padding: 0 .3rem; font-size: .6875rem; line-height: 1.05rem; }
+.btn--nav .badge--count[hidden] { display: none; }

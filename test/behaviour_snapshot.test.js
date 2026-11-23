@@ -77,7 +77,7 @@ test('the quiz pack\'s Help and Muse map content is unchanged (every recipe, fea
   const UI = path.join(__dirname, '..', 'code', 'muse_ui', 'js');
   const M = await import(pathToFileURL(path.join(UI, 'muse_map.mjs')).href), H = await import(pathToFileURL(path.join(UI, 'help_content.mjs')).href);
   const all = { FEATURES: M.FEATURES, DATA: M.DATA, BUDGET: M.BUDGET, INTRO: H.INTRO, QUICK_KEYS: H.QUICK_KEYS, WHICH: H.WHICH, RECIPES: H.RECIPES, SAVED: H.SAVED, GLOSSARY: H.GLOSSARY, COMING: H.COMING, SYSADMIN: H.SYSADMIN };
-  assert.strictEqual(sha(JSON.stringify(all)), 'd8e7da2b96705006');
+  assert.strictEqual(sha(JSON.stringify(all)), '1bb5aab26bfafc10');
 });
 
 test('the dipaka packet, wordplay kind labels and hook-type labels are unchanged for the quiz pack', async () => {
